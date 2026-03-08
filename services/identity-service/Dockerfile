@@ -3,8 +3,6 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-RUN apk add --no-cache openssl1.1-compat
-
 COPY package*.json ./
 COPY tsconfig.json ./
 
