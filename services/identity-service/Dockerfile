@@ -5,10 +5,14 @@ WORKDIR /app
 
 COPY package*.json ./
 COPY tsconfig.json ./
+COPY prisma ./prisma
 
 RUN npm ci && npm cache clean --force
 
 COPY . .
+
+# Generate Prisma client before build
+RUN npm run prisma:generate
 
 RUN npm run build
 
