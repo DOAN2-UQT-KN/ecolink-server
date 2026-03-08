@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { body, validationResult } from 'express-validator';
-import { HTTP_STATUS, sendError, sendSuccess } from '@shared/constants/http-status';
+import { HTTP_STATUS, sendError, sendSuccess } from '../../constants/http-status';
 import { roleService } from './role.service';
 import { getAllPermissions } from './permission.enum';
 

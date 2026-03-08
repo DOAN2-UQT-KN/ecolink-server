@@ -12,9 +12,6 @@ COPY services/identity-service/tsconfig.json ./
 RUN npm ci && \
     npm cache clean --force
 
-# Copy shared modules first
-COPY shared ./shared
-
 # Copy source code and prisma schema
 COPY services/identity-service ./
 
@@ -30,6 +27,9 @@ RUN npx prisma generate
 # Build TypeScript
 RUN npm run build
 
+# Remove devDependencies for runtime image
+RUN npm prune --omit=dev
+
 # Production stage
 FROM node:20-alpine
 
@@ -39,16 +39,12 @@ RUN addgroup -g 1001 -S nodejs && \
 
 WORKDIR /app
 
-# Copy package files
+# Copy dependencies and built files from builder
+COPY --from=builder --chown=nodejs:nodejs /app/node_modules ./node_modules
 COPY --from=builder --chown=nodejs:nodejs /app/package*.json ./
 
-# Install only production dependencies
-RUN npm ci --only=production && \
-    npm cache clean --force
-
-# Copy Prisma schema and generate client
+# Copy Prisma schema
 COPY --from=builder --chown=nodejs:nodejs /app/prisma ./prisma
-RUN npx prisma generate
 
 # Copy built application
 COPY --from=builder --chown=nodejs:nodejs /app/dist ./dist

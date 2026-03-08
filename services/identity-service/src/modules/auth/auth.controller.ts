@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { body, validationResult } from 'express-validator';
-import { HTTP_STATUS, sendError, sendSuccess } from '@shared/constants/http-status';
+import { HTTP_STATUS, sendError, sendSuccess } from '../../constants/http-status';
 import { authService } from './auth.service';
 
 export class AuthController {
