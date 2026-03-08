@@ -33,9 +33,10 @@ WORKDIR /app
 COPY --from=builder --chown=nodejs:nodejs /app/node_modules ./node_modules
 COPY --from=builder --chown=nodejs:nodejs /app/package*.json ./
 COPY --from=builder --chown=nodejs:nodejs /app/dist ./dist
+COPY --from=builder --chown=nodejs:nodejs /app/prisma ./prisma
 
 USER nodejs
 
 EXPOSE 8080
 
-CMD ["node", "dist/index.js"]
+CMD ["npm", "run", "start:production"]
