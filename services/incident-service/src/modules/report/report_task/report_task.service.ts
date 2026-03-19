@@ -1,8 +1,8 @@
 import { reportTaskRepository } from "./report_task.repository";
-import { reportRepository } from "./report.repository";
-import { reportManagerService } from "./report_manager.service";
-import { reportVolunteerService } from "./report_volunteer.service";
-import { TaskStatus } from "../../constants/status.enum";
+import { reportRepository } from "../report.repository";
+import { reportManagerService } from "../report_manager/report_manager.service";
+import { reportVolunteerService } from "../report_volunteer/report_volunteer.service";
+import { TaskStatus } from "../../../constants/status.enum";
 
 // Task DTOs (copied from task module)
 export interface CreateTaskRequest {

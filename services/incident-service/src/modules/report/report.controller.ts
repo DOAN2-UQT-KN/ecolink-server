@@ -6,10 +6,10 @@ import {
   sendSuccess,
 } from "../../constants/http-status";
 import { reportService } from "./report.service";
-import { reportManagerService } from "./report_manager.service";
-import { reportTaskService } from "./report_task.service";
-import { reportVolunteerService } from "./report_volunteer.service";
-import { reportResultService } from "./report_result.service";
+import { reportManagerService } from "./report_manager/report_manager.service";
+import { reportTaskService } from "./report_task/report_task.service";
+import { reportVolunteerService } from "./report_volunteer/report_volunteer.service";
+import { reportResultService } from "./report_result/report_result.service";
 import { ReportSearchQuery } from "./report.dto";
 import {
   ReportStatus,

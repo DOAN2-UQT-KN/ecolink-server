@@ -1,6 +1,6 @@
 import { reportVolunteerRepository } from "./report_volunteer.repository";
-import { reportRepository } from "./report.repository";
-import { JoinRequestStatus } from "../../constants/status.enum";
+import { reportRepository } from "../report.repository";
+import { JoinRequestStatus } from "../../../constants/status.enum";
 
 // Request DTOs
 export interface CreateJoinRequestRequest {

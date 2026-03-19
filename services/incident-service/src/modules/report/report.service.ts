@@ -9,9 +9,10 @@ import {
   PaginatedReportsResponse,
 } from "./report.dto";
 import { reportMediaRepository } from "./report_media.repository";
-import { reportManagerRepository } from "./report_manager.repository";
+import { reportManagerRepository } from "./report_manager/report_manager.repository";
 import { ReportStatus, MediaFileStage } from "../../constants/status.enum";
 import prisma from "../../config/prisma.client";
+import { reportAnalysisQueueService } from "./queue/report-analysis-queue.service";
 
 export class ReportService {
   constructor() {}
@@ -52,44 +53,14 @@ export class ReportService {
       return createdReport;
     });
 
-    // TODO: Call AI service to analyze the report
-    // This would verify the report content, detect waste type, etc.
-    this.analyzeReportWithAI(report.id, imageUrls).catch((err) => {
-      console.error("AI analysis failed:", err.message);
-    });
+    // Publish async analysis job so report creation stays fast and resilient.
+    reportAnalysisQueueService
+      .enqueueAnalysis(report.id, imageUrls)
+      .catch((err) => {
+        console.error("Failed to enqueue AI analysis job:", err.message);
+      });
 
     return toReportResponse(report);
-  }
-
-  /**
-   * Call AI service to analyze report images
-   * TODO: Implement actual AI service integration when ai-service is available
-   */
-  private async analyzeReportWithAI(
-    reportId: string,
-    mediaFiles: string[],
-  ): Promise<void> {
-    try {
-      // TODO: Uncomment when ai-service is implemented
-      // const response = await axios.post(`${AI_SERVICE_URL}/api/v1/analyze`, {
-      //     reportId,
-      //     images: mediaFiles,
-      // });
-      //
-      // if (response.data.success) {
-      //     await reportRepository.update(reportId, {
-      //         wasteType: response.data.data.detectedWasteType,
-      //         aiVerified: true,
-      //     });
-      // }
-
-      console.log(
-        `[AI Analysis] Would analyze report ${reportId} with ${mediaFiles.length} images`,
-      );
-    } catch (error) {
-      console.error("AI service analysis failed:", error);
-      // Don't throw - AI analysis is not critical for report creation
-    }
   }
 
   async getReportById(id: string): Promise<ReportResponse | null> {
@@ -145,6 +116,23 @@ export class ReportService {
       throw new Error("Report not found");
     }
 
+    const existingMediaFiles = await reportMediaRepository.findByReportId(id);
+    const existingImageUrls = existingMediaFiles
+      .map((media) => media.fileUrl.trim())
+      .filter((url) => url.length > 0);
+
+    const hasImageUrlsUpdate =
+      request.imageUrls !== undefined && request.imageUrls !== null;
+    const nextImageUrls = hasImageUrlsUpdate
+      ? (request.imageUrls ?? [])
+          .map((imageUrl) => imageUrl.trim())
+          .filter((imageUrl) => imageUrl.length > 0)
+      : [];
+    const imageUrlsChanged =
+      hasImageUrlsUpdate &&
+      nextImageUrls.length > 0 &&
+      this.haveImageUrlsChanged(existingImageUrls, nextImageUrls);
+
     const report = await prisma.$transaction(async (tx) => {
       const updatedReport = await tx.report.update({
         where: { id },
@@ -160,15 +148,11 @@ export class ReportService {
       });
 
       // Skip media updates when imageUrls is null/undefined/empty.
-      if (request.imageUrls !== undefined && request.imageUrls !== null) {
-        const imageUrls = request.imageUrls
-          .map((imageUrl) => imageUrl.trim())
-          .filter((imageUrl) => imageUrl.length > 0);
-
-        if (imageUrls.length > 0) {
+      if (hasImageUrlsUpdate) {
+        if (nextImageUrls.length > 0) {
           await reportMediaRepository.softDeleteByReportId(id, tx);
           await reportMediaRepository.createMany(
-            imageUrls.map((fileUrl) => ({
+            nextImageUrls.map((fileUrl) => ({
               reportId: id,
               fileUrl,
               stage: MediaFileStage.BEFORE,
@@ -182,7 +166,34 @@ export class ReportService {
       return updatedReport;
     });
 
+    if (imageUrlsChanged) {
+      await reportRepository.update(id, {
+        aiVerified: false,
+        status: ReportStatus.PENDING,
+      });
+
+      reportAnalysisQueueService
+        .reenqueueAnalysis(id, nextImageUrls)
+        .catch((err) => {
+          console.error("Failed to re-enqueue AI analysis job:", err.message);
+        });
+    }
+
     return toReportResponse(report);
+  }
+
+  private haveImageUrlsChanged(
+    currentUrls: string[],
+    nextUrls: string[],
+  ): boolean {
+    if (currentUrls.length !== nextUrls.length) {
+      return true;
+    }
+
+    const sortedCurrent = [...currentUrls].sort();
+    const sortedNext = [...nextUrls].sort();
+
+    return sortedCurrent.some((url, index) => url !== sortedNext[index]);
   }
 
   async deleteReport(id: string): Promise<void> {

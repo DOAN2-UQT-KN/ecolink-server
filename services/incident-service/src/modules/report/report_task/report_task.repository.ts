@@ -1,5 +1,5 @@
 import { PrismaClient, Prisma } from "@prisma/client";
-import prisma from "../../config/prisma.client";
+import prisma from "../../../config/prisma.client";
 
 export class ReportTaskRepository {
   private prisma: PrismaClient;

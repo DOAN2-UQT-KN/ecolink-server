@@ -1,6 +1,6 @@
 import { PrismaClient } from "@prisma/client";
-import prisma from "../../config/prisma.client";
-import { ResultStatus } from "../../constants/status.enum";
+import prisma from "../../../config/prisma.client";
+import { ResultStatus } from "../../../constants/status.enum";
 
 export class ReportResultRepository {
   private prisma: PrismaClient;

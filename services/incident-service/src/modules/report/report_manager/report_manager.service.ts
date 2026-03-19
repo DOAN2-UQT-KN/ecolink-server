@@ -1,6 +1,6 @@
 import { reportManagerRepository } from "./report_manager.repository";
-import { reportRepository } from "./report.repository";
-import { ReportManagerResponse, AddManagersRequest } from "./report.dto";
+import { reportRepository } from "../report.repository";
+import { ReportManagerResponse, AddManagersRequest } from "../report.dto";
 
 export class ReportManagerService {
   constructor() {}

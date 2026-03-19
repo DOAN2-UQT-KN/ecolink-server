@@ -1,69 +1,83 @@
 // Prisma schema for Identity Service
 
 generator client {
-    provider = "prisma-client-js"
+  provider = "prisma-client-js"
 }
 
 datasource db {
-    provider = "postgresql"
-    url      = env("DATABASE_URL")
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model User {
-    id                String  @id @default(uuid()) @db.Uuid
-    email             String  @unique
-    name              String
-    password          String
-    avatar            String?
-    bio               String?
-    emailVerified     Boolean @default(false)
-    verificationToken String?
-    roleId            String  @db.Uuid
+  id                String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email             String  @unique
+  name              String
+  password          String
+  avatar            String?
+  bio               String?
+  emailVerified     Boolean @default(false)
+  verificationToken String?
 
-    createdAt DateTime  @default(now())
-    updatedAt DateTime  @updatedAt
-    deletedAt DateTime?
+  roleId String @db.Uuid
+  role   Role   @relation(fields: [roleId], references: [id])
 
-    @@index([email])
-    @@index([roleId])
-    @@index([deletedAt])
-    @@map("users")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt @default(now())
+  deletedAt DateTime?
+
+  @@index([email])
+  @@index([roleId])
+  @@index([deletedAt])
+  @@map("users")
 }
 
 model Role {
-    id          String  @id @default(uuid()) @db.Uuid
-    name        String  @unique
-    description String?
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String  @unique
+  description String?
 
-    createdAt DateTime  @default(now())
-    updatedAt DateTime  @updatedAt
-    deletedAt DateTime?
+  users              User[]
+  rolePermissionSets RolePermissionSet[]
 
-    @@map("roles")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt @default(now())
+  deletedAt DateTime?
+
+  @@map("roles")
 }
 
 model PermissionSet {
-    id          String   @id @default(uuid()) @db.Uuid
-    name        String   @unique
-    description String?
-    permissions String[] // Array of Permission enum values
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String   @unique
+  description String?
+  permissions String[]
 
-    createdAt DateTime  @default(now())
-    updatedAt DateTime  @updatedAt
-    deletedAt DateTime?
+  rolePermissionSets RolePermissionSet[]
 
-    @@map("permission_sets")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt @default(now())
+  deletedAt DateTime?
+
+  @@map("permission_sets")
 }
 
 model RolePermissionSet {
-    id              String @id @default(uuid()) @db.Uuid
-    roleId          String @db.Uuid
-    permissionSetId String @db.Uuid
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
 
-    createdAt DateTime  @default(now())
-    updatedAt DateTime  @updatedAt
-    deletedAt DateTime?
+  roleId String @db.Uuid
+  role   Role   @relation(fields: [roleId], references: [id])
 
-    @@unique([roleId, permissionSetId])
-    @@map("role_permission_sets")
+  permissionSetId String        @db.Uuid
+  permissionSet   PermissionSet @relation(fields: [permissionSetId], references: [id])
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt @default(now())
+  deletedAt DateTime?
+
+  @@unique([roleId, permissionSetId])
+  @@index([roleId])
+  @@index([permissionSetId])
+
+  @@map("role_permission_sets")
 }

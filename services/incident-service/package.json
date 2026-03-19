@@ -28,6 +28,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@aws-sdk/client-sqs": "^3.879.0",
     "@prisma/client": "^5.8.0",
     "axios": "^1.6.0",
     "cookie-parser": "^1.4.6",

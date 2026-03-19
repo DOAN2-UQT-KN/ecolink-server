@@ -1,11 +1,11 @@
 import { reportResultRepository } from "./report_result.repository";
-import { reportRepository } from "./report.repository";
-import { reportManagerService } from "./report_manager.service";
+import { reportRepository } from "../report.repository";
+import { reportManagerService } from "../report_manager/report_manager.service";
 import {
   ResultStatus,
   ReportStatus,
   MediaFileStage,
-} from "../../constants/status.enum";
+} from "../../../constants/status.enum";
 
 // Request DTOs
 export interface CreateResultRequest {
