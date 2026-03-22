@@ -122,6 +122,16 @@ export class ReportVolunteerRepository {
       },
     });
   }
+
+  async countApprovedVolunteers(reportId: string): Promise<number> {
+    return this.prisma.reportJoiningRequest.count({
+      where: {
+        reportId,
+        status: JoinRequestStatus.APPROVED,
+        deletedAt: null,
+      },
+    });
+  }
 }
 
 // Singleton instance

@@ -47,6 +47,17 @@ router.get("/:id/detail", authenticate, reportController.getReportDetail);
 router.put("/:id", authenticate, reportController.updateReport);
 
 /**
+ * @route   PUT /api/v1/reports/:id/mark-done
+ * @desc    Mark report as completed (admin only, requires approved volunteers)
+ * @access  Private (Admin only)
+ */
+router.put(
+  "/:id/mark-done",
+  authenticate,
+  reportController.adminMarkReportDone,
+);
+
+/**
  * @route   DELETE /api/v1/reports/:id
  * @desc    Delete a report (soft delete)
  * @access  Private

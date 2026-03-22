@@ -2,6 +2,7 @@ import { PrismaClient, Prisma } from "@prisma/client";
 import prisma from "../../config/prisma.client";
 import { ReportEntity } from "./report.entity";
 import { ReportSearchQuery } from "./report.dto";
+import { ReportStatus } from "../../constants/status.enum";
 
 export class ReportRepository {
   private prisma: PrismaClient;
@@ -73,6 +74,15 @@ export class ReportRepository {
     return this.prisma.report.findMany({
       where: { userId, deletedAt: null },
       orderBy: { createdAt: "desc" },
+    });
+  }
+
+  async markReportAsDone(id: string): Promise<ReportEntity> {
+    return this.prisma.report.update({
+      where: { id },
+      data: {
+        status: ReportStatus.COMPLETED,
+      },
     });
   }
 

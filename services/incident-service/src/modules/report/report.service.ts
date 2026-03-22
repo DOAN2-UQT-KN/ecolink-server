@@ -10,6 +10,7 @@ import {
 } from "./report.dto";
 import { reportMediaRepository } from "./report_media.repository";
 import { reportManagerRepository } from "./report_manager/report_manager.repository";
+import { reportVolunteerRepository } from "./report_volunteer/report_volunteer.repository";
 import { ReportStatus, MediaFileStage } from "../../constants/status.enum";
 import prisma from "../../config/prisma.client";
 import { reportAnalysisQueueService } from "./queue/report-analysis-queue.service";
@@ -179,6 +180,26 @@ export class ReportService {
         });
     }
 
+    return toReportResponse(report);
+  }
+
+  async adminMarkReportDone(id: string): Promise<ReportResponse> {
+    const existing = await reportRepository.findById(id);
+    if (!existing) {
+      throw new Error("Report not found");
+    }
+
+    if (existing.status === ReportStatus.COMPLETED) {
+      return toReportResponse(existing);
+    }
+
+    const approvedVolunteerCount =
+      await reportVolunteerRepository.countApprovedVolunteers(id);
+    if (approvedVolunteerCount < 1) {
+      throw new Error("Cannot mark report as done without approved volunteers");
+    }
+
+    const report = await reportRepository.markReportAsDone(id);
     return toReportResponse(report);
   }
 
