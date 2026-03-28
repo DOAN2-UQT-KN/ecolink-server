@@ -3,20 +3,13 @@ import { body, param, query, validationResult } from "express-validator";
 import {
   HTTP_STATUS,
   sendError,
+  sendHttpErrorResponse,
   sendSuccess,
 } from "../../constants/http-status";
 import { reportService } from "./report.service";
 import { campaignManagerService } from "../campaign/campaign_manager/campaign_manager.service";
 import { campaignTaskService } from "../campaign/campaign_task/campaign_task.service";
 import { ReportSearchQuery } from "./report.dto";
-
-function isReportOwnerEditForbidden(error: Error): string | null {
-  const msg = error.message;
-  if (msg.includes("Admins cannot edit reports")) return msg;
-  if (msg.includes("Only the report owner can edit this report")) return msg;
-  if (msg.includes("This report has been banned and cannot be edited")) return msg;
-  return null;
-}
 
 export class ReportController {
   constructor() { }
@@ -157,15 +150,7 @@ export class ReportController {
         sendSuccess(res, HTTP_STATUS.OK, { report });
       } catch (error) {
         console.error("Update report error:", error);
-        if (error instanceof Error) {
-          if (error.message.includes("not found")) {
-            return sendError(res, HTTP_STATUS.REPORT_NOT_FOUND);
-          }
-          const forbiddenMsg = isReportOwnerEditForbidden(error);
-          if (forbiddenMsg) {
-            return sendError(res, HTTP_STATUS.FORBIDDEN.withMessage(forbiddenMsg));
-          }
-        }
+        if (sendHttpErrorResponse(res, error)) return;
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     },
@@ -209,21 +194,7 @@ export class ReportController {
         sendSuccess(res, HTTP_STATUS.OK, { report });
       } catch (error) {
         console.error("Add report images error:", error);
-        if (error instanceof Error) {
-          if (error.message.includes("not found")) {
-            return sendError(res, HTTP_STATUS.REPORT_NOT_FOUND);
-          }
-          const forbiddenMsg = isReportOwnerEditForbidden(error);
-          if (forbiddenMsg) {
-            return sendError(res, HTTP_STATUS.FORBIDDEN.withMessage(forbiddenMsg));
-          }
-          if (error.message.includes("at least one non-empty")) {
-            return sendError(
-              res,
-              HTTP_STATUS.BAD_REQUEST.withMessage(error.message),
-            );
-          }
-        }
+        if (sendHttpErrorResponse(res, error)) return;
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     },
@@ -264,18 +235,7 @@ export class ReportController {
         );
       } catch (error) {
         console.error("Delete report media file error:", error);
-        if (error instanceof Error) {
-          if (error.message.includes("Report not found")) {
-            return sendError(res, HTTP_STATUS.REPORT_NOT_FOUND);
-          }
-          if (error.message.includes("Report media file not found")) {
-            return sendError(res, HTTP_STATUS.NOT_FOUND);
-          }
-          const forbiddenMsg = isReportOwnerEditForbidden(error);
-          if (forbiddenMsg) {
-            return sendError(res, HTTP_STATUS.FORBIDDEN.withMessage(forbiddenMsg));
-          }
-        }
+        if (sendHttpErrorResponse(res, error)) return;
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     },
@@ -319,9 +279,7 @@ export class ReportController {
         );
       } catch (error) {
         console.error("Admin ban report error:", error);
-        if (error instanceof Error && error.message.includes("not found")) {
-          return sendError(res, HTTP_STATUS.REPORT_NOT_FOUND);
-        }
+        if (sendHttpErrorResponse(res, error)) return;
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     },
@@ -367,17 +325,7 @@ export class ReportController {
         );
       } catch (error) {
         console.error("Admin mark report done error:", error);
-        if (error instanceof Error) {
-          if (error.message.includes("not found")) {
-            return sendError(res, HTTP_STATUS.REPORT_NOT_FOUND);
-          }
-          if (error.message.includes("approved volunteers")) {
-            return sendError(
-              res,
-              HTTP_STATUS.BAD_REQUEST.withMessage(error.message),
-            );
-          }
-        }
+        if (sendHttpErrorResponse(res, error)) return;
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     },
@@ -400,15 +348,7 @@ export class ReportController {
       );
     } catch (error) {
       console.error("Delete report error:", error);
-      if (error instanceof Error) {
-        if (error.message.includes("not found")) {
-          return sendError(res, HTTP_STATUS.REPORT_NOT_FOUND);
-        }
-        const forbiddenMsg = isReportOwnerEditForbidden(error);
-        if (forbiddenMsg) {
-          return sendError(res, HTTP_STATUS.FORBIDDEN.withMessage(forbiddenMsg));
-        }
-      }
+      if (sendHttpErrorResponse(res, error)) return;
       sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
     }
   };
@@ -527,14 +467,7 @@ export class ReportController {
         sendSuccess(res, HTTP_STATUS.CREATED, { managers });
       } catch (error) {
         console.error("Add managers error:", error);
-        if (error instanceof Error) {
-          if (error.message.includes("not found")) {
-            return sendError(res, HTTP_STATUS.REPORT_NOT_FOUND);
-          }
-          if (error.message.includes("Only the reporter")) {
-            return sendError(res, HTTP_STATUS.NOT_A_REPORTER);
-          }
-        }
+        if (sendHttpErrorResponse(res, error)) return;
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     },
@@ -571,20 +504,7 @@ export class ReportController {
         );
       } catch (error) {
         console.error("Remove manager error:", error);
-        if (error instanceof Error) {
-          if (error.message.includes("Report not found")) {
-            return sendError(res, HTTP_STATUS.REPORT_NOT_FOUND);
-          }
-          if (error.message.includes("Only the reporter")) {
-            return sendError(res, HTTP_STATUS.NOT_A_REPORTER);
-          }
-          if (error.message.includes("not a manager")) {
-            return sendError(
-              res,
-              HTTP_STATUS.NOT_FOUND.withMessage("User is not a manager"),
-            );
-          }
-        }
+        if (sendHttpErrorResponse(res, error)) return;
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     },
@@ -601,9 +521,7 @@ export class ReportController {
       sendSuccess(res, HTTP_STATUS.OK, { managers });
     } catch (error) {
       console.error("Get report managers error:", error);
-      if (error instanceof Error && error.message.includes("not found")) {
-        return sendError(res, HTTP_STATUS.REPORT_NOT_FOUND);
-      }
+      if (sendHttpErrorResponse(res, error)) return;
       sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
     }
   };
@@ -640,14 +558,7 @@ export class ReportController {
         sendSuccess(res, HTTP_STATUS.CREATED, { task });
       } catch (error) {
         console.error("Create task error:", error);
-        if (error instanceof Error) {
-          if (error.message.includes("Report not found")) {
-            return sendError(res, HTTP_STATUS.REPORT_NOT_FOUND);
-          }
-          if (error.message.includes("Only reporter or managers")) {
-            return sendError(res, HTTP_STATUS.FORBIDDEN);
-          }
-        }
+        if (sendHttpErrorResponse(res, error)) return;
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     },
@@ -740,14 +651,7 @@ export class ReportController {
         sendSuccess(res, HTTP_STATUS.OK, { task });
       } catch (error) {
         console.error("Update task error:", error);
-        if (error instanceof Error) {
-          if (error.message.includes("Task not found")) {
-            return sendError(res, HTTP_STATUS.NOT_FOUND);
-          }
-          if (error.message.includes("Only reporter or managers")) {
-            return sendError(res, HTTP_STATUS.FORBIDDEN);
-          }
-        }
+        if (sendHttpErrorResponse(res, error)) return;
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     },
@@ -775,14 +679,7 @@ export class ReportController {
         );
       } catch (error) {
         console.error("Delete task error:", error);
-        if (error instanceof Error) {
-          if (error.message.includes("Task not found")) {
-            return sendError(res, HTTP_STATUS.NOT_FOUND);
-          }
-          if (error.message.includes("Only reporter or managers")) {
-            return sendError(res, HTTP_STATUS.FORBIDDEN);
-          }
-        }
+        if (sendHttpErrorResponse(res, error)) return;
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     },
@@ -815,25 +712,7 @@ export class ReportController {
         sendSuccess(res, HTTP_STATUS.CREATED, { assignment });
       } catch (error) {
         console.error("Assign task error:", error);
-        if (error instanceof Error) {
-          if (error.message.includes("Task not found")) {
-            return sendError(res, HTTP_STATUS.NOT_FOUND);
-          }
-          if (error.message.includes("Only reporter or managers")) {
-            return sendError(res, HTTP_STATUS.FORBIDDEN);
-          }
-          if (error.message.includes("already assigned")) {
-            return sendError(res, HTTP_STATUS.CONFLICT);
-          }
-          if (error.message.includes("must be approved")) {
-            return sendError(
-              res,
-              HTTP_STATUS.FORBIDDEN.withMessage(
-                "Volunteer must be approved first",
-              ),
-            );
-          }
-        }
+        if (sendHttpErrorResponse(res, error)) return;
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     },
@@ -869,22 +748,7 @@ export class ReportController {
         );
       } catch (error) {
         console.error("Unassign task error:", error);
-        if (error instanceof Error) {
-          if (error.message.includes("Task not found")) {
-            return sendError(res, HTTP_STATUS.NOT_FOUND);
-          }
-          if (error.message.includes("Only reporter or managers")) {
-            return sendError(res, HTTP_STATUS.FORBIDDEN);
-          }
-          if (error.message.includes("not assigned")) {
-            return sendError(
-              res,
-              HTTP_STATUS.NOT_FOUND.withMessage(
-                "Volunteer not assigned to this task",
-              ),
-            );
-          }
-        }
+        if (sendHttpErrorResponse(res, error)) return;
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     },
@@ -929,19 +793,7 @@ export class ReportController {
         sendSuccess(res, HTTP_STATUS.OK, { task });
       } catch (error) {
         console.error("Update task status error:", error);
-        if (error instanceof Error) {
-          if (error.message.includes("Task not found")) {
-            return sendError(res, HTTP_STATUS.NOT_FOUND);
-          }
-          if (error.message.includes("not assigned")) {
-            return sendError(
-              res,
-              HTTP_STATUS.FORBIDDEN.withMessage(
-                "You are not assigned to this task",
-              ),
-            );
-          }
-        }
+        if (sendHttpErrorResponse(res, error)) return;
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     },

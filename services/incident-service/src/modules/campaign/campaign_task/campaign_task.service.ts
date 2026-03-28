@@ -3,6 +3,7 @@ import { reportRepository } from "../../report/report.repository";
 import { campaignManagerService } from "../campaign_manager/campaign_manager.service";
 import { reportVolunteerService } from "../../report/report_volunteer/report_volunteer.service";
 import { TaskStatus } from "../../../constants/status.enum";
+import { HttpError, HTTP_STATUS } from "../../../constants/http-status";
 
 // Task DTOs (copied from task module)
 export interface CreateTaskRequest {
@@ -56,7 +57,7 @@ export class CampaignTaskService {
     // Check if report exists
     const report = await reportRepository.findById(request.reportId);
     if (!report) {
-      throw new Error("Report not found");
+      throw new HttpError(HTTP_STATUS.REPORT_NOT_FOUND);
     }
 
     // Check if user can manage the report
@@ -65,7 +66,11 @@ export class CampaignTaskService {
       userId,
     );
     if (!canManage) {
-      throw new Error("Only reporter or managers can create tasks");
+      throw new HttpError(
+        HTTP_STATUS.FORBIDDEN.withMessage(
+          "Only reporter or managers can create tasks",
+        ),
+      );
     }
 
     const task = await campaignTaskRepository.create({
@@ -135,11 +140,13 @@ export class CampaignTaskService {
   ): Promise<TaskResponse> {
     const task = await campaignTaskRepository.findById(taskId);
     if (!task) {
-      throw new Error("Task not found");
+      throw new HttpError(HTTP_STATUS.TASK_NOT_FOUND);
     }
 
     if (!task.reportId) {
-      throw new Error("Task has no associated report");
+      throw new HttpError(
+        HTTP_STATUS.BAD_REQUEST.withMessage("Task has no associated report"),
+      );
     }
 
     // Check if user can manage the report
@@ -148,7 +155,11 @@ export class CampaignTaskService {
       userId,
     );
     if (!canManage) {
-      throw new Error("Only reporter or managers can update tasks");
+      throw new HttpError(
+        HTTP_STATUS.FORBIDDEN.withMessage(
+          "Only reporter or managers can update tasks",
+        ),
+      );
     }
 
     const updated = await campaignTaskRepository.update(taskId, {
@@ -170,11 +181,13 @@ export class CampaignTaskService {
   async deleteTask(taskId: string, userId: string): Promise<void> {
     const task = await campaignTaskRepository.findById(taskId);
     if (!task) {
-      throw new Error("Task not found");
+      throw new HttpError(HTTP_STATUS.TASK_NOT_FOUND);
     }
 
     if (!task.reportId) {
-      throw new Error("Task has no associated report");
+      throw new HttpError(
+        HTTP_STATUS.BAD_REQUEST.withMessage("Task has no associated report"),
+      );
     }
 
     // Check if user can manage the report
@@ -183,7 +196,11 @@ export class CampaignTaskService {
       userId,
     );
     if (!canManage) {
-      throw new Error("Only reporter or managers can delete tasks");
+      throw new HttpError(
+        HTTP_STATUS.FORBIDDEN.withMessage(
+          "Only reporter or managers can delete tasks",
+        ),
+      );
     }
 
     await campaignTaskRepository.softDelete(taskId);
@@ -201,11 +218,13 @@ export class CampaignTaskService {
   ): Promise<CampaignTaskAssignmentResponse> {
     const task = await campaignTaskRepository.findById(taskId);
     if (!task) {
-      throw new Error("Task not found");
+      throw new HttpError(HTTP_STATUS.TASK_NOT_FOUND);
     }
 
     if (!task.reportId) {
-      throw new Error("Task has no associated report");
+      throw new HttpError(
+        HTTP_STATUS.BAD_REQUEST.withMessage("Task has no associated report"),
+      );
     }
 
     // Check if user can manage the report
@@ -214,7 +233,11 @@ export class CampaignTaskService {
       assignedBy,
     );
     if (!canManage) {
-      throw new Error("Only reporter or managers can assign tasks");
+      throw new HttpError(
+        HTTP_STATUS.FORBIDDEN.withMessage(
+          "Only reporter or managers can assign tasks",
+        ),
+      );
     }
 
     // Check if volunteer is approved for the report
@@ -223,8 +246,10 @@ export class CampaignTaskService {
       volunteerId,
     );
     if (!isApproved) {
-      throw new Error(
-        "Volunteer must be approved for this report before being assigned tasks",
+      throw new HttpError(
+        HTTP_STATUS.FORBIDDEN.withMessage(
+          "Volunteer must be approved for this report before being assigned tasks",
+        ),
       );
     }
 
@@ -234,7 +259,11 @@ export class CampaignTaskService {
       volunteerId,
     );
     if (existing) {
-      throw new Error("Volunteer is already assigned to this task");
+      throw new HttpError(
+        HTTP_STATUS.CONFLICT.withMessage(
+          "Volunteer is already assigned to this task",
+        ),
+      );
     }
 
     const assignment = await campaignTaskRepository.createAssignment({
@@ -270,11 +299,13 @@ export class CampaignTaskService {
   ): Promise<void> {
     const task = await campaignTaskRepository.findById(taskId);
     if (!task) {
-      throw new Error("Task not found");
+      throw new HttpError(HTTP_STATUS.TASK_NOT_FOUND);
     }
 
     if (!task.reportId) {
-      throw new Error("Task has no associated report");
+      throw new HttpError(
+        HTTP_STATUS.BAD_REQUEST.withMessage("Task has no associated report"),
+      );
     }
 
     // Check if user can manage the report
@@ -283,7 +314,11 @@ export class CampaignTaskService {
       removedBy,
     );
     if (!canManage) {
-      throw new Error("Only reporter or managers can unassign tasks");
+      throw new HttpError(
+        HTTP_STATUS.FORBIDDEN.withMessage(
+          "Only reporter or managers can unassign tasks",
+        ),
+      );
     }
 
     const assignment = await campaignTaskRepository.findAssignment(
@@ -291,7 +326,11 @@ export class CampaignTaskService {
       volunteerId,
     );
     if (!assignment) {
-      throw new Error("Volunteer is not assigned to this task");
+      throw new HttpError(
+        HTTP_STATUS.NOT_FOUND.withMessage(
+          "Volunteer is not assigned to this task",
+        ),
+      );
     }
 
     await campaignTaskRepository.removeAssignment(assignment.id);
@@ -336,7 +375,7 @@ export class CampaignTaskService {
   ): Promise<TaskResponse> {
     const task = await campaignTaskRepository.findById(taskId);
     if (!task) {
-      throw new Error("Task not found");
+      throw new HttpError(HTTP_STATUS.TASK_NOT_FOUND);
     }
 
     // Check if volunteer is assigned to this task
@@ -345,7 +384,9 @@ export class CampaignTaskService {
       volunteerId,
     );
     if (!assignment) {
-      throw new Error("You are not assigned to this task");
+      throw new HttpError(
+        HTTP_STATUS.FORBIDDEN.withMessage("You are not assigned to this task"),
+      );
     }
 
     const updated = await campaignTaskRepository.update(taskId, { status });

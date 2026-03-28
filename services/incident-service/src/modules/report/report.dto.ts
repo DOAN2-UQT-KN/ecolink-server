@@ -22,6 +22,10 @@ export interface AddReportImagesRequest {
   imageUrls: string[];
 }
 
+export interface AddManagersRequest {
+  userIds: string[];
+}
+
 export interface ReportSearchQuery {
   search?: string; // Search in title/description
   status?: number; // Filter by status

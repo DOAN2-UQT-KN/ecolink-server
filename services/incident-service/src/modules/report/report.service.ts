@@ -18,6 +18,7 @@ import {
 import prisma from "../../config/prisma.client";
 import { randomUUID } from "node:crypto";
 import { reportAnalysisQueueService } from "./queue/report-analysis-queue.service";
+import { HttpError, HTTP_STATUS } from "../../constants/http-status";
 
 /** Admin moderation: report is banned (same numeric value as GlobalStatus._STATUS_REJECTED). */
 const REPORT_STATUS_BANNED = ReportStatus._STATUS_REJECTED;
@@ -39,13 +40,23 @@ export class ReportService {
     role?: string,
   ): void {
     if (this.isAdminRole(role)) {
-      throw new Error("Admins cannot edit reports");
+      throw new HttpError(
+        HTTP_STATUS.FORBIDDEN.withMessage("Admins cannot edit reports"),
+      );
     }
     if (report.userId !== userId) {
-      throw new Error("Only the report owner can edit this report");
+      throw new HttpError(
+        HTTP_STATUS.FORBIDDEN.withMessage(
+          "Only the report owner can edit this report",
+        ),
+      );
     }
     if (report.status === REPORT_STATUS_BANNED) {
-      throw new Error("This report has been banned and cannot be edited");
+      throw new HttpError(
+        HTTP_STATUS.FORBIDDEN.withMessage(
+          "This report has been banned and cannot be edited",
+        ),
+      );
     }
   }
 
@@ -152,7 +163,7 @@ export class ReportService {
   ): Promise<ReportResponse> {
     const existing = await reportRepository.findById(id);
     if (!existing) {
-      throw new Error("Report not found");
+      throw new HttpError(HTTP_STATUS.REPORT_NOT_FOUND);
     }
 
     this.assertReporterMayEditReport(existing, userId, role);
@@ -180,7 +191,7 @@ export class ReportService {
   ): Promise<ReportResponse> {
     const existing = await reportRepository.findById(reportId);
     if (!existing) {
-      throw new Error("Report not found");
+      throw new HttpError(HTTP_STATUS.REPORT_NOT_FOUND);
     }
 
     this.assertReporterMayEditReport(existing, userId, role);
@@ -190,7 +201,11 @@ export class ReportService {
       .filter((url) => url.length > 0);
 
     if (imageUrls.length === 0) {
-      throw new Error("imageUrls must contain at least one non-empty URL");
+      throw new HttpError(
+        HTTP_STATUS.BAD_REQUEST.withMessage(
+          "imageUrls must contain at least one non-empty URL",
+        ),
+      );
     }
 
     const reportMediaFileIds = await prisma.$transaction(async (tx) => {
@@ -250,14 +265,16 @@ export class ReportService {
   ): Promise<ReportResponse> {
     const existing = await reportRepository.findById(reportId);
     if (!existing) {
-      throw new Error("Report not found");
+      throw new HttpError(HTTP_STATUS.REPORT_NOT_FOUND);
     }
 
     this.assertReporterMayEditReport(existing, userId, role);
 
     const mediaFile = await reportMediaRepository.findById(reportMediaFileId);
     if (!mediaFile || mediaFile.reportId !== reportId) {
-      throw new Error("Report media file not found");
+      throw new HttpError(
+        HTTP_STATUS.NOT_FOUND.withMessage("Report media file not found"),
+      );
     }
 
     await reportMediaRepository.softDelete(reportMediaFileId);
@@ -272,7 +289,7 @@ export class ReportService {
   async adminBanReport(id: string): Promise<ReportResponse> {
     const existing = await reportRepository.findById(id);
     if (!existing) {
-      throw new Error("Report not found");
+      throw new HttpError(HTTP_STATUS.REPORT_NOT_FOUND);
     }
 
     if (existing.status === REPORT_STATUS_BANNED) {
@@ -282,6 +299,23 @@ export class ReportService {
     const report = await reportRepository.update(id, {
       status: REPORT_STATUS_BANNED,
     });
+    return toReportResponse(report);
+  }
+
+  /**
+   * Mark report completed (admin workflow). Admin-only at controller layer.
+   */
+  async adminMarkReportDone(id: string): Promise<ReportResponse> {
+    const existing = await reportRepository.findById(id);
+    if (!existing) {
+      throw new HttpError(HTTP_STATUS.REPORT_NOT_FOUND);
+    }
+
+    if (existing.status === ReportStatus._STATUS_COMPLETED) {
+      return toReportResponse(existing);
+    }
+
+    const report = await reportRepository.markReportAsDone(id);
     return toReportResponse(report);
   }
 
@@ -309,7 +343,7 @@ export class ReportService {
   async deleteReport(id: string, userId: string, role?: string): Promise<void> {
     const existing = await reportRepository.findById(id);
     if (!existing) {
-      throw new Error("Report not found");
+      throw new HttpError(HTTP_STATUS.REPORT_NOT_FOUND);
     }
 
     this.assertReporterMayEditReport(existing, userId, role);
@@ -366,7 +400,7 @@ export class ReportService {
   ): Promise<ReportResponse> {
     const existing = await reportRepository.findById(id);
     if (!existing) {
-      throw new Error("Report not found");
+      throw new HttpError(HTTP_STATUS.REPORT_NOT_FOUND);
     }
 
     const report = await reportRepository.update(id, { status });

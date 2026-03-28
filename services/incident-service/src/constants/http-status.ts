@@ -152,6 +152,36 @@ export const HTTP_STATUS = {
   DUPLICATE_ENTRY: createStatus(409, "Duplicate entry", "DUPLICATE_ENTRY"),
 } as const;
 
+/**
+ * Domain error carrying the exact {@link HttpStatusResponse} to send to the client.
+ * Throw this from services instead of generic `Error` + message parsing in controllers.
+ */
+export class HttpError extends Error {
+  readonly statusResponse: HttpStatusResponse;
+
+  constructor(statusResponse: HttpStatusResponse) {
+    super(statusResponse.message);
+    this.name = "HttpError";
+    this.statusResponse = statusResponse;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+
+  static isHttpError(error: unknown): error is HttpError {
+    return error instanceof HttpError;
+  }
+}
+
+/**
+ * If `error` is an {@link HttpError}, sends the response and returns true.
+ */
+export const sendHttpErrorResponse = (res: any, error: unknown): boolean => {
+  if (HttpError.isHttpError(error)) {
+    sendError(res, error.statusResponse);
+    return true;
+  }
+  return false;
+};
+
 export const sendError = (
   res: any,
   statusResponse: HttpStatusResponse,
