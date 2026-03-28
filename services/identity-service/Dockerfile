@@ -1,15 +1,19 @@
+# Build from the `be` directory so local deps resolve:
+#   docker build -f services/identity-service/Dockerfile .
+
 # -------- builder --------
 FROM node:18.19.1-alpine AS builder
 
-WORKDIR /app
+WORKDIR /app/services/identity-service
 
-COPY package*.json ./
-COPY tsconfig.json ./
-COPY prisma ./prisma
+COPY services/identity-service/package*.json ./
+COPY services/identity-service/tsconfig.json ./
+COPY services/identity-service/prisma ./prisma
+COPY shared/express-swagger /app/shared/express-swagger
 
 RUN npm ci && npm cache clean --force
 
-COPY . .
+COPY services/identity-service/ .
 
 # Generate Prisma client before build
 RUN npm run prisma:generate
@@ -30,10 +34,10 @@ RUN addgroup -g 1001 -S nodejs && \
 
 WORKDIR /app
 
-COPY --from=builder --chown=nodejs:nodejs /app/node_modules ./node_modules
-COPY --from=builder --chown=nodejs:nodejs /app/package*.json ./
-COPY --from=builder --chown=nodejs:nodejs /app/dist ./dist
-COPY --from=builder --chown=nodejs:nodejs /app/prisma ./prisma
+COPY --from=builder --chown=nodejs:nodejs /app/services/identity-service/node_modules ./node_modules
+COPY --from=builder --chown=nodejs:nodejs /app/services/identity-service/package*.json ./
+COPY --from=builder --chown=nodejs:nodejs /app/services/identity-service/dist ./dist
+COPY --from=builder --chown=nodejs:nodejs /app/services/identity-service/prisma ./prisma
 
 USER nodejs
 

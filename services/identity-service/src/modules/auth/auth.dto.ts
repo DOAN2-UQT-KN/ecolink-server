@@ -21,6 +21,17 @@ export interface UpdatePasswordRequest {
   newPassword: string;
 }
 
+/** Body sent to POST /auth/update-password (userId comes from the JWT). */
+export interface AuthUpdatePasswordBody {
+  oldPassword: string;
+  newPassword: string;
+}
+
+/** Optional body; refresh token may also be sent via httpOnly cookie. */
+export interface RefreshTokenBody {
+  refreshToken?: string;
+}
+
 export interface RequestPasswordResetRequest {
   email: string;
 }

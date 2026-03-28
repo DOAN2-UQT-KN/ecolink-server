@@ -3,14 +3,22 @@ import proxy from "express-http-proxy";
 import helmet from "helmet";
 import cors from "cors";
 import dotenv from "dotenv";
+import { mountGatewaySwaggerUi } from "@da2/express-swagger";
 
 dotenv.config();
 
 const app = express();
-const port = process.env.PORT || 8081;
+const port = Number(process.env.PORT) || 8081;
 
-// Security middleware
-app.use(helmet());
+const IDENTITY_SERVICE_URL =
+  process.env.IDENTITY_SERVICE_URL || "http://localhost:3000";
+const INCIDENT_SERVICE_URL =
+  process.env.INCIDENT_SERVICE_URL || "http://localhost:3001";
+const GATEWAY_PUBLIC_URL =
+  process.env.GATEWAY_PUBLIC_URL || `http://localhost:${port}`;
+
+console.log("🚀 API Gateway starting...");
+
 app.use(
   cors({
     origin: process.env.CORS_ORIGIN || "*",
@@ -18,19 +26,60 @@ app.use(
   }),
 );
 
-// Service URLs from environment variables
-const IDENTITY_SERVICE_URL =
-  process.env.IDENTITY_SERVICE_URL || "http://localhost:3000";
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+  }),
+);
 
-console.log("🚀 API Gateway starting...");
+async function serveRewrittenOpenApi(
+  res: express.Response,
+  upstreamBase: string,
+): Promise<void> {
+  const base = upstreamBase.replace(/\/$/, "");
+  const r = await fetch(`${base}/openapi.json`);
+  if (!r.ok) {
+    res
+      .status(502)
+      .json({ error: "Upstream OpenAPI unavailable", status: r.status });
+    return;
+  }
+  const doc = (await r.json()) as { servers?: unknown };
+  doc.servers = [{ url: GATEWAY_PUBLIC_URL.replace(/\/$/, "") }];
+  res.json(doc);
+}
+
+// Spec JSON must be registered before Swagger UI mounts on /api-docs
+app.get("/api-docs/specs/identity.json", async (req, res, next) => {
+  try {
+    await serveRewrittenOpenApi(res, IDENTITY_SERVICE_URL);
+  } catch (e) {
+    next(e);
+  }
+});
+
+app.get("/api-docs/specs/incident.json", async (req, res, next) => {
+  try {
+    await serveRewrittenOpenApi(res, INCIDENT_SERVICE_URL);
+  } catch (e) {
+    next(e);
+  }
+});
+
+mountGatewaySwaggerUi(app, {
+  specs: [
+    { name: "Identity", url: "/api-docs/specs/identity.json" },
+    { name: "Incident", url: "/api-docs/specs/incident.json" },
+  ],
+});
 
 // Health check endpoint
-app.get("/health", (req, res) => {
+app.get("/health", (_req, res) => {
   console.log("Health check requested");
   return res.status(200).json({ status: "UP", service: "api-gateway" });
 });
 
-// Proxy routes
+// Proxy routes — Identity
 app.use(
   "/api/v1/auth",
   proxy(IDENTITY_SERVICE_URL, {
@@ -52,13 +101,28 @@ app.use(
   }),
 );
 
+// Proxy routes — Incident
+app.use(
+  "/api/v1/reports",
+  proxy(INCIDENT_SERVICE_URL, {
+    proxyReqPathResolver: (req) => `/api/v1/reports${req.url}`,
+  }),
+);
+
+app.use(
+  "/api/v1/campaigns",
+  proxy(INCIDENT_SERVICE_URL, {
+    proxyReqPathResolver: (req) => `/api/v1/campaigns${req.url}`,
+  }),
+);
+
 // Error handling
 app.use(
   (
-    err: any,
-    req: express.Request,
+    err: unknown,
+    _req: express.Request,
     res: express.Response,
-    next: express.NextFunction,
+    _next: express.NextFunction,
   ) => {
     console.error("Gateway Error:", err);
     res.status(502).json({
@@ -70,4 +134,5 @@ app.use(
 
 app.listen(port, () => {
   console.log(`⚡️ API Gateway running on port ${port}`);
+  console.log(`📘 Unified API docs: ${GATEWAY_PUBLIC_URL}/api-docs`);
 });

@@ -8,7 +8,7 @@ import {
 import { authService } from "./auth.service";
 
 export class AuthController {
-  constructor() {}
+  constructor() { }
 
   signup = [
     body("email").isEmail().withMessage("Valid email is required"),

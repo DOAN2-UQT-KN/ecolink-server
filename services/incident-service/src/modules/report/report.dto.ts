@@ -84,3 +84,23 @@ export interface ReportBackgroundJobsStatusResponse {
   /** Jobs still queued or running. */
   pendingOrInProcessCount: number;
 }
+
+/** OpenAPI: `data` for endpoints returning a single report. */
+export interface ReportOneEnvelopeData {
+  report: ReportResponse;
+}
+
+/** OpenAPI: `data` for report detail (includes media). */
+export interface ReportDetailEnvelopeData {
+  report: ReportDetailResponse;
+}
+
+/** OpenAPI: `data` for GET /reports/my */
+export interface ReportsListEnvelopeData {
+  reports: ReportResponse[];
+}
+
+/** OpenAPI: `data` for background job status */
+export interface BackgroundJobsEnvelopeData {
+  backgroundJobs: ReportBackgroundJobsStatusResponse;
+}

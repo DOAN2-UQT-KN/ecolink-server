@@ -9,6 +9,7 @@
         "dev": "ts-node-dev --respawn --transpile-only src/index.ts"
     },
     "dependencies": {
+        "@da2/express-swagger": "file:../shared/express-swagger",
         "cors": "^2.8.5",
         "dotenv": "^16.3.1",
         "express": "^4.18.2",

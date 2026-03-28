@@ -1,8 +1,14 @@
 import express, { Application } from "express";
+import path from "path";
 import cors from "cors";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
 import dotenv from "dotenv";
+import {
+  mountOpenApi,
+  routeModulesFrom,
+} from "@da2/express-swagger";
+import { OPENAPI_ROUTE_MODELS } from "./openapi/route-models";
 import reportRoutes from "./modules/report/report.routes";
 import campaignRoutes from "./modules/campaign/campaign.routes";
 import { errorHandler } from "./middleware/error.middleware";
@@ -16,8 +22,30 @@ dotenv.config();
 const app: Application = express();
 const PORT = process.env.PORT || 3001;
 
+const swaggerRouteFiles = routeModulesFrom(__dirname, [
+  "modules/report/report.routes",
+  "modules/campaign/campaign.routes",
+]);
+
 // Middleware
-app.use(helmet()); // Security headers
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+  }),
+);
+
+mountOpenApi(app, {
+  title: "Incident service",
+  description: "Reports and campaigns",
+  serverUrl:
+    process.env.SWAGGER_SERVER_URL || `http://localhost:${PORT}`,
+  routeFiles: swaggerRouteFiles,
+  typescript: {
+    projectRoot: path.join(__dirname, ".."),
+    tsconfigPath: path.join(__dirname, "..", "tsconfig.json"),
+    routeModels: OPENAPI_ROUTE_MODELS,
+  },
+});
 app.use(
   cors({
     origin: process.env.CORS_ORIGIN || "*",
