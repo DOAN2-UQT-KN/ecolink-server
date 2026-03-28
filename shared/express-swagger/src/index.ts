@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import type { Application } from "express";
+import type { Application, Request, Response } from "express";
 import swaggerUi from "swagger-ui-express";
 import {
   collectTypesFromRouteModels,
@@ -261,7 +261,7 @@ export function routeModulesFrom(
 
 export function mountOpenApi(app: Application, opts: MountOpenApiOptions): void {
   const spec = buildSpec(opts);
-  app.get("/openapi.json", (_req, res) => {
+  app.get("/openapi.json", (_req: Request, res: Response) => {
     res.json(spec);
   });
   app.use(

@@ -2,7 +2,7 @@
 #   docker build -f api-gateway/Dockerfile .
 
 # Multi-stage build for Node.js/TypeScript API Gateway
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 
 WORKDIR /app/api-gateway
 
@@ -20,7 +20,7 @@ RUN npm run build
 RUN npm prune --omit=dev
 
 # Production stage
-FROM node:20-alpine
+FROM node:22-alpine
 
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S nodejs -u 1001

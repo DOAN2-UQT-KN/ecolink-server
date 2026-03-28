@@ -6,8 +6,7 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "dev": "tsc --watch",
-    "prepare": "npm run build"
+    "dev": "tsc --watch"
   },
   "dependencies": {
     "swagger-ui-express": "^5.0.1",

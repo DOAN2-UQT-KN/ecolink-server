@@ -2,7 +2,7 @@
 #   docker build -f services/identity-service/Dockerfile .
 
 # -------- builder --------
-FROM node:18.19.1-alpine AS builder
+FROM node:22-alpine AS builder
 
 WORKDIR /app/services/identity-service
 
@@ -24,7 +24,7 @@ RUN npm prune --omit=dev
 
 
 # -------- runtime --------
-FROM node:20-alpine
+FROM node:22-alpine
 
 # Install OpenSSL for Prisma
 RUN apk add --no-cache openssl
