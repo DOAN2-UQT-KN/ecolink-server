@@ -3,13 +3,13 @@ import { toReportResponse } from "./report.entity";
 import {
   CreateReportRequest,
   UpdateReportRequest,
+  AddReportImagesRequest,
   ReportSearchQuery,
   ReportResponse,
   ReportDetailResponse,
   PaginatedReportsResponse,
 } from "./report.dto";
 import { reportMediaRepository } from "./report_media.repository";
-import { campaignManagerRepository } from "../campaign/campaign_manager/campaign_manager.repository";
 import {
   ReportStatus,
   MediaFileStage,
@@ -19,8 +19,35 @@ import prisma from "../../config/prisma.client";
 import { randomUUID } from "node:crypto";
 import { reportAnalysisQueueService } from "./queue/report-analysis-queue.service";
 
+/** Admin moderation: report is banned (same numeric value as GlobalStatus._STATUS_REJECTED). */
+const REPORT_STATUS_BANNED = ReportStatus._STATUS_REJECTED;
+
 export class ReportService {
   constructor() {}
+
+  private isAdminRole(role?: string): boolean {
+    return role?.toLowerCase() === "admin";
+  }
+
+  /**
+   * Only the report owner may edit content/media; admins must use admin-only actions (e.g. ban).
+   * Banned reports cannot be edited by the owner.
+   */
+  private assertReporterMayEditReport(
+    report: { userId: string | null; status: number | null },
+    userId: string,
+    role?: string,
+  ): void {
+    if (this.isAdminRole(role)) {
+      throw new Error("Admins cannot edit reports");
+    }
+    if (report.userId !== userId) {
+      throw new Error("Only the report owner can edit this report");
+    }
+    if (report.status === REPORT_STATUS_BANNED) {
+      throw new Error("This report has been banned and cannot be edited");
+    }
+  }
 
   async createReport(
     userId: string,
@@ -113,141 +140,149 @@ export class ReportService {
         stage: mf.stage,
         uploadedBy: mf.uploadedBy,
         createdAt: mf.createdAt,
-      })),
-      managers: (report.campaign?.campaignManagers ?? []).map((m) => ({
-        campaignId: report.campaignId ?? "",
-        userId: m.userId,
-        assignedBy: m.assignedBy,
-        assignedAt: m.assignedAt,
-      })),
+      }))
     };
   }
 
   async updateReport(
     id: string,
     request: UpdateReportRequest,
+    userId: string,
+    role?: string,
   ): Promise<ReportResponse> {
     const existing = await reportRepository.findById(id);
     if (!existing) {
       throw new Error("Report not found");
     }
 
-    const existingMediaFiles = await reportMediaRepository.findByReportId(id);
-    const existingMediaUrlMap = await this.getMediaUrlMap(
-      existingMediaFiles.map((media) => media.mediaId),
-    );
-    const existingImageUrls = existingMediaFiles
-      .map((media) => existingMediaUrlMap.get(media.mediaId)?.trim() ?? "")
-      .filter((url) => url.length > 0);
+    this.assertReporterMayEditReport(existing, userId, role);
 
-    const hasImageUrlsUpdate =
-      request.imageUrls !== undefined && request.imageUrls !== null;
-    const nextImageUrls = hasImageUrlsUpdate
-      ? (request.imageUrls ?? [])
-          .map((imageUrl) => imageUrl.trim())
-          .filter((imageUrl) => imageUrl.length > 0)
-      : [];
-    const imageUrlsChanged =
-      hasImageUrlsUpdate &&
-      nextImageUrls.length > 0 &&
-      this.haveImageUrlsChanged(existingImageUrls, nextImageUrls);
-
-    let nextReportMediaFileIds: string[] = [];
-
-    const report = await prisma.$transaction(async (tx) => {
-      const updatedReport = await tx.report.update({
-        where: { id },
-        data: {
-          title: request.title,
-          description: request.description,
-          wasteType: request.wasteType,
-          severityLevel: request.severityLevel,
-          latitude: request.latitude,
-          longitude: request.longitude,
-          status: request.status,
-        },
-      });
-
-      // Skip media updates when imageUrls is null/undefined/empty.
-      if (hasImageUrlsUpdate) {
-        if (nextImageUrls.length > 0) {
-          await reportMediaRepository.softDeleteByReportId(id, tx);
-          const createdFiles: { id: string }[] = [];
-
-          for (const imageUrl of nextImageUrls) {
-            const media = await tx.media.create({
-              data: {
-                url: imageUrl,
-                type: MediaResourceType.REPORT,
-                createdBy: existing.userId ?? undefined,
-                updatedBy: existing.userId ?? undefined,
-              },
-            });
-
-            const reportMediaFile = await tx.reportMediaFile.create({
-              data: {
-                reportId: id,
-                mediaId: media.id,
-                stage: MediaFileStage.BEFORE,
-                uploadedBy: existing.userId ?? undefined,
-                createdBy: existing.userId ?? undefined,
-                updatedBy: existing.userId ?? undefined,
-              },
-              select: { id: true },
-            });
-
-            createdFiles.push(reportMediaFile);
-          }
-
-          nextReportMediaFileIds = createdFiles.map((file) => file.id);
-        }
-      }
-
-      return updatedReport;
+    const report = await reportRepository.update(id, {
+      title: request.title,
+      description: request.description,
+      wasteType: request.wasteType,
+      severityLevel: request.severityLevel,
+      latitude: request.latitude,
+      longitude: request.longitude,
     });
-
-    if (imageUrlsChanged) {
-      await reportRepository.update(id, {
-        aiVerified: false,
-        status: ReportStatus._STATUS_PENDING,
-      });
-
-      reportAnalysisQueueService
-        .reenqueueAnalysis(id, nextReportMediaFileIds)
-        .catch((err) => {
-          console.error("Failed to re-enqueue AI analysis job:", err.message);
-        });
-    }
 
     return toReportResponse(report);
   }
 
-  async adminMarkReportDone(id: string): Promise<ReportResponse> {
+  /**
+   * Append images to a report. Only the report owner may add images (not managers or admins).
+   */
+  async addReportImages(
+    reportId: string,
+    userId: string,
+    request: AddReportImagesRequest,
+    role?: string,
+  ): Promise<ReportResponse> {
+    const existing = await reportRepository.findById(reportId);
+    if (!existing) {
+      throw new Error("Report not found");
+    }
+
+    this.assertReporterMayEditReport(existing, userId, role);
+
+    const imageUrls = request.imageUrls
+      .map((url) => url.trim())
+      .filter((url) => url.length > 0);
+
+    if (imageUrls.length === 0) {
+      throw new Error("imageUrls must contain at least one non-empty URL");
+    }
+
+    const reportMediaFileIds = await prisma.$transaction(async (tx) => {
+      const createdIds: string[] = [];
+
+      for (const imageUrl of imageUrls) {
+        const media = await tx.media.create({
+          data: {
+            url: imageUrl,
+            type: MediaResourceType.REPORT,
+            createdBy: userId,
+            updatedBy: userId,
+          },
+        });
+
+        const reportMediaFile = await tx.reportMediaFile.create({
+          data: {
+            reportId,
+            mediaId: media.id,
+            stage: MediaFileStage.BEFORE,
+            uploadedBy: userId,
+            createdBy: userId,
+            updatedBy: userId,
+          },
+          select: { id: true },
+        });
+
+        createdIds.push(reportMediaFile.id);
+      }
+
+      return createdIds;
+    });
+
+    await reportRepository.update(reportId, {
+      aiVerified: false,
+      status: ReportStatus._STATUS_PENDING,
+    });
+
+    reportAnalysisQueueService
+      .enqueueAnalysis(reportId, reportMediaFileIds)
+      .catch((err) => {
+        console.error("Failed to enqueue AI analysis job:", err.message);
+      });
+
+    const updated = await reportRepository.findById(reportId);
+    return toReportResponse(updated!);
+  }
+
+  /**
+   * Soft-delete a report media file. Only the report owner may delete (not managers or admins).
+   */
+  async deleteReportMediaFile(
+    reportId: string,
+    reportMediaFileId: string,
+    userId: string,
+    role?: string,
+  ): Promise<ReportResponse> {
+    const existing = await reportRepository.findById(reportId);
+    if (!existing) {
+      throw new Error("Report not found");
+    }
+
+    this.assertReporterMayEditReport(existing, userId, role);
+
+    const mediaFile = await reportMediaRepository.findById(reportMediaFileId);
+    if (!mediaFile || mediaFile.reportId !== reportId) {
+      throw new Error("Report media file not found");
+    }
+
+    await reportMediaRepository.softDelete(reportMediaFileId);
+
+    const updated = await reportRepository.findById(reportId);
+    return toReportResponse(updated!);
+  }
+
+  /**
+   * Ban a report (moderation). Admin-only; sets status to rejected/banned.
+   */
+  async adminBanReport(id: string): Promise<ReportResponse> {
     const existing = await reportRepository.findById(id);
     if (!existing) {
       throw new Error("Report not found");
     }
 
-    if (existing.status === ReportStatus._STATUS_COMPLETED) {
+    if (existing.status === REPORT_STATUS_BANNED) {
       return toReportResponse(existing);
     }
 
-    const report = await reportRepository.markReportAsDone(id);
+    const report = await reportRepository.update(id, {
+      status: REPORT_STATUS_BANNED,
+    });
     return toReportResponse(report);
-  }
-
-  private haveImageUrlsChanged(
-    currentUrls: string[],
-    nextUrls: string[],
-  ): boolean {
-    if (currentUrls.length !== nextUrls.length) {
-      return true;
-    }
-
-    const sortedCurrent = [...currentUrls].sort();
-    const sortedNext = [...nextUrls].sort();
-
-    return sortedCurrent.some((url, index) => url !== sortedNext[index]);
   }
 
   private async getMediaUrlMap(
@@ -271,11 +306,13 @@ export class ReportService {
     return new Map(mediaRecords.map((item) => [item.id, item.url]));
   }
 
-  async deleteReport(id: string): Promise<void> {
+  async deleteReport(id: string, userId: string, role?: string): Promise<void> {
     const existing = await reportRepository.findById(id);
     if (!existing) {
       throw new Error("Report not found");
     }
+
+    this.assertReporterMayEditReport(existing, userId, role);
 
     await reportRepository.softDelete(id);
   }
@@ -342,24 +379,6 @@ export class ReportService {
   async isReporter(reportId: string, userId: string): Promise<boolean> {
     const report = await reportRepository.findById(reportId);
     return report?.userId === userId;
-  }
-
-  /**
-   * Check if user can manage a report (is reporter or campaign manager)
-   */
-  async canManageReport(reportId: string, userId: string): Promise<boolean> {
-    const report = await reportRepository.findById(reportId);
-    if (!report) return false;
-
-    // Reporter can always manage
-    if (report.userId === userId) return true;
-
-    if (!report.campaignId) {
-      return false;
-    }
-
-    // Check if user is a campaign manager for the report's campaign
-    return campaignManagerRepository.isManager(report.campaignId, userId);
   }
 }
 

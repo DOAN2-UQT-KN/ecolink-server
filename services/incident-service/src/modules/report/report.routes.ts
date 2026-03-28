@@ -27,40 +27,49 @@ router.get("/my", authenticate, reportController.getMyReports);
 
 /**
  * @route   GET /api/v1/reports/:id
- * @desc    Get report by ID
- * @access  Private
- */
-router.get("/:id", authenticate, reportController.getReportById);
-
-/**
- * @route   GET /api/v1/reports/:id/detail
  * @desc    Get report with full details
  * @access  Private
  */
-router.get("/:id/detail", authenticate, reportController.getReportDetail);
+router.get("/:id", authenticate, reportController.getReportDetail);
 
 /**
  * @route   PUT /api/v1/reports/:id
  * @desc    Update a report
- * @access  Private
+ * @access  Private (Report owner only; admins cannot edit)
  */
 router.put("/:id", authenticate, reportController.updateReport);
 
 /**
- * @route   PUT /api/v1/reports/:id/mark-done
- * @desc    Mark report as completed (admin only, requires approved volunteers)
+ * @route   POST /api/v1/reports/:id/media
+ * @desc    Add images to a report
+ * @access  Private (Report owner only; admins cannot edit)
+ */
+router.post("/:id/media", authenticate, reportController.addReportImages);
+
+/**
+ * @route   DELETE /api/v1/reports/:id/media/:mediaFileId
+ * @desc    Soft-delete a report media file
+ * @access  Private (Report owner only; admins cannot edit)
+ */
+router.delete(
+  "/:id/media/:mediaFileId",
+  authenticate,
+  reportController.deleteReportMediaFile,
+);
+
+/**
+ * @route   PUT /api/v1/reports/:id/ban
+ * @desc    Ban a report (moderation)
  * @access  Private (Admin only)
  */
-router.put(
-  "/:id/mark-done",
-  authenticate,
-  reportController.adminMarkReportDone,
-);
+router.put("/:id/ban", authenticate, reportController.adminBanReport);
+
+
 
 /**
  * @route   DELETE /api/v1/reports/:id
  * @desc    Delete a report (soft delete)
- * @access  Private
+ * @access  Private (Report owner only; admins cannot delete — use ban)
  */
 router.delete("/:id", authenticate, reportController.deleteReport);
 

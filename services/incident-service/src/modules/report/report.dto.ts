@@ -16,8 +16,10 @@ export interface UpdateReportRequest {
   severityLevel?: number;
   latitude?: number;
   longitude?: number;
-  status?: number;
-  imageUrls?: string[] | null;
+}
+
+export interface AddReportImagesRequest {
+  imageUrls: string[];
 }
 
 export interface ReportSearchQuery {
@@ -53,7 +55,6 @@ export interface ReportResponse {
 
 export interface ReportDetailResponse extends ReportResponse {
   mediaFiles: ReportMediaFileResponse[];
-  managers: ReportManagerResponse[];
 }
 
 export interface ReportMediaFileResponse {

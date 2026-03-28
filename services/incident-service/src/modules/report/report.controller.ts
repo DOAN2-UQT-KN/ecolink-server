@@ -10,6 +10,13 @@ import { campaignManagerService } from "../campaign/campaign_manager/campaign_ma
 import { campaignTaskService } from "../campaign/campaign_task/campaign_task.service";
 import { ReportSearchQuery } from "./report.dto";
 
+function isReportOwnerEditForbidden(error: Error): string | null {
+  const msg = error.message;
+  if (msg.includes("Admins cannot edit reports")) return msg;
+  if (msg.includes("Only the report owner can edit this report")) return msg;
+  if (msg.includes("This report has been banned and cannot be edited")) return msg;
+  return null;
+}
 
 export class ReportController {
   constructor() { }
@@ -126,17 +133,6 @@ export class ReportController {
       .optional()
       .isFloat({ min: -180, max: 180 })
       .withMessage("Invalid longitude"),
-    body("status").optional().isInt().withMessage("Invalid status"),
-    body("imageUrls")
-      .optional({ nullable: true })
-      .isArray()
-      .withMessage("imageUrls must be an array"),
-    body("imageUrls.*")
-      .optional()
-      .isString()
-      .withMessage("Each image_url must be a string")
-      .bail()
-      .trim(),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -147,15 +143,182 @@ export class ReportController {
       }
 
       try {
-        const payload = { ...req.body };
-        if (payload.status !== undefined) {
-          payload.status = parseInt(payload.status as string);
+        const userId = req.user?.userId;
+        if (!userId) {
+          return sendError(res, HTTP_STATUS.UNAUTHORIZED);
         }
 
-        const report = await reportService.updateReport(req.params.id, payload);
+        const report = await reportService.updateReport(
+          req.params.id,
+          req.body,
+          userId,
+          req.user?.role,
+        );
         sendSuccess(res, HTTP_STATUS.OK, { report });
       } catch (error) {
         console.error("Update report error:", error);
+        if (error instanceof Error) {
+          if (error.message.includes("not found")) {
+            return sendError(res, HTTP_STATUS.REPORT_NOT_FOUND);
+          }
+          const forbiddenMsg = isReportOwnerEditForbidden(error);
+          if (forbiddenMsg) {
+            return sendError(res, HTTP_STATUS.FORBIDDEN.withMessage(forbiddenMsg));
+          }
+        }
+        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+      }
+    },
+  ];
+
+  /**
+   * Add images to a report (append media)
+   */
+  addReportImages = [
+    body("imageUrls")
+      .isArray({ min: 1 })
+      .withMessage("imageUrls must be a non-empty array"),
+    body("imageUrls.*")
+      .isString()
+      .withMessage("Each image URL must be a string")
+      .bail()
+      .trim()
+      .notEmpty()
+      .withMessage("Each image URL must not be empty"),
+
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: errors.array(),
+        });
+      }
+
+      try {
+        const userId = req.user?.userId;
+        if (!userId) {
+          return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+        }
+
+        const report = await reportService.addReportImages(
+          req.params.id,
+          userId,
+          { imageUrls: req.body.imageUrls },
+          req.user?.role,
+        );
+        sendSuccess(res, HTTP_STATUS.OK, { report });
+      } catch (error) {
+        console.error("Add report images error:", error);
+        if (error instanceof Error) {
+          if (error.message.includes("not found")) {
+            return sendError(res, HTTP_STATUS.REPORT_NOT_FOUND);
+          }
+          const forbiddenMsg = isReportOwnerEditForbidden(error);
+          if (forbiddenMsg) {
+            return sendError(res, HTTP_STATUS.FORBIDDEN.withMessage(forbiddenMsg));
+          }
+          if (error.message.includes("at least one non-empty")) {
+            return sendError(
+              res,
+              HTTP_STATUS.BAD_REQUEST.withMessage(error.message),
+            );
+          }
+        }
+        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+      }
+    },
+  ];
+
+  /**
+   * Delete a report media file (soft delete)
+   */
+  deleteReportMediaFile = [
+    param("mediaFileId")
+      .isUUID()
+      .withMessage("mediaFileId must be a valid UUID"),
+
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: errors.array(),
+        });
+      }
+
+      try {
+        const userId = req.user?.userId;
+        if (!userId) {
+          return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+        }
+
+        const report = await reportService.deleteReportMediaFile(
+          req.params.id,
+          req.params.mediaFileId,
+          userId,
+          req.user?.role,
+        );
+        sendSuccess(
+          res,
+          HTTP_STATUS.OK.withMessage("Report media file deleted successfully"),
+          { report },
+        );
+      } catch (error) {
+        console.error("Delete report media file error:", error);
+        if (error instanceof Error) {
+          if (error.message.includes("Report not found")) {
+            return sendError(res, HTTP_STATUS.REPORT_NOT_FOUND);
+          }
+          if (error.message.includes("Report media file not found")) {
+            return sendError(res, HTTP_STATUS.NOT_FOUND);
+          }
+          const forbiddenMsg = isReportOwnerEditForbidden(error);
+          if (forbiddenMsg) {
+            return sendError(res, HTTP_STATUS.FORBIDDEN.withMessage(forbiddenMsg));
+          }
+        }
+        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+      }
+    },
+  ];
+
+  /**
+   * Ban a report (admin moderation only)
+   */
+  adminBanReport = [
+    param("id").isUUID().withMessage("Report ID must be a valid UUID"),
+
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: errors.array(),
+        });
+      }
+
+      try {
+        const userId = req.user?.userId;
+        if (!userId) {
+          return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+        }
+
+        const role = req.user?.role;
+        const normalizedRole = role?.toLowerCase();
+        const normalizedAdminRole = "ADMIN".toLowerCase();
+        if (!normalizedRole || normalizedRole !== normalizedAdminRole) {
+          return sendError(
+            res,
+            HTTP_STATUS.FORBIDDEN.withMessage("Only admin can ban a report"),
+          );
+        }
+
+        const report = await reportService.adminBanReport(req.params.id);
+        sendSuccess(
+          res,
+          HTTP_STATUS.OK.withMessage("Report banned successfully"),
+          { report },
+        );
+      } catch (error) {
+        console.error("Admin ban report error:", error);
         if (error instanceof Error && error.message.includes("not found")) {
           return sendError(res, HTTP_STATUS.REPORT_NOT_FOUND);
         }
@@ -221,19 +384,30 @@ export class ReportController {
   ];
 
   /**
-   * Delete a report (soft delete)
+   * Delete a report (soft delete). Owner only; admins cannot delete (use ban).
    */
   deleteReport = async (req: Request, res: Response): Promise<void> => {
     try {
-      await reportService.deleteReport(req.params.id);
+      const userId = req.user?.userId;
+      if (!userId) {
+        return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+      }
+
+      await reportService.deleteReport(req.params.id, userId, req.user?.role);
       sendSuccess(
         res,
         HTTP_STATUS.OK.withMessage("Report deleted successfully"),
       );
     } catch (error) {
       console.error("Delete report error:", error);
-      if (error instanceof Error && error.message.includes("not found")) {
-        return sendError(res, HTTP_STATUS.REPORT_NOT_FOUND);
+      if (error instanceof Error) {
+        if (error.message.includes("not found")) {
+          return sendError(res, HTTP_STATUS.REPORT_NOT_FOUND);
+        }
+        const forbiddenMsg = isReportOwnerEditForbidden(error);
+        if (forbiddenMsg) {
+          return sendError(res, HTTP_STATUS.FORBIDDEN.withMessage(forbiddenMsg));
+        }
       }
       sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
     }
