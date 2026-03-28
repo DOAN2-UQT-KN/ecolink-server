@@ -1,10 +1,11 @@
 import dotenv from "dotenv";
 import prisma from "./config/prisma.client";
-import { ReportAnalysisWorker } from "./modules/report/worker/report-analysis.worker";
+import { BackgroundJobOrchestratorWorker } from "./modules/background-job/worker/background-job-orchestrator.worker";
+import { reportAnalysisJobHandler } from "./modules/report/worker/report-analysis-job.handler";
 
 dotenv.config();
 
-const worker = new ReportAnalysisWorker();
+const worker = new BackgroundJobOrchestratorWorker([reportAnalysisJobHandler]);
 
 const shutdown = async (signal: string): Promise<void> => {
   console.log(`[Worker] received ${signal}, shutting down`);

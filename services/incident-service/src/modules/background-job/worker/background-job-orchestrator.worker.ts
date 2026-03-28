@@ -1,11 +1,7 @@
-import { backgroundJobRepository } from "../../background-job/background-job.repository";
-import {
-  AnalyzeReportJobPayload,
-  BackgroundJobEnvelope,
-  BackgroundJobType,
-  ReceivedBackgroundJob,
-} from "../../background-job/background-job.types";
-import { reportAiAnalysisService } from "../report-ai-analysis.service";
+import { backgroundJobRepository } from "../background-job.repository";
+import { parseBackgroundJobEnvelopeLoose } from "../background-job-envelope.util";
+import { ReceivedBackgroundJob } from "../background-job.types";
+import type { BackgroundJobMessageHandler } from "./background-job-handler.types";
 
 const WAIT_TIME_SECONDS = Number(
   process.env.WORKER_SQS_WAIT_TIME_SECONDS || 20,
@@ -21,13 +17,23 @@ const MAX_RETRY_DELAY_SECONDS = Number(
 );
 const ERROR_BACKOFF_MS = 2_000;
 
-export class ReportAnalysisWorker {
+export class BackgroundJobOrchestratorWorker {
   private readonly workerId = `${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
+  private readonly handlersByT
+  ype: Map<string, BackgroundJobMessageHandler>;
   private isRunning = false;
   private isShuttingDown = false;
 
+  constructor(handlers: BackgroundJobMessageHandler[]) {
+    this.handlersByType = new Map(
+      handlers.map((h) => [h.jobType as string, h]),
+    );
+  }
+
   start(): void {
-    console.log(`[Worker ${this.workerId}] starting report analysis worker`);
+    console.log(
+      `[Worker ${this.workerId}] starting background job orchestrator (${this.handlersByType.size} handler(s))`,
+    );
     void this.pollLoop();
   }
 
@@ -78,41 +84,60 @@ export class ReportAnalysisWorker {
   }
 
   private async processMessage(message: ReceivedBackgroundJob): Promise<void> {
+    const loose = parseBackgroundJobEnvelopeLoose(message.body);
+
     try {
-      const parsed = this.parsePayload(message.body);
+      if (!loose) {
+        throw new Error("Invalid JSON or missing jobId/jobType in envelope");
+      }
+
+      const handler = this.handlersByType.get(loose.jobType);
+      if (!handler) {
+        console.error(
+          `[Worker ${this.workerId}] no handler for job type ${loose.jobType}, acknowledging message ${message.messageId}`,
+        );
+        try {
+          await backgroundJobRepository.markFailed(loose.jobId);
+        } catch {
+          console.warn(
+            `[Worker ${this.workerId}] could not mark job ${loose.jobId} failed (missing row?)`,
+          );
+        }
+        await backgroundJobRepository.acknowledge(message.receiptHandle);
+        return;
+      }
+
+      const { jobId, run } = handler.parseAndPrepare(message.body);
 
       const canProcess = await backgroundJobRepository.markProcessing(
-        parsed.jobId,
+        jobId,
         message.receiveCount,
       );
 
       if (!canProcess) {
         await backgroundJobRepository.acknowledge(message.receiptHandle);
         console.log(
-          `[Worker ${this.workerId}] skipped canceled/stale message ${message.messageId} for job ${parsed.jobId}`,
+          `[Worker ${this.workerId}] skipped canceled/stale message ${message.messageId} for job ${jobId}`,
         );
         return;
       }
 
-      await reportAiAnalysisService.analyzeReport(
-        parsed.payload.reportId,
-        parsed.payload.reportMediaFileIds,
-      );
+      await run();
       await backgroundJobRepository.acknowledge(message.receiptHandle);
-      await backgroundJobRepository.markSucceeded(parsed.jobId);
+      await backgroundJobRepository.markSucceeded(jobId);
       console.log(
-        `[Worker ${this.workerId}] completed message ${message.messageId} for report ${parsed.payload.reportId}`,
+        `[Worker ${this.workerId}] completed message ${message.messageId} for job ${jobId}`,
       );
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
 
-      const parsed = this.tryParsePayload(message.body);
+      const jobIdForStatus = loose?.jobId ?? null;
 
       if (message.receiveCount >= MAX_RECEIVE_COUNT) {
         await backgroundJobRepository.acknowledge(message.receiptHandle);
-        if (parsed) {
-          await backgroundJobRepository.markFailed(parsed.jobId);
+        if (jobIdForStatus) {
+          await backgroundJobRepository.markFailed(jobIdForStatus);
         }
         console.error(
           `[Worker ${this.workerId}] dropped message ${message.messageId} after ${message.receiveCount} receives: ${errorMessage}`,
@@ -130,77 +155,13 @@ export class ReportAnalysisWorker {
         retryDelaySeconds,
       );
 
-      if (parsed) {
-        await backgroundJobRepository.markRetryScheduled(parsed.jobId);
+      if (jobIdForStatus) {
+        await backgroundJobRepository.markRetryScheduled(jobIdForStatus);
       }
 
       console.error(
         `[Worker ${this.workerId}] failed message ${message.messageId}: ${errorMessage} (receive ${message.receiveCount})`,
       );
-    }
-  }
-
-  private parsePayload(rawBody: string): {
-    jobId: string;
-    payload: AnalyzeReportJobPayload;
-  } {
-    let envelope: unknown;
-
-    try {
-      envelope = JSON.parse(rawBody);
-    } catch {
-      throw new Error("Invalid JSON message body");
-    }
-
-    const parsedEnvelope = envelope as Partial<
-      BackgroundJobEnvelope<AnalyzeReportJobPayload>
-    >;
-
-    if (typeof parsedEnvelope.jobId !== "string" || !parsedEnvelope.jobId) {
-      throw new Error("Missing jobId in message envelope");
-    }
-
-    if (parsedEnvelope.jobType !== BackgroundJobType.ANALYZE_REPORT) {
-      throw new Error(
-        `Unsupported job type: ${String(parsedEnvelope.jobType)}`,
-      );
-    }
-
-    const payload = parsedEnvelope.payload as Partial<AnalyzeReportJobPayload>;
-
-    if (
-      !payload ||
-      typeof payload.reportId !== "string" ||
-      !Array.isArray(payload.reportMediaFileIds)
-    ) {
-      throw new Error("Invalid report analysis payload");
-    }
-
-    const reportMediaFileIds = payload.reportMediaFileIds.filter(
-      (item): item is string => typeof item === "string" && item.length > 0,
-    );
-
-    if (reportMediaFileIds.length === 0) {
-      throw new Error("Report analysis payload has no report media file IDs");
-    }
-
-    return {
-      jobId: parsedEnvelope.jobId,
-      payload: {
-        reportId: payload.reportId,
-        reportMediaFileIds,
-      },
-    };
-  }
-
-  private tryParsePayload(rawBody: string): {
-    jobId: string;
-    payload: AnalyzeReportJobPayload;
-  } | null {
-    try {
-      return this.parsePayload(rawBody);
-    } catch {
-      return null;
     }
   }
 
