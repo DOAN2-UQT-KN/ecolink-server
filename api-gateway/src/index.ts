@@ -18,6 +18,9 @@ const GATEWAY_PUBLIC_URL =
   process.env.GATEWAY_PUBLIC_URL || `http://localhost:${port}`;
 
 console.log("🚀 API Gateway starting...");
+console.log(
+  `🔗 IDENTITY_SERVICE_URL=${IDENTITY_SERVICE_URL} INCIDENT_SERVICE_URL=${INCIDENT_SERVICE_URL}`,
+);
 
 app.use(
   cors({
@@ -37,8 +40,24 @@ async function serveRewrittenOpenApi(
   upstreamBase: string,
 ): Promise<void> {
   const base = upstreamBase.replace(/\/$/, "");
-  const r = await fetch(`${base}/openapi.json`);
+  const openApiUrl = `${base}/openapi.json`;
+  let r: Response;
+  try {
+    r = await fetch(openApiUrl);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(`[openapi proxy] fetch failed: ${openApiUrl} — ${msg}`);
+    res.status(502).json({
+      error: "Upstream OpenAPI unreachable",
+      upstream: openApiUrl,
+      cause: msg,
+    });
+    return;
+  }
   if (!r.ok) {
+    console.error(
+      `[openapi proxy] ${openApiUrl} returned HTTP ${r.status} ${r.statusText}`,
+    );
     res
       .status(502)
       .json({ error: "Upstream OpenAPI unavailable", status: r.status });
