@@ -42,6 +42,8 @@ COPY --from=builder --chown=nodejs:nodejs /app/services/identity-service/package
 COPY --from=builder --chown=nodejs:nodejs /app/shared/express-swagger /app/shared/express-swagger
 
 COPY --from=builder --chown=nodejs:nodejs /app/services/identity-service/dist ./dist
+COPY --from=builder --chown=nodejs:nodejs /app/services/identity-service/tsconfig.json ./
+COPY --from=builder --chown=nodejs:nodejs /app/services/identity-service/src ./src
 COPY --from=builder --chown=nodejs:nodejs /app/services/identity-service/prisma ./prisma
 
 USER nodejs
