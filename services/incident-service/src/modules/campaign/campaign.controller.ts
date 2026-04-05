@@ -373,6 +373,18 @@ export class CampaignController {
               HTTP_STATUS.BAD_REQUEST.withMessage(error.message),
             );
           }
+          if (error.message.includes("difficulty missing")) {
+            return sendError(
+              res,
+              HTTP_STATUS.BAD_REQUEST.withMessage(error.message),
+            );
+          }
+          if (error.message.includes("Reward service enqueue failed")) {
+            return sendError(
+              res,
+              HTTP_STATUS.BAD_GATEWAY.withMessage(error.message),
+            );
+          }
         }
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }

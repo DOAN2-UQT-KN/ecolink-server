@@ -135,6 +135,13 @@ app.use(
   }),
 );
 
+app.use(
+  "/incident/votes",
+  proxy(INCIDENT_SERVICE_URL, {
+    proxyReqPathResolver: (req) => `/incident/votes${req.url}`,
+  }),
+);
+
 // Error handling
 app.use(
   (

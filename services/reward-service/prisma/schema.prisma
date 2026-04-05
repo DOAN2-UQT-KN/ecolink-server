@@ -30,3 +30,43 @@ model Difficulty {
   @@index([deletedAt])
   @@map("difficulties")
 }
+
+/// Per-user running balance of green points (reward-service is source of truth).
+model UserGreenPointBalance {
+  userId String @id @map("user_id") @db.Uuid
+
+  balance Int @default(0)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("user_green_point_balances")
+}
+
+/// Append-only style ledger for all green-point earnings (campaign, upvote, referral, …).
+/// Idempotency: unique (user, type, resource) while row is active — see partial index in migration.
+model GreenPointTransaction {
+  id String @id @default(uuid()) @db.Uuid
+
+  userId String @map("user_id") @db.Uuid
+
+  /// e.g. CAMPAIGN_COMPLETION, UPVOTE, REFERRAL
+  type String @db.VarChar(64)
+
+  /// Related entity id (campaign UUID, report UUID, etc.)
+  resourceId String @map("resource_id") @db.Uuid
+
+  /// What resource_id denotes: CAMPAIGN, REPORT, USER, …
+  resourceType String @map("resource_type") @db.VarChar(64)
+
+  points Int
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([userId])
+  @@index([resourceType, resourceId])
+  @@index([type])
+  @@map("green_point_transactions")
+}

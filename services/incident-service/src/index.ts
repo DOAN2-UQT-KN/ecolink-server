@@ -66,7 +66,7 @@ app.get("/health", (_req, res) => {
 // Routes
 app.use("/api/v1/reports", reportRoutes);
 app.use("/api/v1/campaigns", campaignRoutes);
-app.use("/api/v1/votes", voteRoutes);
+app.use("/incident/votes", voteRoutes);
 app.use("/api/v1/saved-resources", savedResourceRoutes);
 
 // Error handling

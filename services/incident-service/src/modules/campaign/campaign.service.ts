@@ -3,6 +3,7 @@ import prisma from "../../config/prisma.client";
 import { GlobalStatus } from "../../constants/status.enum";
 import { HTTP_STATUS } from "../../constants/http-status";
 import { rewardServiceClient } from "../reward/reward-service.client";
+import { campaignJoiningRequestRepository } from "./campaign_joining_request/campaign_joining_request.repository";
 import { campaignRepository } from "./campaign.repository";
 import {
   CampaignListQuery,
@@ -375,7 +376,7 @@ export class CampaignService {
     return this.toResponse(updated);
   }
 
-  /** Admin-only: mark campaign completed (green points for participants — to be wired later). */
+  /** Admin-only: mark campaign completed and queue green points for approved volunteers. */
   async adminMarkCampaignDone(
     id: string,
     adminUserId: string,
@@ -395,10 +396,66 @@ export class CampaignService {
       );
     }
 
-    const updated = await campaignRepository.update(id, {
-      status: GlobalStatus._STATUS_COMPLETED,
-      updatedBy: adminUserId,
-    });
+    const tier = await rewardServiceClient.getDifficultyByLevel(
+      existing.difficulty,
+    );
+    if (!tier) {
+      throw new Error("Campaign difficulty missing in reward service");
+    }
+
+    const volunteerIds =
+      await campaignJoiningRequestRepository.findApprovedVolunteerIdsByCampaignId(
+        id,
+      );
+    const credits = volunteerIds.map((userId) => ({
+      userId,
+      points: tier.greenPoints,
+    }));
+
+    await prisma.$transaction(
+      async (tx) => {
+        await tx.campaign.update({
+          where: { id },
+          data: {
+            status: GlobalStatus._STATUS_COMPLETED,
+            updatedBy: adminUserId,
+          },
+        });
+      },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      },
+    );
+
+    if (credits.length > 0) {
+      try {
+        await rewardServiceClient.enqueueCampaignCompletionGreenPoints({
+          campaignId: id,
+          credits,
+        });
+      } catch (e) {
+        await prisma.$transaction(
+          async (tx) => {
+            await tx.campaign.update({
+              where: { id },
+              data: {
+                status: GlobalStatus._STATUS_ACTIVE,
+                updatedBy: adminUserId,
+              },
+            });
+          },
+          {
+            isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          },
+        );
+        throw e;
+      }
+    }
+
+    const updated = await campaignRepository.findById(id);
+    if (!updated) {
+      throw new Error("Campaign not found");
+    }
     return this.toResponse(updated);
   }
 

@@ -166,6 +166,24 @@ export class CampaignJoiningRequestRepository {
         });
     }
 
+    /** Distinct approved volunteer user IDs for campaign completion rewards. */
+    async findApprovedVolunteerIdsByCampaignId(
+        campaignId: string,
+    ): Promise<string[]> {
+        const rows = await this.prisma.campaignJoiningRequest.findMany({
+            where: {
+                campaignId,
+                status: JoinRequestStatus._STATUS_APPROVED,
+                deletedAt: null,
+            },
+            select: { volunteerId: true },
+        });
+        const ids = rows
+            .map((r) => r.volunteerId)
+            .filter((id): id is string => id != null && id.length > 0);
+        return [...new Set(ids)];
+    }
+
     async isVolunteerApproved(
         campaignId: string,
         volunteerId: string,

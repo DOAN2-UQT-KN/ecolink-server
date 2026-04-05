@@ -11,7 +11,7 @@ export interface VoteActionResponse {
   value: number;
 }
 
-/** OpenAPI: `data` for POST /votes/upvote and /votes/downvote */
+/** OpenAPI: `data` for POST /incident/votes/upvote and /incident/votes/downvote */
 export interface VoteActionEnvelopeData {
   vote: VoteActionResponse;
 }
