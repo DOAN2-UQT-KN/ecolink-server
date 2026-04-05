@@ -21,6 +21,14 @@ router.post("/", authenticate, campaignController.createCampaign);
 router.get("/", authenticate, campaignController.getCampaigns);
 
 /**
+ * @route   GET /api/v1/campaigns/by-ids
+ * @desc    Campaigns by campaignIds (max 100 UUIDs)
+ * @access  Private
+ * @query   campaignIds — comma-separated or repeated
+ */
+router.get("/by-ids", authenticate, campaignController.getCampaignsByIds);
+
+/**
  * @route   GET /api/v1/campaigns/tasks/my-assigned
  * @desc    Tasks assigned to the current user (volunteer)
  * @access  Private

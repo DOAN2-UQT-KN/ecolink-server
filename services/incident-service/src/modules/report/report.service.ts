@@ -162,6 +162,21 @@ export class ReportService {
     return details;
   }
 
+  /** reportIds limited to 100 UUIDs at the controller; order matches request. */
+  async getReportsByIds(ids: string[]): Promise<ReportDetailResponse[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+    const rows = await reportRepository.findManyByIdsWithRelations(ids);
+    const byId = new Map(
+      rows.map((row) => [row.id, row as ReportWithMediaFiles]),
+    );
+    const ordered = ids
+      .map((id) => byId.get(id))
+      .filter((row): row is ReportWithMediaFiles => row !== undefined);
+    return this.reportsWithMediaToDetails(ordered);
+  }
+
   private toReportDetailFromLoaded(
     report: ReportWithMediaFiles & { distance?: number },
     mediaUrlMap: Map<string, string>,

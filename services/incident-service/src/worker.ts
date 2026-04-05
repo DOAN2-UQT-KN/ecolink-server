@@ -7,6 +7,8 @@ dotenv.config();
 
 const worker = new BackgroundJobOrchestratorWorker([reportAnalysisJobHandler]);
 
+console.log("Worker started");
+
 const shutdown = async (signal: string): Promise<void> => {
   console.log(`[Worker] received ${signal}, shutting down`);
   await worker.stop();

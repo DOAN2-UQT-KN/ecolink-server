@@ -18,6 +18,9 @@ import type {
   GetJoinRequestsQuery,
   MyJoinRequestsQuery,
 } from "./campaign.dto";
+import { normalizeQueryUuidList } from "../../utils/query-uuid-list";
+
+const CAMPAIGN_BATCH_QUERY_MAX_IDS = 100;
 
 export class CampaignController {
   constructor() { }
@@ -130,6 +133,50 @@ export class CampaignController {
         sendSuccess(res, HTTP_STATUS.OK, result);
       } catch (error) {
         console.error("Get campaigns error:", error);
+        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+      }
+    },
+  ];
+
+  /**
+   * @query campaignIds — required; comma-separated or repeated; max 100 UUIDs
+   */
+  getCampaignsByIds = [
+    async (req: Request, res: Response): Promise<void> => {
+      const campaignParsed = normalizeQueryUuidList(
+        req.query.campaignIds,
+        CAMPAIGN_BATCH_QUERY_MAX_IDS,
+      );
+
+      if (campaignParsed.kind === "invalid") {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: [
+            {
+              msg: `campaignIds must be valid UUIDs with at most ${CAMPAIGN_BATCH_QUERY_MAX_IDS} values (comma-separated or repeated keys)`,
+              path: "query",
+            },
+          ],
+        });
+      }
+
+      if (campaignParsed.kind === "absent" || campaignParsed.ids.length === 0) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: [
+            {
+              msg: "campaignIds is required",
+              path: "query",
+            },
+          ],
+        });
+      }
+
+      try {
+        const campaigns = await campaignService.getCampaignsByIds(
+          campaignParsed.ids,
+        );
+        sendSuccess(res, HTTP_STATUS.OK, { campaigns });
+      } catch (error) {
+        console.error("Get campaigns by ids error:", error);
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     },

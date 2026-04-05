@@ -26,6 +26,14 @@ router.get("/search", authenticate, reportController.searchReports);
 router.get("/my", authenticate, reportController.getMyReports);
 
 /**
+ * @route   GET /api/v1/reports/by-ids
+ * @desc    Report details by reportIds (max 100 UUIDs), same shape as GET /:id
+ * @access  Private
+ * @query   reportIds — comma-separated or repeated
+ */
+router.get("/by-ids", authenticate, reportController.getReportsByIds);
+
+/**
  * @route   GET /api/v1/reports/:id/background-jobs/status
  * @desc    Check if all background jobs for this report are done (no pending/in-process)
  * @access  Private

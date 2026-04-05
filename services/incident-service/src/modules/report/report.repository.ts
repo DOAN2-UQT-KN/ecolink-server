@@ -46,6 +46,26 @@ export class ReportRepository {
     });
   }
 
+  async findManyByIdsWithRelations(ids: string[]) {
+    if (ids.length === 0) {
+      return [];
+    }
+    return this.prisma.report.findMany({
+      where: { id: { in: ids }, deletedAt: null },
+      include: {
+        reportMediaFiles: {
+          where: { deletedAt: null },
+        },
+        campaign: {
+          include: {
+            campaignManagers: {
+              where: { deletedAt: null },
+            },
+          },
+        },
+      },
+    });
+  }
 
   async update(
     id: string,

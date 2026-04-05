@@ -98,6 +98,28 @@ export class CampaignService {
     return campaign ? this.toResponse(campaign) : null;
   }
 
+  /** campaignIds limited to 100 UUIDs at the controller. */
+  async getCampaignsByIds(campaignIds: string[]): Promise<CampaignResponse[]> {
+    if (campaignIds.length === 0) {
+      return [];
+    }
+    const rows = await campaignRepository.findManyByIds(campaignIds);
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const difficulties = await rewardServiceClient.getDifficulties();
+    const greenByLevel = new Map(
+      difficulties.map((d) => [d.level, d.greenPoints]),
+    );
+    return campaignIds
+      .map((id) => byId.get(id))
+      .filter((row): row is CampaignWithReports => row !== undefined)
+      .map((campaign) =>
+        toCampaignResponse(
+          campaign,
+          greenByLevel.get(campaign.difficulty) ?? 0,
+        ),
+      );
+  }
+
   async getCampaigns(query: CampaignListQuery): Promise<{
     campaigns: CampaignResponse[];
     total: number;

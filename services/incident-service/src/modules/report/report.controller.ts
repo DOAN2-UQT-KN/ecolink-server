@@ -8,6 +8,9 @@ import {
 } from "../../constants/http-status";
 import { reportService } from "./report.service";
 import { ReportSearchQuery } from "./report.dto";
+import { normalizeQueryUuidList } from "../../utils/query-uuid-list";
+
+const REPORT_BATCH_QUERY_MAX_IDS = 100;
 
 function buildReportSearchQuery(req: Request): ReportSearchQuery {
   return {
@@ -107,6 +110,48 @@ export class ReportController {
         sendSuccess(res, HTTP_STATUS.CREATED, { report });
       } catch (error) {
         console.error("Create report error:", error);
+        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+      }
+    },
+  ];
+
+  /**
+   * @query reportIds — required; comma-separated or repeated; max 100 UUIDs
+   */
+  getReportsByIds = [
+    async (req: Request, res: Response): Promise<void> => {
+      const parsed = normalizeQueryUuidList(
+        req.query.reportIds,
+        REPORT_BATCH_QUERY_MAX_IDS,
+      );
+
+      if (parsed.kind === "invalid") {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: [
+            {
+              msg: `reportIds must be valid UUIDs with at most ${REPORT_BATCH_QUERY_MAX_IDS} values (comma-separated or repeated keys)`,
+              path: "query",
+            },
+          ],
+        });
+      }
+
+      if (parsed.kind === "absent" || parsed.ids.length === 0) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: [
+            {
+              msg: "reportIds is required",
+              path: "query",
+            },
+          ],
+        });
+      }
+
+      try {
+        const reports = await reportService.getReportsByIds(parsed.ids);
+        sendSuccess(res, HTTP_STATUS.OK, { reports });
+      } catch (error) {
+        console.error("Get reports by ids error:", error);
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     },

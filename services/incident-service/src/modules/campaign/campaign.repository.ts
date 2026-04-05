@@ -41,6 +41,25 @@ export class CampaignRepository {
     });
   }
 
+  async findManyByIds(ids: string[]): Promise<CampaignWithReports[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+    return this.prisma.campaign.findMany({
+      where: { id: { in: ids }, deletedAt: null },
+      include: {
+        campaignManagers: {
+          where: { deletedAt: null },
+          select: { userId: true },
+        },
+        reports: {
+          where: { deletedAt: null },
+          select: { id: true },
+        },
+      },
+    });
+  }
+
   private static readonly listInclude = {
     campaignManagers: {
       where: { deletedAt: null },
