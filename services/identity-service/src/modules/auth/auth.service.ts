@@ -115,11 +115,12 @@ export class AuthService {
         email: user.email,
         role: user.roleId,
       });
-
+      
       // TODO: Store new refreshToken in Redis, invalidate old one
 
       return {
         accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
         user: {
           id: user.id,
           email: user.email,
