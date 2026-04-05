@@ -53,6 +53,39 @@ export class CampaignJoiningRequestRepository {
         });
     }
 
+    async findByCampaignIdPaginated(
+        campaignId: string,
+        filters: { status?: number; volunteerId?: string },
+        options: {
+            skip: number;
+            take: number;
+            sortBy: "createdAt" | "updatedAt";
+            sortOrder: "asc" | "desc";
+        },
+    ) {
+        const where = {
+            campaignId,
+            deletedAt: null as null,
+            ...(filters.status !== undefined ? { status: filters.status } : {}),
+            ...(filters.volunteerId ? { volunteerId: filters.volunteerId } : {}),
+        };
+        const orderBy =
+            options.sortBy === "updatedAt"
+                ? { updatedAt: options.sortOrder }
+                : { createdAt: options.sortOrder };
+
+        const [rows, total] = await Promise.all([
+            this.prisma.campaignJoiningRequest.findMany({
+                where,
+                orderBy,
+                skip: options.skip,
+                take: options.take,
+            }),
+            this.prisma.campaignJoiningRequest.count({ where }),
+        ]);
+        return { rows, total };
+    }
+
     async findPendingByCampaignId(campaignId: string) {
         return this.prisma.campaignJoiningRequest.findMany({
             where: {
@@ -64,20 +97,47 @@ export class CampaignJoiningRequestRepository {
         });
     }
 
-    async findByVolunteerId(volunteerId: string) {
-        return this.prisma.campaignJoiningRequest.findMany({
-            where: { volunteerId, deletedAt: null },
-            include: {
-                campaign: {
-                    select: {
-                        id: true,
-                        title: true,
-                        status: true,
-                    },
+    async findByVolunteerIdPaginated(
+        volunteerId: string,
+        filters: { campaignId?: string; status?: number },
+        options: {
+            skip: number;
+            take: number;
+            sortBy: "createdAt" | "updatedAt";
+            sortOrder: "asc" | "desc";
+        },
+    ) {
+        const where = {
+            volunteerId,
+            deletedAt: null as null,
+            ...(filters.campaignId ? { campaignId: filters.campaignId } : {}),
+            ...(filters.status !== undefined ? { status: filters.status } : {}),
+        };
+        const orderBy =
+            options.sortBy === "updatedAt"
+                ? { updatedAt: options.sortOrder }
+                : { createdAt: options.sortOrder };
+        const include = {
+            campaign: {
+                select: {
+                    id: true,
+                    title: true,
+                    status: true,
                 },
             },
-            orderBy: { createdAt: "desc" },
-        });
+        };
+
+        const [rows, total] = await Promise.all([
+            this.prisma.campaignJoiningRequest.findMany({
+                where,
+                include,
+                orderBy,
+                skip: options.skip,
+                take: options.take,
+            }),
+            this.prisma.campaignJoiningRequest.count({ where }),
+        ]);
+        return { rows, total };
     }
 
     async updateStatus(id: string, status: number) {
@@ -109,14 +169,37 @@ export class CampaignJoiningRequestRepository {
         return !!request;
     }
 
-    async getApprovedVolunteers(campaignId: string) {
-        return this.prisma.campaignJoiningRequest.findMany({
-            where: {
-                campaignId,
-                status: JoinRequestStatus._STATUS_APPROVED,
-                deletedAt: null,
-            },
-        });
+    async getApprovedVolunteersPaginated(
+        campaignId: string,
+        filters: { volunteerId?: string },
+        options: {
+            skip: number;
+            take: number;
+            sortBy: "createdAt" | "updatedAt";
+            sortOrder: "asc" | "desc";
+        },
+    ) {
+        const where = {
+            campaignId,
+            status: JoinRequestStatus._STATUS_APPROVED,
+            deletedAt: null as null,
+            ...(filters.volunteerId ? { volunteerId: filters.volunteerId } : {}),
+        };
+        const orderBy =
+            options.sortBy === "updatedAt"
+                ? { updatedAt: options.sortOrder }
+                : { createdAt: options.sortOrder };
+
+        const [rows, total] = await Promise.all([
+            this.prisma.campaignJoiningRequest.findMany({
+                where,
+                orderBy,
+                skip: options.skip,
+                take: options.take,
+            }),
+            this.prisma.campaignJoiningRequest.count({ where }),
+        ]);
+        return { rows, total };
     }
 }
 

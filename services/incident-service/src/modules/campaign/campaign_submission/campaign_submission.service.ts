@@ -2,6 +2,7 @@ import { campaignSubmissionRepository } from "./campaign_submission.repository";
 import { campaignManagerRepository } from "../campaign_manager/campaign_manager.repository";
 import { ResultStatus } from "../../../constants/status.enum";
 import prisma from "../../../config/prisma.client";
+import type { CampaignSubmissionsListQuery } from "./campaign_submission.dto";
 
 // ─── Request DTOs ────────────────────────────────────────────────────────────
 
@@ -164,14 +165,45 @@ export class CampaignSubmissionService {
   }
 
   /**
-   * Get all submissions for a campaign.
+   * List submissions for a campaign with optional filters and pagination.
    */
   async getSubmissionsByCampaign(
     campaignId: string,
-  ): Promise<SubmissionResponse[]> {
-    const submissions =
-      await campaignSubmissionRepository.findByCampaignId(campaignId);
-    return submissions.map((s) => this.toResponse(s));
+    query: CampaignSubmissionsListQuery,
+  ): Promise<{
+    submissions: SubmissionResponse[];
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  }> {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const sortBy = query.sortBy ?? "createdAt";
+    const sortOrder = query.sortOrder ?? "desc";
+    const skip = (page - 1) * limit;
+
+    const { rows, total } =
+      await campaignSubmissionRepository.findByCampaignIdPaginated({
+        campaignId,
+        filters: {
+          status: query.status,
+          submittedBy: query.submittedBy,
+          search: query.search,
+        },
+        skip,
+        take: limit,
+        sortBy,
+        sortOrder,
+      });
+
+    return {
+      submissions: rows.map((s) => this.toResponse(s)),
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   /**

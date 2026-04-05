@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import prisma from "../../../config/prisma.client";
 
 export class CampaignSubmissionRepository {
@@ -47,17 +47,60 @@ export class CampaignSubmissionRepository {
     });
   }
 
-  async findByCampaignId(campaignId: string) {
-    return this.prisma.campaignSubmission.findMany({
-      where: { campaignId, deletedAt: null },
-      include: {
-        campaignResults: {
-          where: { deletedAt: null },
-          include: { campaignResultFiles: true },
-        },
-      },
-      orderBy: { createdAt: "desc" },
-    });
+  private static readonly submissionListInclude = {
+    campaignResults: {
+      where: { deletedAt: null },
+      include: { campaignResultFiles: true },
+    },
+  } as const;
+
+  async findByCampaignIdPaginated(params: {
+    campaignId: string;
+    filters: {
+      status?: number;
+      submittedBy?: string;
+      search?: string;
+    };
+    skip: number;
+    take: number;
+    sortBy: "createdAt" | "updatedAt" | "title";
+    sortOrder: "asc" | "desc";
+  }) {
+    const { campaignId, filters, skip, take, sortBy, sortOrder } = params;
+
+    const where: Prisma.CampaignSubmissionWhereInput = {
+      campaignId,
+      deletedAt: null,
+      ...(filters.status !== undefined ? { status: filters.status } : {}),
+      ...(filters.submittedBy ? { submittedBy: filters.submittedBy } : {}),
+      ...(filters.search
+        ? {
+            title: {
+              contains: filters.search,
+              mode: Prisma.QueryMode.insensitive,
+            },
+          }
+        : {}),
+    };
+
+    const orderBy: Prisma.CampaignSubmissionOrderByWithRelationInput =
+      sortBy === "title"
+        ? { title: sortOrder }
+        : sortBy === "updatedAt"
+          ? { updatedAt: sortOrder }
+          : { createdAt: sortOrder };
+
+    const [rows, total] = await Promise.all([
+      this.prisma.campaignSubmission.findMany({
+        where,
+        include: CampaignSubmissionRepository.submissionListInclude,
+        orderBy,
+        skip,
+        take,
+      }),
+      this.prisma.campaignSubmission.count({ where }),
+    ]);
+    return { rows, total };
   }
 
   async updateStatus(id: string, status: number) {

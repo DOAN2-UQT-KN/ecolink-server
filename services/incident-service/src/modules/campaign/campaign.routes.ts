@@ -14,8 +14,9 @@ router.post("/", authenticate, campaignController.createCampaign);
 
 /**
  * @route   GET /api/v1/campaigns
- * @desc    Get all campaigns
+ * @desc    List campaigns with optional filters and pagination
  * @access  Private
+ * @query   search?, status?, createdBy?, managerId?, page, limit, sortBy (createdAt|updatedAt|title), sortOrder (asc|desc)
  */
 router.get("/", authenticate, campaignController.getCampaigns);
 
@@ -133,6 +134,7 @@ router.post(
 /**
  * @route   GET /api/v1/campaigns/:id/managers
  * @access  Private
+ * @query   userId?, page, limit, sortBy (assignedAt|userId|createdAt), sortOrder (asc|desc)
  */
 router.get("/:id/managers", authenticate, campaignController.getCampaignManagers);
 
@@ -166,21 +168,22 @@ router.post(
 );
 
 /**
- * @route   POST /api/v1/campaigns/volunteers/join-requests/get
- * @desc    Get join requests for a campaign (managers only)
+ * @route   GET /api/v1/campaigns/volunteers/join-requests
+ * @desc    List join requests for a campaign with filters and pagination (managers only)
  * @access  Private
- * @body    { campaignId }
+ * @query   campaignId (required), status?, volunteerId?, page, limit, sortBy (createdAt|updatedAt), sortOrder (asc|desc)
  */
-router.post(
-    "/volunteers/join-requests/get",
+router.get(
+    "/volunteers/join-requests",
     authenticate,
     campaignController.getJoinRequests,
 );
 
 /**
  * @route   GET /api/v1/campaigns/volunteers/join-requests/my
- * @desc    Get my join requests as a volunteer
+ * @desc    My join requests with optional filters and pagination
  * @access  Private
+ * @query   campaignId?, status?, page, limit, sortBy (createdAt|updatedAt), sortOrder (asc|desc)
  */
 router.get(
     "/volunteers/join-requests/my",
@@ -213,12 +216,12 @@ router.delete(
 );
 
 /**
- * @route   POST /api/v1/campaigns/volunteers/approved
- * @desc    Get approved volunteers for a campaign
+ * @route   GET /api/v1/campaigns/volunteers/approved
+ * @desc    List approved volunteers for a campaign (managers only), with filters and pagination
  * @access  Private
- * @body    { campaignId }
+ * @query   campaignId (required), volunteerId?, page, limit, sortBy (createdAt|updatedAt), sortOrder (asc|desc)
  */
-router.post(
+router.get(
     "/volunteers/approved",
     authenticate,
     campaignController.getApprovedVolunteers,
@@ -241,8 +244,9 @@ router.post(
 
 /**
  * @route   GET /api/v1/campaigns/:id/submissions
- * @desc    Get all submissions for a campaign
+ * @desc    List submissions with optional filters and pagination
  * @access  Private
+ * @query   status?, submittedBy?, search?, page, limit, sortBy (createdAt|updatedAt|title), sortOrder (asc|desc)
  */
 router.get(
   "/:id/submissions",

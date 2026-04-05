@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import prisma from "../../../config/prisma.client";
 
 export class CampaignManagerRepository {
@@ -39,6 +39,39 @@ export class CampaignManagerRepository {
       where: { campaignId, deletedAt: null },
       orderBy: { assignedAt: "desc" },
     });
+  }
+
+  async findManagersByCampaignIdPaginated(params: {
+    campaignId: string;
+    userId?: string;
+    skip: number;
+    take: number;
+    sortBy: "assignedAt" | "userId" | "createdAt";
+    sortOrder: "asc" | "desc";
+  }) {
+    const where: Prisma.CampaignManagerWhereInput = {
+      campaignId: params.campaignId,
+      deletedAt: null,
+      ...(params.userId ? { userId: params.userId } : {}),
+    };
+
+    const orderBy: Prisma.CampaignManagerOrderByWithRelationInput =
+      params.sortBy === "userId"
+        ? { userId: params.sortOrder }
+        : params.sortBy === "createdAt"
+          ? { createdAt: params.sortOrder }
+          : { assignedAt: params.sortOrder };
+
+    const [rows, total] = await Promise.all([
+      this.prisma.campaignManager.findMany({
+        where,
+        orderBy,
+        skip: params.skip,
+        take: params.take,
+      }),
+      this.prisma.campaignManager.count({ where }),
+    ]);
+    return { rows, total };
   }
 
   async findCampaignsByManagerId(userId: string) {

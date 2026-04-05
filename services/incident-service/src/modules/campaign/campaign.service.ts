@@ -3,6 +3,7 @@ import prisma from "../../config/prisma.client";
 import { HTTP_STATUS } from "../../constants/http-status";
 import { campaignRepository } from "./campaign.repository";
 import {
+  CampaignListQuery,
   CampaignResponse,
   CreateCampaignRequest,
   UpdateCampaignRequest,
@@ -72,9 +73,39 @@ export class CampaignService {
     return campaign ? toCampaignResponse(campaign) : null;
   }
 
-  async getCampaigns(): Promise<CampaignResponse[]> {
-    const campaigns = await campaignRepository.findAll();
-    return campaigns.map((campaign) => toCampaignResponse(campaign));
+  async getCampaigns(query: CampaignListQuery): Promise<{
+    campaigns: CampaignResponse[];
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  }> {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const sortBy = query.sortBy ?? "createdAt";
+    const sortOrder = query.sortOrder ?? "desc";
+    const skip = (page - 1) * limit;
+
+    const { rows, total } = await campaignRepository.findManyPaginated({
+      filters: {
+        search: query.search,
+        status: query.status,
+        createdBy: query.createdBy,
+        managerId: query.managerId,
+      },
+      skip,
+      take: limit,
+      sortBy,
+      sortOrder,
+    });
+
+    return {
+      campaigns: rows.map((campaign) => toCampaignResponse(campaign)),
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   async updateCampaign(

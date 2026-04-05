@@ -42,8 +42,24 @@ export interface CreateJoinRequestBody {
   campaignId: string;
 }
 
-export interface GetJoinRequestsBody {
+/** Query params for GET /campaigns/volunteers/join-requests (managers). */
+export interface GetJoinRequestsQuery {
   campaignId: string;
+  /** Join request status (e.g. pending / approved / rejected). */
+  status?: number;
+  volunteerId?: string;
+  page?: number;
+  limit?: number;
+  sortBy?: "createdAt" | "updatedAt";
+  sortOrder?: "asc" | "desc";
+}
+
+export interface PaginatedJoinRequestsEnvelopeData {
+  joinRequests: object[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
 }
 
 export interface ProcessJoinRequestBody {
@@ -55,8 +71,49 @@ export interface CancelJoinRequestBody {
   requestId: string;
 }
 
-export interface ApprovedVolunteersBody {
+/** Query for GET /campaigns/volunteers/approved (managers only). */
+export interface GetApprovedVolunteersQuery {
   campaignId: string;
+  volunteerId?: string;
+  page?: number;
+  limit?: number;
+  sortBy?: "createdAt" | "updatedAt";
+  sortOrder?: "asc" | "desc";
+}
+
+/** Query for GET /campaigns/volunteers/join-requests/my. */
+export interface MyJoinRequestsQuery {
+  campaignId?: string;
+  status?: number;
+  page?: number;
+  limit?: number;
+  sortBy?: "createdAt" | "updatedAt";
+  sortOrder?: "asc" | "desc";
+}
+
+/** Query for GET /campaigns/:id/managers. */
+export interface CampaignManagersListQuery {
+  userId?: string;
+  page?: number;
+  limit?: number;
+  sortBy?: "assignedAt" | "userId" | "createdAt";
+  sortOrder?: "asc" | "desc";
+}
+
+export interface PaginatedVolunteersEnvelopeData {
+  volunteers: object[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
+export interface PaginatedManagersEnvelopeData {
+  managers: object[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
 }
 
 export interface AssignVolunteerBody {
@@ -88,8 +145,29 @@ export interface CampaignOneEnvelopeData {
   campaign: CampaignResponse;
 }
 
+/** Query params for GET /campaigns (list with filters and pagination). */
+export interface CampaignListQuery {
+  search?: string;
+  status?: number;
+  createdBy?: string;
+  /** Campaigns where this user is an active manager. */
+  managerId?: string;
+  page?: number;
+  limit?: number;
+  sortBy?: "createdAt" | "updatedAt" | "title";
+  sortOrder?: "asc" | "desc";
+}
+
 export interface CampaignsListEnvelopeData {
   campaigns: CampaignResponse[];
+}
+
+export interface PaginatedCampaignsEnvelopeData {
+  campaigns: CampaignResponse[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
 }
 
 export interface JoinRequestOneEnvelopeData {

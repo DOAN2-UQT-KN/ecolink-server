@@ -42,7 +42,8 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
     responseData: "CampaignOneEnvelopeData",
   },
   "GET /api/v1/campaigns": {
-    responseData: "CampaignsListEnvelopeData",
+    query: "CampaignListQuery",
+    responseData: "PaginatedCampaignsEnvelopeData",
   },
   "GET /api/v1/campaigns/tasks/my-assigned": {
     responseData: "TasksListEnvelopeData",
@@ -88,7 +89,8 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
     omitData: true,
   },
   "GET /api/v1/campaigns/:id/managers": {
-    responseData: "ManagersListEnvelopeData",
+    query: "CampaignManagersListQuery",
+    responseData: "PaginatedManagersEnvelopeData",
   },
   "POST /api/v1/campaigns/:id/tasks": {
     requestBody: "CreateCampaignTaskBody",
@@ -101,12 +103,13 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
     requestBody: "CreateJoinRequestBody",
     responseData: "JoinRequestOneEnvelopeData",
   },
-  "POST /api/v1/campaigns/volunteers/join-requests/get": {
-    requestBody: "GetJoinRequestsBody",
-    responseData: "JoinRequestsListEnvelopeData",
+  "GET /api/v1/campaigns/volunteers/join-requests": {
+    query: "GetJoinRequestsQuery",
+    responseData: "PaginatedJoinRequestsEnvelopeData",
   },
   "GET /api/v1/campaigns/volunteers/join-requests/my": {
-    responseData: "JoinRequestsListEnvelopeData",
+    query: "MyJoinRequestsQuery",
+    responseData: "PaginatedJoinRequestsEnvelopeData",
   },
   "PUT /api/v1/campaigns/volunteers/join-requests/process": {
     requestBody: "ProcessJoinRequestBody",
@@ -116,16 +119,17 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
     requestBody: "CancelJoinRequestBody",
     omitData: true,
   },
-  "POST /api/v1/campaigns/volunteers/approved": {
-    requestBody: "ApprovedVolunteersBody",
-    responseData: "VolunteersListEnvelopeData",
+  "GET /api/v1/campaigns/volunteers/approved": {
+    query: "GetApprovedVolunteersQuery",
+    responseData: "PaginatedVolunteersEnvelopeData",
   },
   "POST /api/v1/campaigns/:id/submissions": {
     requestBody: "CreateCampaignSubmissionBody",
     responseData: "SubmissionOneEnvelopeData",
   },
   "GET /api/v1/campaigns/:id/submissions": {
-    responseData: "SubmissionsListEnvelopeData",
+    query: "CampaignSubmissionsListQuery",
+    responseData: "PaginatedSubmissionsEnvelopeData",
   },
   "GET /api/v1/campaigns/:id/submissions/current-results": {
     responseData: "ResultsListEnvelopeData",

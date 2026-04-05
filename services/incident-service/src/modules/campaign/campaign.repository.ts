@@ -41,21 +41,76 @@ export class CampaignRepository {
     });
   }
 
-  async findAll(): Promise<CampaignWithReports[]> {
-    return this.prisma.campaign.findMany({
+  private static readonly listInclude = {
+    campaignManagers: {
       where: { deletedAt: null },
-      include: {
-        campaignManagers: {
-          where: { deletedAt: null },
-          select: { userId: true },
-        },
-        reports: {
-          where: { deletedAt: null },
-          select: { id: true },
-        },
-      },
-      orderBy: { createdAt: "desc" },
-    });
+      select: { userId: true },
+    },
+    reports: {
+      where: { deletedAt: null },
+      select: { id: true },
+    },
+  } as const;
+
+  async findManyPaginated(params: {
+    filters: {
+      search?: string;
+      status?: number;
+      createdBy?: string;
+      managerId?: string;
+    };
+    skip: number;
+    take: number;
+    sortBy: "createdAt" | "updatedAt" | "title";
+    sortOrder: "asc" | "desc";
+  }): Promise<{ rows: CampaignWithReports[]; total: number }> {
+    const { filters, skip, take, sortBy, sortOrder } = params;
+
+    const where: Prisma.CampaignWhereInput = {
+      deletedAt: null,
+      ...(filters.status !== undefined ? { status: filters.status } : {}),
+      ...(filters.createdBy ? { createdBy: filters.createdBy } : {}),
+      ...(filters.search
+        ? {
+            title: {
+              contains: filters.search,
+              mode: Prisma.QueryMode.insensitive,
+            },
+          }
+        : {}),
+      ...(filters.managerId
+        ? {
+            campaignManagers: {
+              some: {
+                userId: filters.managerId,
+                deletedAt: null,
+              },
+            },
+          }
+        : {}),
+    };
+
+    const orderBy: Prisma.CampaignOrderByWithRelationInput =
+      sortBy === "title"
+        ? { title: sortOrder }
+        : sortBy === "updatedAt"
+          ? { updatedAt: sortOrder }
+          : { createdAt: sortOrder };
+
+    const include = CampaignRepository.listInclude;
+
+    const [rows, total] = await Promise.all([
+      this.prisma.campaign.findMany({
+        where,
+        include,
+        orderBy,
+        skip,
+        take,
+      }),
+      this.prisma.campaign.count({ where }),
+    ]);
+
+    return { rows, total };
   }
 
   async update(

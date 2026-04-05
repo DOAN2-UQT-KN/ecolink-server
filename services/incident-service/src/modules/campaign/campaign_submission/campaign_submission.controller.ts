@@ -1,11 +1,12 @@
 import { Request, Response } from "express";
-import { body, validationResult } from "express-validator";
+import { body, param, query, validationResult } from "express-validator";
 import {
   HTTP_STATUS,
   sendError,
   sendSuccess,
 } from "../../../constants/http-status";
 import { campaignSubmissionService } from "./campaign_submission.service";
+import type { CampaignSubmissionsListQuery } from "./campaign_submission.dto";
 
 export class CampaignSubmissionController {
   constructor() {}
@@ -51,16 +52,58 @@ export class CampaignSubmissionController {
   /**
    * GET /api/v1/campaigns/:id/submissions
    */
-  getSubmissions = async (req: Request, res: Response): Promise<void> => {
-    try {
-      const submissions =
-        await campaignSubmissionService.getSubmissionsByCampaign(req.params.id);
-      sendSuccess(res, HTTP_STATUS.OK, { submissions });
-    } catch (error) {
-      console.error("Get submissions error:", error);
-      sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
-    }
-  };
+  getSubmissions = [
+    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+    query("status").optional().isInt(),
+    query("submittedBy").optional().isUUID(),
+    query("search").optional().trim(),
+    query("page").optional().isInt({ min: 1 }),
+    query("limit").optional().isInt({ min: 1, max: 100 }),
+    query("sortBy").optional().isIn(["createdAt", "updatedAt", "title"]),
+    query("sortOrder").optional().isIn(["asc", "desc"]),
+
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: errors.array(),
+        });
+      }
+
+      try {
+        const q: CampaignSubmissionsListQuery = {
+          page: req.query.page
+            ? parseInt(String(req.query.page), 10)
+            : undefined,
+          limit: req.query.limit
+            ? parseInt(String(req.query.limit), 10)
+            : undefined,
+          status:
+            req.query.status !== undefined && req.query.status !== ""
+              ? parseInt(String(req.query.status), 10)
+              : undefined,
+          submittedBy: req.query.submittedBy
+            ? String(req.query.submittedBy).trim()
+            : undefined,
+          search: req.query.search
+            ? String(req.query.search).trim()
+            : undefined,
+          sortBy: req.query.sortBy as CampaignSubmissionsListQuery["sortBy"],
+          sortOrder:
+            req.query.sortOrder as CampaignSubmissionsListQuery["sortOrder"],
+        };
+
+        const result = await campaignSubmissionService.getSubmissionsByCampaign(
+          req.params.id,
+          q,
+        );
+        sendSuccess(res, HTTP_STATUS.OK, result);
+      } catch (error) {
+        console.error("Get submissions error:", error);
+        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+      }
+    },
+  ];
 
   /**
    * GET /api/v1/campaigns/:id/submissions/current-results

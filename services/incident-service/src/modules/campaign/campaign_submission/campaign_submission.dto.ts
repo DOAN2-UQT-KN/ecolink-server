@@ -21,6 +21,26 @@ export interface SubmissionsListEnvelopeData {
   submissions: object[];
 }
 
+/** Query for GET /campaigns/:id/submissions */
+export interface CampaignSubmissionsListQuery {
+  status?: number;
+  submittedBy?: string;
+  /** Case-insensitive substring match on submission title. */
+  search?: string;
+  page?: number;
+  limit?: number;
+  sortBy?: "createdAt" | "updatedAt" | "title";
+  sortOrder?: "asc" | "desc";
+}
+
+export interface PaginatedSubmissionsEnvelopeData {
+  submissions: object[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
 export interface ResultsListEnvelopeData {
   results: object[];
 }

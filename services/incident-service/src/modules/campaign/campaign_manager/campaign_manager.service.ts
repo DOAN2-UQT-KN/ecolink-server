@@ -3,6 +3,7 @@ import { reportRepository } from "../../report/report.repository";
 import {
   AddCampaignManagersRequest,
   CampaignManagerAssignmentResponse,
+  CampaignManagersListQuery,
 } from "../campaign.dto";
 import { campaignRepository } from "../campaign.repository";
 import { HttpError, HTTP_STATUS } from "../../../constants/http-status";
@@ -157,11 +158,18 @@ export class CampaignManagerService {
   }
 
   /**
-   * List manager assignments for a campaign.
+   * List manager assignments for a campaign with optional filters and pagination.
    */
   async listManagers(
     campaignId: string,
-  ): Promise<CampaignManagerAssignmentResponse[]> {
+    query: CampaignManagersListQuery,
+  ): Promise<{
+    managers: CampaignManagerAssignmentResponse[];
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  }> {
     const campaign = await campaignRepository.findById(campaignId);
     if (!campaign) {
       throw new HttpError(
@@ -169,15 +177,34 @@ export class CampaignManagerService {
       );
     }
 
-    const managers =
-      await campaignManagerRepository.findManagersByCampaignId(campaignId);
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const sortBy = query.sortBy ?? "assignedAt";
+    const sortOrder = query.sortOrder ?? "desc";
+    const skip = (page - 1) * limit;
 
-    return managers.map((m) => ({
-      campaignId,
-      userId: m.userId,
-      assignedBy: m.assignedBy,
-      assignedAt: m.assignedAt,
-    }));
+    const { rows, total } =
+      await campaignManagerRepository.findManagersByCampaignIdPaginated({
+        campaignId,
+        userId: query.userId,
+        skip,
+        take: limit,
+        sortBy,
+        sortOrder,
+      });
+
+    return {
+      managers: rows.map((m) => ({
+        campaignId,
+        userId: m.userId,
+        assignedBy: m.assignedBy,
+        assignedAt: m.assignedAt,
+      })),
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   /**

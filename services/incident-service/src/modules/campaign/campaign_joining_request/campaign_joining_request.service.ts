@@ -2,6 +2,11 @@ import { campaignJoiningRequestRepository } from "./campaign_joining_request.rep
 import { campaignRepository } from "../campaign.repository";
 import { campaignManagerRepository } from "../campaign_manager/campaign_manager.repository";
 import { GlobalStatus, JoinRequestStatus } from "../../../constants/status.enum";
+import type {
+    GetApprovedVolunteersQuery,
+    GetJoinRequestsQuery,
+    MyJoinRequestsQuery,
+} from "../campaign.dto";
 
 export interface CreateJoinRequestRequest {
     campaignId: string;
@@ -72,25 +77,88 @@ export class CampaignJoiningRequestService {
     }
 
     /**
-     * Get all join requests for a campaign.
+     * List join requests for a campaign with filters and pagination (managers only).
      */
-    async getJoinRequestsByCampaignId(
+    async getJoinRequestsByCampaignForManager(
         campaignId: string,
-    ): Promise<JoinRequestResponse[]> {
-        const requests =
-            await campaignJoiningRequestRepository.findByCampaignId(campaignId);
-        return requests.map((r) => this.toResponse(r));
+        managerId: string,
+        query: GetJoinRequestsQuery,
+    ): Promise<{
+        joinRequests: JoinRequestResponse[];
+        total: number;
+        page: number;
+        limit: number;
+        totalPages: number;
+    }> {
+        const isManager = await campaignManagerRepository.isManager(
+            campaignId,
+            managerId,
+        );
+        if (!isManager) {
+            throw new Error("Only campaign managers can view join requests");
+        }
+
+        const page = query.page ?? 1;
+        const limit = query.limit ?? 10;
+        const sortBy = query.sortBy ?? "createdAt";
+        const sortOrder = query.sortOrder ?? "desc";
+        const skip = (page - 1) * limit;
+
+        const { rows, total } =
+            await campaignJoiningRequestRepository.findByCampaignIdPaginated(
+                campaignId,
+                {
+                    status: query.status,
+                    volunteerId: query.volunteerId,
+                },
+                { skip, take: limit, sortBy, sortOrder },
+            );
+
+        return {
+            joinRequests: rows.map((r) => this.toResponse(r)),
+            total,
+            page,
+            limit,
+            totalPages: Math.ceil(total / limit),
+        };
     }
 
     /**
-     * Get my join requests (volunteer perspective).
+     * List my join requests (volunteer) with optional filters and pagination.
      */
     async getMyJoinRequests(
         volunteerId: string,
-    ): Promise<JoinRequestDetailResponse[]> {
-        const requests =
-            await campaignJoiningRequestRepository.findByVolunteerId(volunteerId);
-        return requests.map((r) => this.toDetailResponse(r));
+        query: MyJoinRequestsQuery,
+    ): Promise<{
+        joinRequests: JoinRequestDetailResponse[];
+        total: number;
+        page: number;
+        limit: number;
+        totalPages: number;
+    }> {
+        const page = query.page ?? 1;
+        const limit = query.limit ?? 10;
+        const sortBy = query.sortBy ?? "createdAt";
+        const sortOrder = query.sortOrder ?? "desc";
+        const skip = (page - 1) * limit;
+
+        const { rows, total } =
+            await campaignJoiningRequestRepository.findByVolunteerIdPaginated(
+                volunteerId,
+                {
+                    campaignId: query.campaignId,
+                    status: query.status,
+                },
+                { skip, take: limit, sortBy, sortOrder },
+            );
+
+        return {
+            joinRequests: rows.map((r) => this.toDetailResponse(r)),
+            total,
+            page,
+            limit,
+            totalPages: Math.ceil(total / limit),
+        };
     }
 
     /**
@@ -170,14 +238,47 @@ export class CampaignJoiningRequestService {
     }
 
     /**
-     * Get all approved volunteers for a campaign.
+     * List approved volunteers for a campaign (managers only), with filters and pagination.
      */
-    async getApprovedVolunteers(
+    async getApprovedVolunteersForManager(
         campaignId: string,
-    ): Promise<{ volunteerId: string | null }[]> {
-        const volunteers =
-            await campaignJoiningRequestRepository.getApprovedVolunteers(campaignId);
-        return volunteers.map((v) => ({ volunteerId: v.volunteerId }));
+        managerId: string,
+        query: GetApprovedVolunteersQuery,
+    ): Promise<{
+        volunteers: { volunteerId: string | null }[];
+        total: number;
+        page: number;
+        limit: number;
+        totalPages: number;
+    }> {
+        const isManager = await campaignManagerRepository.isManager(
+            campaignId,
+            managerId,
+        );
+        if (!isManager) {
+            throw new Error("Only campaign managers can view approved volunteers");
+        }
+
+        const page = query.page ?? 1;
+        const limit = query.limit ?? 10;
+        const sortBy = query.sortBy ?? "createdAt";
+        const sortOrder = query.sortOrder ?? "desc";
+        const skip = (page - 1) * limit;
+
+        const { rows, total } =
+            await campaignJoiningRequestRepository.getApprovedVolunteersPaginated(
+                campaignId,
+                { volunteerId: query.volunteerId },
+                { skip, take: limit, sortBy, sortOrder },
+            );
+
+        return {
+            volunteers: rows.map((v) => ({ volunteerId: v.volunteerId })),
+            total,
+            page,
+            limit,
+            totalPages: Math.ceil(total / limit),
+        };
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
