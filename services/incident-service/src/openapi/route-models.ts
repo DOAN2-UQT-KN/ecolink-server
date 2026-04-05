@@ -160,4 +160,9 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
     requestBody: "VoteActionBody",
     responseData: "VoteActionEnvelopeData",
   },
+
+  "POST /api/v1/saved-resources/save": {
+    requestBody: "SaveResourceBody",
+    responseData: "SaveResourceEnvelopeData",
+  },
 };

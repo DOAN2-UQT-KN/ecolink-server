@@ -53,6 +53,12 @@ export enum VoteResourceType {
   CAMPAIGN = "campaign",
 }
 
+/** Targets for saved / bookmarked resources. Stored as lowercase in API and DB. */
+export enum SavedResourceType {
+  REPORT = "report",
+  CAMPAIGN = "campaign",
+}
+
 export const VoteValue = {
   NONE: 0,
   UP: 1,

@@ -9,6 +9,7 @@ import { OPENAPI_ROUTE_MODELS } from "./openapi/route-models";
 import reportRoutes from "./modules/report/report.routes";
 import campaignRoutes from "./modules/campaign/campaign.routes";
 import voteRoutes from "./modules/vote/vote.routes";
+import savedResourceRoutes from "./modules/saved_resource/saved_resource.routes";
 import { errorHandler } from "./middleware/error.middleware";
 import {
   camelCaseRequestBody,
@@ -24,6 +25,7 @@ const swaggerRouteFiles = routeModulesFrom(__dirname, [
   "modules/report/report.routes",
   "modules/campaign/campaign.routes",
   "modules/vote/vote.routes",
+  "modules/saved_resource/saved_resource.routes",
 ]);
 
 // Middleware
@@ -65,6 +67,7 @@ app.get("/health", (_req, res) => {
 app.use("/api/v1/reports", reportRoutes);
 app.use("/api/v1/campaigns", campaignRoutes);
 app.use("/api/v1/votes", voteRoutes);
+app.use("/api/v1/saved-resources", savedResourceRoutes);
 
 // Error handling
 app.use(errorHandler);
