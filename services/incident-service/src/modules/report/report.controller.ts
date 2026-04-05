@@ -410,7 +410,7 @@ export class ReportController {
   ];
 
   /**
-   * Verify a report (admin only). Sets is_verify and status verified.
+   * Verify a report (admin only). Sets is_verify and status active (approved).
    */
   adminVerifyReport = [
     param("id").isUUID().withMessage("Report ID must be a valid UUID"),

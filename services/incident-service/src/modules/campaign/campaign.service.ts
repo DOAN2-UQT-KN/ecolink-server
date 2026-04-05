@@ -1,11 +1,14 @@
 import { Prisma } from "@prisma/client";
 import prisma from "../../config/prisma.client";
+import { GlobalStatus } from "../../constants/status.enum";
 import { HTTP_STATUS } from "../../constants/http-status";
 import { rewardServiceClient } from "../reward/reward-service.client";
 import { campaignRepository } from "./campaign.repository";
 import {
   CampaignListQuery,
+  CampaignMultiSubmissionReviewListQuery,
   CampaignResponse,
+  CampaignWithAwaitingSubmissionCount,
   CreateCampaignRequest,
   UpdateCampaignRequest,
 } from "./campaign.dto";
@@ -51,6 +54,7 @@ export class CampaignService {
             title: request.title,
             description: request.description,
             difficulty: request.difficulty,
+            status: GlobalStatus._STATUS_INREVIEW,
             isVerify: false,
             createdBy: userId,
             updatedBy: userId,
@@ -165,6 +169,90 @@ export class CampaignService {
     };
   }
 
+  /**
+   * Admin dashboard: campaigns with more than one submission still awaiting
+   * manager approve/reject.
+   */
+  async getCampaignsAwaitingMultiSubmissionReview(
+    query: CampaignMultiSubmissionReviewListQuery,
+  ): Promise<{
+    campaigns: CampaignWithAwaitingSubmissionCount[];
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  }> {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const sortBy = query.sortBy ?? "updatedAt";
+    const sortOrder = query.sortOrder ?? "desc";
+    const skip = (page - 1) * limit;
+
+    const pairs =
+      await campaignRepository.findCampaignIdsWithMultipleAwaitingSubmissions();
+    const total = pairs.length;
+    if (total === 0) {
+      return {
+        campaigns: [],
+        total: 0,
+        page,
+        limit,
+        totalPages: 0,
+      };
+    }
+
+    const countById = new Map(
+      pairs.map((p) => [p.campaignId, p.awaitingSubmissionCount]),
+    );
+
+    const orderBy: Prisma.CampaignOrderByWithRelationInput =
+      sortBy === "title"
+        ? { title: sortOrder }
+        : sortBy === "updatedAt"
+          ? { updatedAt: sortOrder }
+          : { createdAt: sortOrder };
+
+    const sortedCampaigns = await prisma.campaign.findMany({
+      where: {
+        id: { in: pairs.map((p) => p.campaignId) },
+        deletedAt: null,
+      },
+      orderBy,
+    });
+
+    const pageSlice = sortedCampaigns.slice(skip, skip + limit);
+    const pageIds = pageSlice.map((c) => c.id);
+    const rows = await campaignRepository.findManyByIds(pageIds);
+    const byId = new Map(rows.map((r) => [r.id, r]));
+
+    const difficulties = await rewardServiceClient.getDifficulties();
+    const greenByLevel = new Map(
+      difficulties.map((d) => [d.level, d.greenPoints]),
+    );
+
+    const campaigns: CampaignWithAwaitingSubmissionCount[] = pageIds
+      .map((id) => byId.get(id))
+      .filter((row): row is NonNullable<typeof row> => row !== undefined)
+      .map((entity) => {
+        const base = toCampaignResponse(
+          entity,
+          greenByLevel.get(entity.difficulty) ?? 0,
+        );
+        return {
+          ...base,
+          awaitingSubmissionCount: countById.get(entity.id) ?? 0,
+        };
+      });
+
+    return {
+      campaigns,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
+  }
+
   async updateCampaign(
     id: string,
     userId: string,
@@ -265,15 +353,51 @@ export class CampaignService {
     return this.toResponse(updated);
   }
 
-  /** Admin-only at controller: mark campaign as verified. */
-  async adminVerifyCampaign(id: string): Promise<CampaignResponse> {
+  /** Admin-only at controller: approve campaign (active) and mark verified. */
+  async adminVerifyCampaign(
+    id: string,
+    adminUserId: string,
+  ): Promise<CampaignResponse> {
     const existing = await campaignRepository.findById(id);
     if (!existing) {
       throw new Error("Campaign not found");
     }
 
+    if (existing.isVerify) {
+      return this.toResponse(existing);
+    }
+
     const updated = await campaignRepository.update(id, {
       isVerify: true,
+      status: GlobalStatus._STATUS_ACTIVE,
+      updatedBy: adminUserId,
+    });
+    return this.toResponse(updated);
+  }
+
+  /** Admin-only: mark campaign completed (green points for participants — to be wired later). */
+  async adminMarkCampaignDone(
+    id: string,
+    adminUserId: string,
+  ): Promise<CampaignResponse> {
+    const existing = await campaignRepository.findById(id);
+    if (!existing) {
+      throw new Error("Campaign not found");
+    }
+
+    if (existing.status === GlobalStatus._STATUS_COMPLETED) {
+      return this.toResponse(existing);
+    }
+
+    if (existing.status !== GlobalStatus._STATUS_ACTIVE) {
+      throw new Error(
+        "Campaign must be active (admin-approved) before it can be marked done",
+      );
+    }
+
+    const updated = await campaignRepository.update(id, {
+      status: GlobalStatus._STATUS_COMPLETED,
+      updatedBy: adminUserId,
     });
     return this.toResponse(updated);
   }

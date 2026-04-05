@@ -165,6 +165,18 @@ export interface CampaignListQuery {
   sortOrder?: "asc" | "desc";
 }
 
+/** Query for GET /campaigns/admin/awaiting-multi-submission-review. */
+export interface CampaignMultiSubmissionReviewListQuery {
+  page?: number;
+  limit?: number;
+  sortBy?: "createdAt" | "updatedAt" | "title";
+  sortOrder?: "asc" | "desc";
+}
+
+export interface CampaignWithAwaitingSubmissionCount extends CampaignResponse {
+  awaitingSubmissionCount: number;
+}
+
 export interface CampaignsListEnvelopeData {
   campaigns: CampaignResponse[];
 }

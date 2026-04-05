@@ -81,7 +81,7 @@ export class ReportService {
           latitude: request.latitude,
           longitude: request.longitude,
           detailAddress: request.detailAddress,
-          status: ReportStatus._STATUS_PENDING,
+          status: ReportStatus._STATUS_INREVIEW,
           isVerify: false,
           aiVerified: false,
         },
@@ -369,7 +369,7 @@ export class ReportService {
 
     await reportRepository.update(reportId, {
       aiVerified: false,
-      status: ReportStatus._STATUS_PENDING,
+      status: ReportStatus._STATUS_INREVIEW,
     });
 
     reportAnalysisQueueService
@@ -448,7 +448,7 @@ export class ReportService {
   }
 
   /**
-   * Admin verification workflow: marks report verified (separate from AI aiVerified).
+   * Admin approval: marks report verified and sets status active (separate from AI aiVerified).
    */
   async adminVerifyReport(id: string): Promise<ReportResponse> {
     const existing = await reportRepository.findById(id);
@@ -462,7 +462,7 @@ export class ReportService {
 
     const report = await reportRepository.update(id, {
       isVerify: true,
-      status: ReportStatus._STATUS_VERIFIED,
+      status: ReportStatus._STATUS_ACTIVE,
     });
     return toReportResponse(report);
   }

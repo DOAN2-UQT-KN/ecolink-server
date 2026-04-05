@@ -29,7 +29,7 @@ model Report {
   /** Human-readable location text (e.g. street / place name from reverse geocoding). */
   detailAddress String? @map("detail_address")
 
-  status Int? @default(12)
+  status Int? @default(9)
 
   /** Admin moderation: only admins can set true (see verify endpoint). */
   isVerify Boolean @default(false) @map("is_verify")
@@ -60,7 +60,7 @@ model Campaign {
   id          String  @id @default(uuid()) @db.Uuid
   title       String  @db.VarChar(200)
   description String?
-  status      Int     @default(1)
+  status      Int     @default(9)
 
   /** Level key into reward-service `difficulties` (volunteer cap, green points). */
   difficulty Int @default(1)
@@ -208,7 +208,7 @@ model CampaignSubmission {
   title       String? @db.VarChar(200)
   description String?
 
-  status Int @default(12) // pending / approved / rejected
+  status Int @default(9) // in review → approved / rejected after process
 
   createdBy String? @map("created_by") @db.Uuid
   updatedBy String? @map("updated_by") @db.Uuid

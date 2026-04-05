@@ -236,7 +236,12 @@ export class CampaignSubmissionService {
       throw new Error("Only campaign managers can process submissions");
     }
 
-    if (submission.status !== ResultStatus._STATUS_WAITING_APPROVED) {
+    const awaitingStatuses: number[] = [
+      ResultStatus._STATUS_INREVIEW,
+      ResultStatus._STATUS_WAITING_APPROVED,
+      ResultStatus._STATUS_PENDING,
+    ];
+    if (!awaitingStatuses.includes(submission.status)) {
       throw new Error("Submission already processed");
     }
 

@@ -1,5 +1,6 @@
 import { Prisma, PrismaClient } from "@prisma/client";
 import prisma from "../../../config/prisma.client";
+import { ResultStatus } from "../../../constants/status.enum";
 
 export class CampaignSubmissionRepository {
   private prisma: PrismaClient;
@@ -20,7 +21,7 @@ export class CampaignSubmissionRepository {
         submittedBy: data.submittedBy,
         title: data.title,
         description: data.description,
-        status: 12, // pending
+        status: ResultStatus._STATUS_INREVIEW,
         createdBy: data.submittedBy,
         updatedBy: data.submittedBy,
       },

@@ -14,6 +14,7 @@ import { JoinRequestStatus } from "../../constants/status.enum";
 import type {
   CampaignListQuery,
   CampaignManagersListQuery,
+  CampaignMultiSubmissionReviewListQuery,
   GetApprovedVolunteersQuery,
   GetJoinRequestsQuery,
   MyJoinRequestsQuery,
@@ -243,6 +244,7 @@ export class CampaignController {
 
         const campaign = await campaignService.adminVerifyCampaign(
           req.params.id,
+          userId,
         );
         sendSuccess(
           res,
@@ -256,6 +258,119 @@ export class CampaignController {
             return sendError(
               res,
               HTTP_STATUS.NOT_FOUND.withMessage("Campaign not found"),
+            );
+          }
+        }
+        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+      }
+    },
+  ];
+
+  /**
+   * List campaigns with more than one submission awaiting approve/reject (admin only).
+   */
+  getCampaignsAwaitingMultiSubmissionReview = [
+    query("page").optional().isInt({ min: 1 }),
+    query("limit").optional().isInt({ min: 1, max: 100 }),
+    query("sortBy").optional().isIn(["createdAt", "updatedAt", "title"]),
+    query("sortOrder").optional().isIn(["asc", "desc"]),
+
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: errors.array(),
+        });
+      }
+
+      try {
+        const userId = req.user?.userId;
+        if (!userId) {
+          return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+        }
+
+        const role = req.user?.role?.toLowerCase();
+        if (role !== "admin") {
+          return sendError(
+            res,
+            HTTP_STATUS.FORBIDDEN.withMessage("Only admin can access this list"),
+          );
+        }
+
+        const q: CampaignMultiSubmissionReviewListQuery = {
+          page: req.query.page
+            ? parseInt(String(req.query.page), 10)
+            : undefined,
+          limit: req.query.limit
+            ? parseInt(String(req.query.limit), 10)
+            : undefined,
+          sortBy: req.query.sortBy as CampaignMultiSubmissionReviewListQuery["sortBy"],
+          sortOrder:
+            req.query.sortOrder as CampaignMultiSubmissionReviewListQuery["sortOrder"],
+        };
+
+        const result =
+          await campaignService.getCampaignsAwaitingMultiSubmissionReview(q);
+        sendSuccess(res, HTTP_STATUS.OK, result);
+      } catch (error) {
+        console.error("Admin multi-submission review list error:", error);
+        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+      }
+    },
+  ];
+
+  /**
+   * Mark campaign as completed (admin only). Campaign must already be active.
+   */
+  adminMarkCampaignDone = [
+    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: errors.array(),
+        });
+      }
+
+      try {
+        const userId = req.user?.userId;
+        if (!userId) {
+          return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+        }
+
+        const role = req.user?.role?.toLowerCase();
+        if (role !== "admin") {
+          return sendError(
+            res,
+            HTTP_STATUS.FORBIDDEN.withMessage(
+              "Only admin can mark a campaign as done",
+            ),
+          );
+        }
+
+        const campaign = await campaignService.adminMarkCampaignDone(
+          req.params.id,
+          userId,
+        );
+        sendSuccess(
+          res,
+          HTTP_STATUS.OK.withMessage("Campaign marked as done successfully"),
+          { campaign },
+        );
+      } catch (error) {
+        console.error("Admin mark campaign done error:", error);
+        if (error instanceof Error) {
+          if (error.message.includes("not found")) {
+            return sendError(
+              res,
+              HTTP_STATUS.NOT_FOUND.withMessage("Campaign not found"),
+            );
+          }
+          if (error.message.includes("must be active")) {
+            return sendError(
+              res,
+              HTTP_STATUS.BAD_REQUEST.withMessage(error.message),
             );
           }
         }

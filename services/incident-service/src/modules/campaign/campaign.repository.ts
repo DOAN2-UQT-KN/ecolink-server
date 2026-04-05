@@ -1,6 +1,13 @@
 import { Prisma, PrismaClient } from "@prisma/client";
 import prisma from "../../config/prisma.client";
+import { GlobalStatus } from "../../constants/status.enum";
 import { CampaignWithReports } from "./campaign.entity";
+
+const SUBMISSION_STATUSES_AWAITING_REVIEW: number[] = [
+  GlobalStatus._STATUS_INREVIEW,
+  GlobalStatus._STATUS_WAITING_APPROVED,
+  GlobalStatus._STATUS_PENDING,
+];
 
 export class CampaignRepository {
   private prisma: PrismaClient;
@@ -229,6 +236,31 @@ export class CampaignRepository {
         campaignId: null,
       },
     });
+  }
+
+  /**
+   * Campaigns with more than one submission still awaiting manager approve/reject
+   * (in review / legacy waiting-approved / pending).
+   */
+  async findCampaignIdsWithMultipleAwaitingSubmissions(): Promise<
+    { campaignId: string; awaitingSubmissionCount: number }[]
+  > {
+    const rows = await this.prisma.campaignSubmission.groupBy({
+      by: ["campaignId"],
+      where: {
+        deletedAt: null,
+        status: { in: SUBMISSION_STATUSES_AWAITING_REVIEW },
+        campaign: { deletedAt: null },
+      },
+      _count: { id: true },
+      having: {
+        id: { _count: { gt: 1 } },
+      },
+    });
+    return rows.map((r) => ({
+      campaignId: r.campaignId,
+      awaitingSubmissionCount: r._count.id,
+    }));
   }
 
 }

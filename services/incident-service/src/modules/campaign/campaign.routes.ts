@@ -29,6 +29,18 @@ router.get("/", authenticate, campaignController.getCampaigns);
 router.get("/by-ids", authenticate, campaignController.getCampaignsByIds);
 
 /**
+ * @route   GET /api/v1/campaigns/admin/awaiting-multi-submission-review
+ * @desc    Campaigns with more than one submission awaiting approve/reject (admin)
+ * @access  Private (Admin only)
+ * @query   page, limit, sortBy (createdAt|updatedAt|title), sortOrder (asc|desc)
+ */
+router.get(
+  "/admin/awaiting-multi-submission-review",
+  authenticate,
+  campaignController.getCampaignsAwaitingMultiSubmissionReview,
+);
+
+/**
  * @route   GET /api/v1/campaigns/tasks/my-assigned
  * @desc    Tasks assigned to the current user (volunteer)
  * @access  Private
@@ -105,13 +117,24 @@ router.get("/:id", authenticate, campaignController.getCampaignById);
 
 /**
  * @route   PUT /api/v1/campaigns/:id/verify
- * @desc    Mark campaign as admin-verified
+ * @desc    Admin-approve campaign (status → active, is_verify)
  * @access  Private (Admin only)
  */
 router.put(
   "/:id/verify",
   authenticate,
   campaignController.adminVerifyCampaign,
+);
+
+/**
+ * @route   PUT /api/v1/campaigns/:id/mark-done
+ * @desc    Mark campaign completed (admin). Must be active; green points TBD.
+ * @access  Private (Admin only)
+ */
+router.put(
+  "/:id/mark-done",
+  authenticate,
+  campaignController.adminMarkCampaignDone,
 );
 
 /**
