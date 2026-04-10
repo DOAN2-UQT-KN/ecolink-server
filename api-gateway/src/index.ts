@@ -136,6 +136,13 @@ app.use(
 );
 
 app.use(
+  "/api/v1/organizations",
+  proxy(INCIDENT_SERVICE_URL, {
+    proxyReqPathResolver: (req) => `/api/v1/organizations${req.url}`,
+  }),
+);
+
+app.use(
   "/api/v1/incident/votes",
   proxy(INCIDENT_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/incident/votes${req.url}`,
