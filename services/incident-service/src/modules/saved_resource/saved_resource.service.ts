@@ -2,7 +2,12 @@ import { HttpError, HTTP_STATUS } from "../../constants/http-status";
 import { SavedResourceType } from "../../constants/status.enum";
 import { campaignRepository } from "../campaign/campaign.repository";
 import { reportRepository } from "../report/report.repository";
-import { SaveResourceBody, SaveResourceResponse } from "./saved_resource.dto";
+import {
+  PaginatedSavedResourcesResponse,
+  SaveResourceBody,
+  SaveResourceResponse,
+  SavedResourceListQuery,
+} from "./saved_resource.dto";
 import { savedResourceRepository } from "./saved_resource.repository";
 
 export class SavedResourceService {
@@ -81,6 +86,40 @@ export class SavedResourceService {
 
     const removed = await savedResourceRepository.softDelete(existing.id);
     return this.toResponse(removed);
+  }
+
+  async listForUser(
+    userId: string,
+    query: SavedResourceListQuery,
+  ): Promise<PaginatedSavedResourcesResponse> {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const sortBy = query.sortBy ?? "createdAt";
+    const sortOrder = query.sortOrder ?? "desc";
+    const skip = (page - 1) * limit;
+
+    const resourceTypeFilter =
+      query.resourceType !== undefined
+        ? String(query.resourceType)
+        : undefined;
+
+    const { rows, total } =
+      await savedResourceRepository.findManyPaginatedForUser({
+        userId,
+        ...(resourceTypeFilter ? { resourceType: resourceTypeFilter } : {}),
+        skip,
+        take: limit,
+        sortBy,
+        sortOrder,
+      });
+
+    return {
+      savedResources: rows.map((row) => this.toResponse(row)),
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 }
 

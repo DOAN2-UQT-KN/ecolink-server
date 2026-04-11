@@ -43,6 +43,57 @@ export class SavedResourceRepository {
       data: { deletedAt: new Date() },
     });
   }
+
+  /** Resource IDs the user has actively saved (not soft-deleted), for batch embedding on report/campaign payloads. */
+  findActiveSavedResourceIdsForUser(
+    userId: string,
+    resourceType: string,
+    resourceIds: string[],
+  ): Promise<Set<string>> {
+    const unique = [...new Set(resourceIds)];
+    if (unique.length === 0) {
+      return Promise.resolve(new Set());
+    }
+    return this.prisma.savedResource
+      .findMany({
+        where: {
+          userId,
+          resourceType,
+          resourceId: { in: unique },
+          deletedAt: null,
+        },
+        select: { resourceId: true },
+      })
+      .then((rows) => new Set(rows.map((r) => r.resourceId)));
+  }
+
+  findManyPaginatedForUser(params: {
+    userId: string;
+    resourceType?: string;
+    skip: number;
+    take: number;
+    sortBy: "createdAt" | "updatedAt";
+    sortOrder: "asc" | "desc";
+  }) {
+    const where: {
+      userId: string;
+      deletedAt: null;
+      resourceType?: string;
+    } = {
+      userId: params.userId,
+      deletedAt: null,
+      ...(params.resourceType ? { resourceType: params.resourceType } : {}),
+    };
+    return Promise.all([
+      this.prisma.savedResource.findMany({
+        where,
+        orderBy: { [params.sortBy]: params.sortOrder },
+        skip: params.skip,
+        take: params.take,
+      }),
+      this.prisma.savedResource.count({ where }),
+    ]).then(([rows, total]) => ({ rows, total }));
+  }
 }
 
 export const savedResourceRepository = new SavedResourceRepository();

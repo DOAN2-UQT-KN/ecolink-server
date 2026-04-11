@@ -65,6 +65,10 @@ export interface ReportResponse {
   updatedAt: Date;
   distance?: number; // Distance in meters (when searching with location)
   votes: ResourceVoteSummary;
+  /**
+   * Whether the current user saved this report. Null when the viewer is unknown (unauthenticated).
+   */
+  saved: boolean | null;
 }
 
 export interface ReportDetailResponse extends ReportResponse {

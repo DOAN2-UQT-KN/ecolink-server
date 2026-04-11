@@ -1,6 +1,10 @@
 import { Prisma } from "@prisma/client";
 import prisma from "../../config/prisma.client";
-import { GlobalStatus, VoteResourceType } from "../../constants/status.enum";
+import {
+  GlobalStatus,
+  SavedResourceType,
+  VoteResourceType,
+} from "../../constants/status.enum";
 import { HttpError, HTTP_STATUS } from "../../constants/http-status";
 import { organizationRepository } from "../organization/organization.repository";
 import { rewardServiceClient } from "../reward/reward-service.client";
@@ -18,6 +22,7 @@ import {
   CampaignWithReports,
   toCampaignResponse,
 } from "./campaign.entity";
+import { savedResourceRepository } from "../saved_resource/saved_resource.repository";
 import { defaultResourceVoteSummary } from "../vote/vote.dto";
 import { voteService } from "../vote/vote.service";
 
@@ -41,15 +46,26 @@ export class CampaignService {
     if (campaigns.length === 0) {
       return campaigns;
     }
-    const map = await voteService.getVoteSummariesForResources(
-      VoteResourceType.CAMPAIGN,
-      campaigns.map((c) => c.id),
-      viewerUserId ?? null,
-    );
+    const ids = campaigns.map((c) => c.id);
+    const [map, savedIds] = await Promise.all([
+      voteService.getVoteSummariesForResources(
+        VoteResourceType.CAMPAIGN,
+        ids,
+        viewerUserId ?? null,
+      ),
+      viewerUserId
+        ? savedResourceRepository.findActiveSavedResourceIdsForUser(
+            viewerUserId,
+            SavedResourceType.CAMPAIGN,
+            ids,
+          )
+        : Promise.resolve(new Set<string>()),
+    ]);
     return campaigns.map((c) => ({
       ...c,
       votes:
         map.get(c.id) ?? defaultResourceVoteSummary(viewerUserId ?? null),
+      saved: viewerUserId != null ? savedIds.has(c.id) : null,
     }));
   }
 

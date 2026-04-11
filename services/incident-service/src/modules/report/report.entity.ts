@@ -26,4 +26,5 @@ export const toReportResponse = (
   updatedAt: entity.updatedAt,
   ...(distance !== undefined && { distance }),
   votes: defaultResourceVoteSummary(null),
+  saved: null,
 });

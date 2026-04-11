@@ -161,6 +161,10 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
     responseData: "VoteActionEnvelopeData",
   },
 
+  "GET /incident/saved-resources": {
+    query: "SavedResourceListQuery",
+    responseData: "SavedResourcesListEnvelopeData",
+  },
   "POST /incident/saved-resources/save": {
     requestBody: "SaveResourceBody",
     responseData: "SaveResourceEnvelopeData",

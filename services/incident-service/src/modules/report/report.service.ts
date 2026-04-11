@@ -18,6 +18,7 @@ import { reportMediaRepository } from "./report_media.repository";
 import {
   MediaResourceType,
   ReportStatus,
+  SavedResourceType,
   VoteResourceType,
 } from "../../constants/status.enum";
 import prisma from "../../config/prisma.client";
@@ -25,6 +26,7 @@ import { randomUUID } from "node:crypto";
 import { reportAnalysisQueueService } from "./queue/report-analysis-queue.service";
 import { backgroundJobRepository } from "../background-job/background-job.repository";
 import { HttpError, HTTP_STATUS } from "../../constants/http-status";
+import { savedResourceRepository } from "../saved_resource/saved_resource.repository";
 import { defaultResourceVoteSummary } from "../vote/vote.dto";
 import { voteService } from "../vote/vote.service";
 
@@ -41,15 +43,26 @@ export class ReportService {
     if (reports.length === 0) {
       return reports;
     }
-    const map = await voteService.getVoteSummariesForResources(
-      VoteResourceType.REPORT,
-      reports.map((r) => r.id),
-      viewerUserId ?? null,
-    );
+    const ids = reports.map((r) => r.id);
+    const [map, savedIds] = await Promise.all([
+      voteService.getVoteSummariesForResources(
+        VoteResourceType.REPORT,
+        ids,
+        viewerUserId ?? null,
+      ),
+      viewerUserId
+        ? savedResourceRepository.findActiveSavedResourceIdsForUser(
+            viewerUserId,
+            SavedResourceType.REPORT,
+            ids,
+          )
+        : Promise.resolve(new Set<string>()),
+    ]);
     return reports.map((r) => ({
       ...r,
       votes:
         map.get(r.id) ?? defaultResourceVoteSummary(viewerUserId ?? null),
+      saved: viewerUserId != null ? savedIds.has(r.id) : null,
     }));
   }
 

@@ -37,6 +37,10 @@ export interface CampaignResponse {
   reportIds: string[];
   managerIds: string[];
   votes: ResourceVoteSummary;
+  /**
+   * Whether the current user saved this campaign. Null when the viewer is unknown (unauthenticated).
+   */
+  saved: boolean | null;
 }
 
 export interface AddCampaignManagersRequest {

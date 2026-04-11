@@ -31,5 +31,6 @@ export const toCampaignResponse = (
     reportIds: entity.reports.map((report) => report.id),
     managerIds,
     votes: defaultResourceVoteSummary(null),
+    saved: null,
   };
 };
