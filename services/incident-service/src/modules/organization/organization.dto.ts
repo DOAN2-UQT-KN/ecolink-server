@@ -34,9 +34,10 @@ export interface OrganizationResponse {
   createdAt: Date;
   updatedAt: Date;
   /**
-   * Present on GET /organizations/:id for the current user when their latest non-deleted join
-   * request is pending (`JoinRequestStatus._STATUS_PENDING`, processing) or approved
-   * (`JoinRequestStatus._STATUS_APPROVED`). Omitted if there is no request or the latest is rejected.
+   * For the current user, when their latest non-deleted org join request is pending
+   * (`JoinRequestStatus._STATUS_PENDING`) or approved (`JoinRequestStatus._STATUS_APPROVED`).
+   * Included on GET /organizations/:id, GET /organizations, and GET /organizations/my.
+   * Omitted if there is no request or the latest is rejected.
    */
   requestStatus?: number;
 }
@@ -73,6 +74,15 @@ export interface OrganizationVerifyContactEmailQuery {
 /** Query for GET /api/v1/organizations (discovery). */
 export interface OrganizationListQuery {
   search?: string;
+  /** Organization lifecycle `GlobalStatus` (exact match on `organizations.status`). */
+  status?: number;
+  /** When set, only organizations with this contact-email verification flag. */
+  isEmailVerified?: boolean;
+  /**
+   * Filter: only organizations where the viewer's latest join request for that org has this
+   * status (`JoinRequestStatus`, e.g. 12 pending, 14 approved, 18 rejected).
+   */
+  requestStatus?: number;
   page?: number;
   limit?: number;
   sortBy?: "createdAt" | "updatedAt" | "name";
@@ -82,8 +92,15 @@ export interface OrganizationListQuery {
 /** Query for GET /api/v1/organizations/my (organizations I own or am a member of). */
 export interface MyOrganizationsListQuery {
   search?: string;
-  /** Organization `GlobalStatus` numeric value. */
+  /** Organization lifecycle `GlobalStatus` (exact match on `organizations.status`). */
   status?: number;
+  /** When set, only organizations with this contact-email verification flag. */
+  isEmailVerified?: boolean;
+  /**
+   * Filter: only organizations where the viewer's latest join request for that org has this
+   * status (`JoinRequestStatus`, e.g. 12 pending, 14 approved, 18 rejected).
+   */
+  requestStatus?: number;
   page?: number;
   limit?: number;
   sortBy?: "createdAt" | "updatedAt" | "name";

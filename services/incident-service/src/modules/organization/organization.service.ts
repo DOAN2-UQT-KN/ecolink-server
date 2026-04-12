@@ -362,6 +362,39 @@ export class OrganizationService {
       : organization;
   }
 
+  private async organizationIdsForJoinRequestStatusFilter(
+    viewerUserId: string,
+    requestStatus: number | undefined,
+  ): Promise<string[] | undefined> {
+    if (requestStatus === undefined) {
+      return undefined;
+    }
+    return organizationJoiningRequestRepository.findOrganizationIdsWhereLatestJoinRequestStatusEquals(
+      viewerUserId,
+      requestStatus,
+    );
+  }
+
+  private async withOrganizationListRequestStatus(
+    organizations: OrganizationResponse[],
+    viewerUserId: string,
+  ): Promise<OrganizationResponse[]> {
+    if (organizations.length === 0) {
+      return organizations;
+    }
+    const statusByOrgId =
+      await organizationJoiningRequestRepository.findLatestStatusByOrganizationForRequester(
+        viewerUserId,
+        organizations.map((o) => o.id),
+      );
+    return organizations.map((org) => {
+      const requestStatus = this.joinRequestStatusForOrganizationDetail(
+        statusByOrgId.get(org.id),
+      );
+      return requestStatus !== undefined ? { ...org, requestStatus } : org;
+    });
+  }
+
   async listMyOrganizations(
     userId: string,
     query: MyOrganizationsListQuery,
@@ -378,15 +411,38 @@ export class OrganizationService {
     const sortOrder = query.sortOrder ?? "desc";
     const skip = (page - 1) * limit;
 
+    const joinRequestOrgIds = await this.organizationIdsForJoinRequestStatusFilter(
+      userId,
+      query.requestStatus,
+    );
+    if (joinRequestOrgIds !== undefined && joinRequestOrgIds.length === 0) {
+      return {
+        organizations: [],
+        total: 0,
+        page,
+        limit,
+        totalPages: 0,
+      };
+    }
+
     const { rows, total } =
       await organizationRepository.findLinkedToUserPaginated(
         userId,
-        { search: query.search, status: query.status },
+        {
+          search: query.search,
+          status: query.status,
+          isEmailVerified: query.isEmailVerified,
+          organizationIdIn: joinRequestOrgIds,
+        },
         { skip, take: limit, sortBy, sortOrder },
       );
 
+    const organizations = rows.map((r) => this.toOrganizationResponse(r));
     return {
-      organizations: rows.map((r) => this.toOrganizationResponse(r)),
+      organizations: await this.withOrganizationListRequestStatus(
+        organizations,
+        userId,
+      ),
       total,
       page,
       limit,
@@ -394,7 +450,10 @@ export class OrganizationService {
     };
   }
 
-  async listOrganizations(query: OrganizationListQuery): Promise<{
+  async listOrganizations(
+    query: OrganizationListQuery,
+    viewerUserId: string,
+  ): Promise<{
     organizations: OrganizationResponse[];
     total: number;
     page: number;
@@ -407,13 +466,36 @@ export class OrganizationService {
     const sortOrder = query.sortOrder ?? "desc";
     const skip = (page - 1) * limit;
 
+    const joinRequestOrgIds = await this.organizationIdsForJoinRequestStatusFilter(
+      viewerUserId,
+      query.requestStatus,
+    );
+    if (joinRequestOrgIds !== undefined && joinRequestOrgIds.length === 0) {
+      return {
+        organizations: [],
+        total: 0,
+        page,
+        limit,
+        totalPages: 0,
+      };
+    }
+
     const { rows, total } = await organizationRepository.findManyPaginated(
-      { search: query.search },
+      {
+        search: query.search,
+        status: query.status,
+        isEmailVerified: query.isEmailVerified,
+        organizationIdIn: joinRequestOrgIds,
+      },
       { skip, take: limit, sortBy, sortOrder },
     );
 
+    const organizations = rows.map((r) => this.toOrganizationResponse(r));
     return {
-      organizations: rows.map((r) => this.toOrganizationResponse(r)),
+      organizations: await this.withOrganizationListRequestStatus(
+        organizations,
+        viewerUserId,
+      ),
       total,
       page,
       limit,

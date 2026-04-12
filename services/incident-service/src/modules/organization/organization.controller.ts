@@ -32,6 +32,25 @@ import { organizationService } from "./organization.service";
 
 const orgIdParam = param("id").isUUID().withMessage("id must be a valid UUID");
 
+function parseOrganizationListEmailVerifiedQuery(
+  req: Request,
+): boolean | undefined {
+  const raw = req.query.isEmailVerified ?? req.query.is_email_verified;
+  if (raw === undefined || raw === "") return undefined;
+  const s = String(raw).toLowerCase();
+  if (s === "true" || s === "1") return true;
+  if (s === "false" || s === "0") return false;
+  return undefined;
+}
+
+function parseOrganizationListRequestStatusFilterQuery(
+  req: Request,
+): number | undefined {
+  const raw = req.query.request_status ?? req.query.requestStatus;
+  if (raw === undefined || raw === "") return undefined;
+  return parseInt(String(raw), 10);
+}
+
 export class OrganizationController {
   createOrganization = [
     body("name")
@@ -96,6 +115,11 @@ export class OrganizationController {
 
   listOrganizations = [
     query("search").optional().trim(),
+    query("status").optional().isInt(),
+    query("isEmailVerified").optional().isIn(["true", "false", "1", "0"]),
+    query("is_email_verified").optional().isIn(["true", "false", "1", "0"]),
+    query("request_status").optional().isInt(),
+    query("requestStatus").optional().isInt(),
     query("page").optional().isInt({ min: 1 }),
     query("limit").optional().isInt({ min: 1, max: 100 }),
     query("sortBy").optional().isIn(["createdAt", "updatedAt", "name"]),
@@ -117,6 +141,12 @@ export class OrganizationController {
         search: req.query.search
           ? String(req.query.search).trim()
           : undefined,
+        status:
+          req.query.status !== undefined && req.query.status !== ""
+            ? parseInt(String(req.query.status), 10)
+            : undefined,
+        isEmailVerified: parseOrganizationListEmailVerifiedQuery(req),
+        requestStatus: parseOrganizationListRequestStatusFilterQuery(req),
         page: req.query.page
           ? parseInt(String(req.query.page), 10)
           : undefined,
@@ -128,7 +158,10 @@ export class OrganizationController {
       };
 
       try {
-        const result = await organizationService.listOrganizations(q);
+        const result = await organizationService.listOrganizations(
+          q,
+          req.user.userId,
+        );
         return sendSuccess(res, HTTP_STATUS.OK, result);
       } catch (error) {
         if (sendHttpErrorResponse(res, error)) {
@@ -207,6 +240,10 @@ export class OrganizationController {
   listMyOrganizations = [
     query("search").optional().trim(),
     query("status").optional().isInt(),
+    query("isEmailVerified").optional().isIn(["true", "false", "1", "0"]),
+    query("is_email_verified").optional().isIn(["true", "false", "1", "0"]),
+    query("request_status").optional().isInt(),
+    query("requestStatus").optional().isInt(),
     query("page").optional().isInt({ min: 1 }),
     query("limit").optional().isInt({ min: 1, max: 100 }),
     query("sortBy").optional().isIn(["createdAt", "updatedAt", "name"]),
@@ -233,6 +270,8 @@ export class OrganizationController {
           req.query.status !== undefined && req.query.status !== ""
             ? parseInt(String(req.query.status), 10)
             : undefined,
+        isEmailVerified: parseOrganizationListEmailVerifiedQuery(req),
+        requestStatus: parseOrganizationListRequestStatusFilterQuery(req),
         page: req.query.page
           ? parseInt(String(req.query.page), 10)
           : undefined,

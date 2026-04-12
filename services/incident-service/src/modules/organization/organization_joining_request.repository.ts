@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import prisma from "../../config/prisma.client";
 import { JoinRequestStatus } from "../../constants/status.enum";
 
@@ -144,6 +144,58 @@ export class OrganizationJoiningRequestRepository {
       this.prisma.organizationJoiningRequest.count({ where }),
     ]);
     return { rows, total };
+  }
+
+  /**
+   * Latest join-request status per organization for this requester (by `updatedAt` desc).
+   * Used to attach `request_status` on organization list responses without N+1 queries.
+   */
+  async findLatestStatusByOrganizationForRequester(
+    requesterId: string,
+    organizationIds: string[],
+  ): Promise<Map<string, number>> {
+    const map = new Map<string, number>();
+    if (organizationIds.length === 0) {
+      return map;
+    }
+    const rows = await this.prisma.organizationJoiningRequest.findMany({
+      where: {
+        requesterId,
+        organizationId: { in: organizationIds },
+        deletedAt: null,
+      },
+      orderBy: { updatedAt: "desc" },
+      select: { organizationId: true, status: true },
+    });
+    for (const row of rows) {
+      if (!map.has(row.organizationId)) {
+        map.set(row.organizationId, row.status);
+      }
+    }
+    return map;
+  }
+
+  /**
+   * Organization ids where the viewer's latest non-deleted join request has exactly `status`
+   * (by `updated_at` per organization). Used to filter org list queries.
+   */
+  async findOrganizationIdsWhereLatestJoinRequestStatusEquals(
+    requesterId: string,
+    status: number,
+  ): Promise<string[]> {
+    const rows = await this.prisma.$queryRaw<{ organization_id: string }[]>(
+      Prisma.sql`
+        SELECT organization_id FROM (
+          SELECT DISTINCT ON (organization_id) organization_id, status
+          FROM organization_joining_requests
+          WHERE requester_id = ${requesterId}::uuid
+            AND deleted_at IS NULL
+          ORDER BY organization_id, updated_at DESC
+        ) AS latest
+        WHERE latest.status = ${status}
+      `,
+    );
+    return rows.map((r) => r.organization_id);
   }
 
   async updateStatus(id: string, status: number) {

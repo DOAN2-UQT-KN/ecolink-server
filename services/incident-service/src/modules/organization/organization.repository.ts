@@ -71,7 +71,13 @@ export class OrganizationRepository {
   }
 
   async findManyPaginated(
-    filters: { search?: string },
+    filters: {
+      search?: string;
+      status?: number;
+      isEmailVerified?: boolean;
+      /** Intersect with this id set (e.g. join-request status filter for the current user). */
+      organizationIdIn?: string[];
+    },
     options: {
       skip: number;
       take: number;
@@ -79,8 +85,17 @@ export class OrganizationRepository {
       sortOrder: "asc" | "desc";
     },
   ) {
+    if (
+      filters.organizationIdIn !== undefined &&
+      filters.organizationIdIn.length === 0
+    ) {
+      return { rows: [], total: 0 };
+    }
     const where = {
       deletedAt: null as null,
+      ...(filters.organizationIdIn !== undefined
+        ? { id: { in: filters.organizationIdIn } }
+        : {}),
       ...(filters.search
         ? {
             name: {
@@ -88,6 +103,10 @@ export class OrganizationRepository {
               mode: "insensitive" as const,
             },
           }
+        : {}),
+      ...(filters.status !== undefined ? { status: filters.status } : {}),
+      ...(filters.isEmailVerified !== undefined
+        ? { isEmailVerified: filters.isEmailVerified }
         : {}),
     };
     const orderBy =
@@ -114,7 +133,12 @@ export class OrganizationRepository {
    */
   async findLinkedToUserPaginated(
     userId: string,
-    filters: { search?: string; status?: number },
+    filters: {
+      search?: string;
+      status?: number;
+      isEmailVerified?: boolean;
+      organizationIdIn?: string[];
+    },
     options: {
       skip: number;
       take: number;
@@ -122,8 +146,17 @@ export class OrganizationRepository {
       sortOrder: "asc" | "desc";
     },
   ) {
+    if (
+      filters.organizationIdIn !== undefined &&
+      filters.organizationIdIn.length === 0
+    ) {
+      return { rows: [], total: 0 };
+    }
     const where = {
       deletedAt: null as null,
+      ...(filters.organizationIdIn !== undefined
+        ? { id: { in: filters.organizationIdIn } }
+        : {}),
       OR: [
         { ownerId: userId },
         {
@@ -144,6 +177,9 @@ export class OrganizationRepository {
           }
         : {}),
       ...(filters.status !== undefined ? { status: filters.status } : {}),
+      ...(filters.isEmailVerified !== undefined
+        ? { isEmailVerified: filters.isEmailVerified }
+        : {}),
     };
     const orderBy =
       options.sortBy === "name"

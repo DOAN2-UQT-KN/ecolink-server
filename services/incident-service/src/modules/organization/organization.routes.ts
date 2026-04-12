@@ -59,9 +59,9 @@ router.delete(
 
 /**
  * @route   GET /api/v1/organizations/my
- * @desc    Organizations I own or belong to as a member (search, status, pagination).
+ * @desc    Organizations I own or belong to as a member (search, status, is_email_verified, pagination). Each item may include request_status for my join request.
  * @access  Private
- * @query   search, status, page, limit, sortBy, sortOrder
+ * @query   search, status, is_email_verified, request_status (org join filter), page, limit, sortBy, sortOrder
  */
 router.get(
   "/my",
@@ -71,7 +71,7 @@ router.get(
 
 /**
  * @route   GET /api/v1/organizations
- * @desc    List organizations (search + pagination).
+ * @desc    List organizations; filter by search, org status, is_email_verified, request_status (viewer’s latest join). Each item may include request_status when pending/approved.
  * @access  Private
  */
 router.get("/", authenticate, organizationController.listOrganizations);
