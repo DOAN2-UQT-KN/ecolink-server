@@ -73,6 +73,17 @@ export interface OrganizationListQuery {
   sortOrder?: "asc" | "desc";
 }
 
+/** Query for GET /api/v1/organizations/my (organizations I own or am a member of). */
+export interface MyOrganizationsListQuery {
+  search?: string;
+  /** Organization `GlobalStatus` numeric value. */
+  status?: number;
+  page?: number;
+  limit?: number;
+  sortBy?: "createdAt" | "updatedAt" | "name";
+  sortOrder?: "asc" | "desc";
+}
+
 /** Query for GET /api/v1/organizations/:id/join-requests (owner). */
 export interface GetOrganizationJoinRequestsQuery {
   status?: number;
@@ -104,10 +115,6 @@ export interface OrganizationMembersListQuery {
 
 export interface OrganizationOneEnvelopeData {
   organization: OrganizationResponse;
-}
-
-export interface MyOrganizationsEnvelopeData {
-  organizations: OrganizationResponse[];
 }
 
 export interface PaginatedOrganizationsEnvelopeData {

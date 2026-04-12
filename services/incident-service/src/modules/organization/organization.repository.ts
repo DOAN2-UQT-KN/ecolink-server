@@ -109,11 +109,59 @@ export class OrganizationRepository {
     return { rows, total };
   }
 
-  async findOwnedByUser(ownerId: string) {
-    return this.prisma.organization.findMany({
-      where: { ownerId, deletedAt: null },
-      orderBy: { createdAt: "desc" },
-    });
+  /**
+   * Organizations the user owns or is an approved member of (owner is not stored in `members`).
+   */
+  async findLinkedToUserPaginated(
+    userId: string,
+    filters: { search?: string; status?: number },
+    options: {
+      skip: number;
+      take: number;
+      sortBy: "createdAt" | "updatedAt" | "name";
+      sortOrder: "asc" | "desc";
+    },
+  ) {
+    const where = {
+      deletedAt: null as null,
+      OR: [
+        { ownerId: userId },
+        {
+          members: {
+            some: {
+              userId,
+              deletedAt: null,
+            },
+          },
+        },
+      ],
+      ...(filters.search
+        ? {
+            name: {
+              contains: filters.search,
+              mode: "insensitive" as const,
+            },
+          }
+        : {}),
+      ...(filters.status !== undefined ? { status: filters.status } : {}),
+    };
+    const orderBy =
+      options.sortBy === "name"
+        ? { name: options.sortOrder }
+        : options.sortBy === "updatedAt"
+          ? { updatedAt: options.sortOrder }
+          : { createdAt: options.sortOrder };
+
+    const [rows, total] = await Promise.all([
+      this.prisma.organization.findMany({
+        where,
+        orderBy,
+        skip: options.skip,
+        take: options.take,
+      }),
+      this.prisma.organization.count({ where }),
+    ]);
+    return { rows, total };
   }
 }
 

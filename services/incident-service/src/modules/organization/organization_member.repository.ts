@@ -63,6 +63,26 @@ export class OrganizationMemberRepository {
     ]);
     return { rows, total };
   }
+
+  /** Soft-delete active membership; returns whether a row was updated. */
+  async softDeleteMembership(
+    organizationId: string,
+    userId: string,
+  ): Promise<boolean> {
+    const result = await this.prisma.organizationMember.updateMany({
+      where: {
+        organizationId,
+        userId,
+        deletedAt: null,
+      },
+      data: {
+        deletedAt: new Date(),
+        updatedAt: new Date(),
+        updatedBy: userId,
+      },
+    });
+    return result.count > 0;
+  }
 }
 
 export const organizationMemberRepository = new OrganizationMemberRepository();

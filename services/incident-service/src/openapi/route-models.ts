@@ -178,8 +178,9 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
     query: "OrganizationListQuery",
     responseData: "PaginatedOrganizationsEnvelopeData",
   },
-  "GET /api/v1/organizations/owned": {
-    responseData: "MyOrganizationsEnvelopeData",
+  "GET /api/v1/organizations/my": {
+    query: "MyOrganizationsListQuery",
+    responseData: "PaginatedOrganizationsEnvelopeData",
   },
   "GET /api/v1/organizations/verify-contact-email": {
     query: "OrganizationVerifyContactEmailQuery",
@@ -220,5 +221,8 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
   "GET /api/v1/organizations/:id/members": {
     query: "OrganizationMembersListQuery",
     responseData: "PaginatedOrganizationMembersEnvelopeData",
+  },
+  "DELETE /api/v1/organizations/:id/members/me": {
+    omitData: true,
   },
 };

@@ -18,6 +18,7 @@ import type {
   CreateOrganizationBody,
   GetOrganizationJoinRequestsQuery,
   MyOrganizationJoinRequestsQuery,
+  MyOrganizationsListQuery,
   OrganizationListQuery,
   OrganizationMembersListQuery,
   UpdateOrganizationBody,
@@ -203,26 +204,60 @@ export class OrganizationController {
     },
   ];
 
-  listMyOrganizations = async (
-    req: Request,
-    res: Response,
-  ): Promise<void> => {
-    const userId = req.user?.userId;
-    if (!userId) {
-      return sendError(res, HTTP_STATUS.UNAUTHORIZED);
-    }
+  listMyOrganizations = [
+    query("search").optional().trim(),
+    query("status").optional().isInt(),
+    query("page").optional().isInt({ min: 1 }),
+    query("limit").optional().isInt({ min: 1, max: 100 }),
+    query("sortBy").optional().isIn(["createdAt", "updatedAt", "name"]),
+    query("sortOrder").optional().isIn(["asc", "desc"]),
 
-    try {
-      const organizations =
-        await organizationService.listOwnedByUser(userId);
-      return sendSuccess(res, HTTP_STATUS.OK, { organizations });
-    } catch (error) {
-      if (sendHttpErrorResponse(res, error)) {
-        return;
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: errors.array(),
+        });
       }
-      throw error;
-    }
-  };
+
+      const userId = req.user?.userId;
+      if (!userId) {
+        return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+      }
+
+      const q: MyOrganizationsListQuery = {
+        search: req.query.search
+          ? String(req.query.search).trim()
+          : undefined,
+        status:
+          req.query.status !== undefined && req.query.status !== ""
+            ? parseInt(String(req.query.status), 10)
+            : undefined,
+        page: req.query.page
+          ? parseInt(String(req.query.page), 10)
+          : undefined,
+        limit: req.query.limit
+          ? parseInt(String(req.query.limit), 10)
+          : undefined,
+        sortBy: req.query.sortBy as MyOrganizationsListQuery["sortBy"],
+        sortOrder:
+          req.query.sortOrder as MyOrganizationsListQuery["sortOrder"],
+      };
+
+      try {
+        const result = await organizationService.listMyOrganizations(
+          userId,
+          q,
+        );
+        return sendSuccess(res, HTTP_STATUS.OK, result);
+      } catch (error) {
+        if (sendHttpErrorResponse(res, error)) {
+          return;
+        }
+        throw error;
+      }
+    },
+  ];
 
   /**
    * Approve an organization (admin only). Sets status to active (`GlobalStatus._STATUS_ACTIVE`).
@@ -630,6 +665,34 @@ export class OrganizationController {
           req.body.requestId,
           userId,
         );
+        return sendSuccess(res, HTTP_STATUS.OK);
+      } catch (error) {
+        if (sendHttpErrorResponse(res, error)) {
+          return;
+        }
+        throw error;
+      }
+    },
+  ];
+
+  leaveOrganization = [
+    orgIdParam,
+
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: errors.array(),
+        });
+      }
+
+      const userId = req.user?.userId;
+      if (!userId) {
+        return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+      }
+
+      try {
+        await organizationService.leaveOrganization(req.params.id, userId);
         return sendSuccess(res, HTTP_STATUS.OK);
       } catch (error) {
         if (sendHttpErrorResponse(res, error)) {

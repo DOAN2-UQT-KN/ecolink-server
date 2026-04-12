@@ -11,6 +11,7 @@ import type {
   CreateOrganizationBody,
   GetOrganizationJoinRequestsQuery,
   MyOrganizationJoinRequestsQuery,
+  MyOrganizationsListQuery,
   OrganizationJoinRequestDetailResponse,
   OrganizationJoinRequestResponse,
   OrganizationListQuery,
@@ -323,9 +324,36 @@ export class OrganizationService {
     return this.toOrganizationResponse(row);
   }
 
-  async listOwnedByUser(ownerId: string): Promise<OrganizationResponse[]> {
-    const rows = await organizationRepository.findOwnedByUser(ownerId);
-    return rows.map((r) => this.toOrganizationResponse(r));
+  async listMyOrganizations(
+    userId: string,
+    query: MyOrganizationsListQuery,
+  ): Promise<{
+    organizations: OrganizationResponse[];
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  }> {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const sortBy = query.sortBy ?? "createdAt";
+    const sortOrder = query.sortOrder ?? "desc";
+    const skip = (page - 1) * limit;
+
+    const { rows, total } =
+      await organizationRepository.findLinkedToUserPaginated(
+        userId,
+        { search: query.search, status: query.status },
+        { skip, take: limit, sortBy, sortOrder },
+      );
+
+    return {
+      organizations: rows.map((r) => this.toOrganizationResponse(r)),
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit) || 0,
+    };
   }
 
   async listOrganizations(query: OrganizationListQuery): Promise<{
@@ -634,6 +662,36 @@ export class OrganizationService {
       limit,
       totalPages: Math.ceil(total / limit) || 0,
     };
+  }
+
+  async leaveOrganization(
+    organizationId: string,
+    userId: string,
+  ): Promise<void> {
+    const org = await organizationRepository.findById(organizationId);
+    if (!org) {
+      throw new HttpError(
+        HTTP_STATUS.NOT_FOUND.withMessage("Organization not found"),
+      );
+    }
+    if (org.ownerId === userId) {
+      throw new HttpError(
+        HTTP_STATUS.BAD_REQUEST.withMessage(
+          "Organization owners cannot leave; transfer ownership or delete the organization",
+        ),
+      );
+    }
+    const left = await organizationMemberRepository.softDeleteMembership(
+      organizationId,
+      userId,
+    );
+    if (!left) {
+      throw new HttpError(
+        HTTP_STATUS.BAD_REQUEST.withMessage(
+          "You are not a member of this organization",
+        ),
+      );
+    }
   }
 }
 

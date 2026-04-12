@@ -58,12 +58,13 @@ router.delete(
 );
 
 /**
- * @route   GET /api/v1/organizations/owned
- * @desc    Organizations where I am the owner.
+ * @route   GET /api/v1/organizations/my
+ * @desc    Organizations I own or belong to as a member (search, status, pagination).
  * @access  Private
+ * @query   search, status, page, limit, sortBy, sortOrder
  */
 router.get(
-  "/owned",
+  "/my",
   authenticate,
   organizationController.listMyOrganizations,
 );
@@ -135,6 +136,17 @@ router.get(
   "/:id/join-requests",
   authenticate,
   organizationController.listJoinRequestsForOwner,
+);
+
+/**
+ * @route   DELETE /api/v1/organizations/:id/members/me
+ * @desc    Leave organization (active member only; owners cannot leave).
+ * @access  Private
+ */
+router.delete(
+  "/:id/members/me",
+  authenticate,
+  organizationController.leaveOrganization,
 );
 
 /**
