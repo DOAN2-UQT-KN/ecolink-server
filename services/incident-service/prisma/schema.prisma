@@ -411,6 +411,8 @@ model Organization {
 
   /** Public logo image URL (required on create). */
   logoUrl String @map("logo_url") @db.VarChar(2048)
+  /** Optional public background / banner image URL. */
+  backgroundUrl String? @map("background_url") @db.VarChar(2048)
   contactEmail String? @map("contact_email") @db.VarChar(320)
 
   /** Whether `contactEmail` has been confirmed (e.g. OTP); not set by create body. */

@@ -4,6 +4,8 @@ export interface CreateOrganizationBody {
   description?: string;
   /** Required; clients send `logo_url`. */
   logoUrl: string;
+  /** Optional; clients send `background_url`. */
+  backgroundUrl?: string;
   /** Required; clients send `contact_email`. */
   contactEmail: string;
 }
@@ -13,6 +15,8 @@ export interface UpdateOrganizationBody {
   name?: string;
   description?: string;
   logoUrl?: string;
+  /** Omit to leave unchanged; send `null` to clear. */
+  backgroundUrl?: string | null;
   contactEmail?: string;
 }
 
@@ -21,6 +25,7 @@ export interface OrganizationResponse {
   name: string;
   description: string | null;
   logoUrl: string;
+  backgroundUrl: string | null;
   contactEmail: string | null;
   isEmailVerified: boolean;
   /** `GlobalStatus` numeric value (e.g. in-review until admin approves via verify endpoint). */

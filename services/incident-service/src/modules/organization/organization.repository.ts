@@ -12,6 +12,7 @@ export class OrganizationRepository {
     name: string;
     description?: string | null;
     logoUrl: string;
+    backgroundUrl?: string | null;
     contactEmail?: string | null;
     ownerId: string;
     createdBy?: string;
@@ -21,6 +22,7 @@ export class OrganizationRepository {
         name: data.name,
         description: data.description ?? null,
         logoUrl: data.logoUrl,
+        backgroundUrl: data.backgroundUrl ?? null,
         contactEmail: data.contactEmail ?? null,
         ownerId: data.ownerId,
         createdBy: data.createdBy ?? data.ownerId,
@@ -34,6 +36,7 @@ export class OrganizationRepository {
       name?: string;
       description?: string | null;
       logoUrl?: string;
+      backgroundUrl?: string | null;
       contactEmail?: string | null;
       status?: number;
       isEmailVerified?: boolean;
@@ -46,6 +49,9 @@ export class OrganizationRepository {
         ...(data.name !== undefined && { name: data.name }),
         ...(data.description !== undefined && { description: data.description }),
         ...(data.logoUrl !== undefined && { logoUrl: data.logoUrl }),
+        ...(data.backgroundUrl !== undefined && {
+          backgroundUrl: data.backgroundUrl,
+        }),
         ...(data.contactEmail !== undefined && {
           contactEmail: data.contactEmail,
         }),

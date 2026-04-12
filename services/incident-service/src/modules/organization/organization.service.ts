@@ -32,6 +32,7 @@ export class OrganizationService {
     name: string;
     description: string | null;
     logoUrl: string;
+    backgroundUrl: string | null;
     contactEmail: string | null;
     isEmailVerified: boolean;
     status: number;
@@ -44,6 +45,7 @@ export class OrganizationService {
       name: row.name,
       description: row.description,
       logoUrl: row.logoUrl,
+      backgroundUrl: row.backgroundUrl,
       contactEmail: row.contactEmail,
       isEmailVerified: row.isEmailVerified,
       status: row.status,
@@ -96,6 +98,7 @@ export class OrganizationService {
       name: body.name.trim(),
       description: body.description?.trim() || null,
       logoUrl: body.logoUrl.trim(),
+      backgroundUrl: body.backgroundUrl?.trim() || null,
       contactEmail: body.contactEmail.trim().toLowerCase(),
       ownerId,
       createdBy: ownerId,
@@ -221,6 +224,12 @@ export class OrganizationService {
     }
     if (body.logoUrl !== undefined) {
       patch.logoUrl = body.logoUrl.trim();
+    }
+    if (body.backgroundUrl !== undefined) {
+      patch.backgroundUrl =
+        body.backgroundUrl === null
+          ? null
+          : body.backgroundUrl.trim() || null;
     }
 
     let contactEmailChanged = false;

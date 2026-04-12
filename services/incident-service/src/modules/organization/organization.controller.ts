@@ -5,6 +5,7 @@ import {
   query,
   validationResult,
 } from "express-validator";
+import { isURL } from "validator";
 import {
   HttpError,
   HTTP_STATUS,
@@ -48,6 +49,14 @@ export class OrganizationController {
       .isLength({ max: 2048 })
       .isURL({ require_tld: false })
       .withMessage("logo_url must be a non-empty valid URL (max 2048 characters)"),
+    body("backgroundUrl")
+      .optional()
+      .trim()
+      .isLength({ max: 2048 })
+      .isURL({ require_tld: false })
+      .withMessage(
+        "background_url must be a valid URL (max 2048 characters) when provided",
+      ),
     body("contactEmail")
       .notEmpty()
       .trim()
@@ -282,6 +291,29 @@ export class OrganizationController {
       .isLength({ max: 2048 })
       .isURL({ require_tld: false })
       .withMessage("logo_url must be a valid URL (max 2048 characters)"),
+    body("backgroundUrl")
+      .optional({ nullable: true })
+      .custom((value) => {
+        if (value === null) {
+          return true;
+        }
+        if (typeof value !== "string") {
+          throw new Error("background_url must be a string or null");
+        }
+        const t = value.trim();
+        if (!t) {
+          throw new Error(
+            "background_url must be a non-empty valid URL or null to clear",
+          );
+        }
+        if (t.length > 2048) {
+          throw new Error("background_url must be at most 2048 characters");
+        }
+        if (!isURL(t, { require_tld: false })) {
+          throw new Error("background_url must be a valid URL");
+        }
+        return true;
+      }),
     body("contactEmail")
       .optional()
       .trim()
@@ -294,10 +326,11 @@ export class OrganizationController {
         b.name !== undefined ||
         b.description !== undefined ||
         b.logoUrl !== undefined ||
+        b.backgroundUrl !== undefined ||
         b.contactEmail !== undefined;
       if (!has) {
         throw new Error(
-          "At least one of name, description, logo_url, contact_email is required",
+          "At least one of name, description, logo_url, background_url, contact_email is required",
         );
       }
       return true;
