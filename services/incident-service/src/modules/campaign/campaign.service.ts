@@ -3,6 +3,7 @@ import prisma from "../../config/prisma.client";
 import {
   GlobalStatus,
   JoinRequestStatus,
+  ReportStatus,
   SavedResourceType,
   VoteResourceType,
 } from "../../constants/status.enum";
@@ -134,7 +135,7 @@ export class CampaignService {
             title: request.title,
             description: request.description,
             difficulty: request.difficulty,
-            status: GlobalStatus._STATUS_INREVIEW,
+            status: GlobalStatus._STATUS_DRAFT,
             isVerify: false,
             organizationId: request.organizationId,
             createdBy: userId,
@@ -431,9 +432,22 @@ export class CampaignService {
             where: {
               campaignId: id,
               deletedAt: null,
+              status: ReportStatus._STATUS_INPROCESS,
             },
             data: {
               campaignId: null,
+              status: ReportStatus._STATUS_PENDING,
+              updatedBy: userId,
+            },
+          });
+          await tx.report.updateMany({
+            where: {
+              campaignId: id,
+              deletedAt: null,
+            },
+            data: {
+              campaignId: null,
+              updatedBy: userId,
             },
           });
 
@@ -495,6 +509,81 @@ export class CampaignService {
     return this.toResponseWithVotes(updated, viewerUserId ?? adminUserId);
   }
 
+  /** Admin-only: reject draft campaign — inactive and unlink in-progress reports back to pending. */
+  async adminRejectCampaign(
+    id: string,
+    adminUserId: string,
+    viewerUserId?: string | null,
+  ): Promise<CampaignResponse> {
+    const existing = await campaignRepository.findById(id);
+    if (!existing) {
+      throw new HttpError(
+        HTTP_STATUS.NOT_FOUND.withMessage("Campaign not found"),
+      );
+    }
+
+    if (existing.status === GlobalStatus._STATUS_INACTIVE) {
+      return this.toResponseWithVotes(existing, viewerUserId ?? adminUserId);
+    }
+
+    if (
+      existing.status === GlobalStatus._STATUS_ACTIVE ||
+      existing.status === GlobalStatus._STATUS_COMPLETED
+    ) {
+      throw new HttpError(
+        HTTP_STATUS.BAD_REQUEST.withMessage(
+          "Cannot reject a campaign that is already active or completed",
+        ),
+      );
+    }
+
+    await prisma.$transaction(
+      async (tx) => {
+        await tx.report.updateMany({
+          where: {
+            campaignId: id,
+            deletedAt: null,
+            status: ReportStatus._STATUS_INPROCESS,
+          },
+          data: {
+            campaignId: null,
+            status: ReportStatus._STATUS_PENDING,
+            updatedBy: adminUserId,
+          },
+        });
+        await tx.report.updateMany({
+          where: {
+            campaignId: id,
+            deletedAt: null,
+          },
+          data: {
+            campaignId: null,
+            updatedBy: adminUserId,
+          },
+        });
+        await tx.campaign.update({
+          where: { id },
+          data: {
+            status: GlobalStatus._STATUS_INACTIVE,
+            isVerify: false,
+            updatedBy: adminUserId,
+          },
+        });
+      },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      },
+    );
+
+    const updated = await campaignRepository.findById(id);
+    if (!updated) {
+      throw new HttpError(
+        HTTP_STATUS.NOT_FOUND.withMessage("Campaign not found"),
+      );
+    }
+    return this.toResponseWithVotes(updated, viewerUserId ?? adminUserId);
+  }
+
   /** Admin-only: mark campaign completed and queue green points for approved volunteers. */
   async adminMarkCampaignDone(
     id: string,
@@ -541,6 +630,13 @@ export class CampaignService {
             updatedBy: adminUserId,
           },
         });
+        await tx.report.updateMany({
+          where: { campaignId: id, deletedAt: null },
+          data: {
+            status: ReportStatus._STATUS_COMPLETED,
+            updatedBy: adminUserId,
+          },
+        });
       },
       {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
@@ -560,6 +656,17 @@ export class CampaignService {
               where: { id },
               data: {
                 status: GlobalStatus._STATUS_ACTIVE,
+                updatedBy: adminUserId,
+              },
+            });
+            await tx.report.updateMany({
+              where: {
+                campaignId: id,
+                deletedAt: null,
+                status: ReportStatus._STATUS_COMPLETED,
+              },
+              data: {
+                status: ReportStatus._STATUS_INPROCESS,
                 updatedBy: adminUserId,
               },
             });
@@ -587,25 +694,43 @@ export class CampaignService {
 
     this.ensureOwner(existing.createdBy, userId);
 
-    await prisma.$transaction(async (tx) => {
-      await tx.report.updateMany({
-        where: {
-          campaignId: id,
-          deletedAt: null,
-        },
-        data: {
-          campaignId: null,
-        },
-      });
+    await prisma.$transaction(
+      async (tx) => {
+        await tx.report.updateMany({
+          where: {
+            campaignId: id,
+            deletedAt: null,
+            status: ReportStatus._STATUS_INPROCESS,
+          },
+          data: {
+            campaignId: null,
+            status: ReportStatus._STATUS_PENDING,
+            updatedBy: userId,
+          },
+        });
+        await tx.report.updateMany({
+          where: {
+            campaignId: id,
+            deletedAt: null,
+          },
+          data: {
+            campaignId: null,
+            updatedBy: userId,
+          },
+        });
 
-      await tx.campaign.update({
-        where: { id },
-        data: {
-          deletedAt: new Date(),
-          updatedBy: userId,
-        },
-      });
-    });
+        await tx.campaign.update({
+          where: { id },
+          data: {
+            deletedAt: new Date(),
+            updatedBy: userId,
+          },
+        });
+      },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      },
+    );
   }
 
   private ensureOwner(ownerId: string | null, userId: string): void {
@@ -666,15 +791,18 @@ export class CampaignService {
       where: {
         id: { in: reportIds },
         deletedAt: null,
+        campaignId: null,
+        status: ReportStatus._STATUS_PENDING,
       },
       data: {
         campaignId,
+        status: ReportStatus._STATUS_INPROCESS,
       },
     });
 
     if (result.count !== reportIds.length) {
       throw new Error(
-        "Some reports could not be linked to campaign due to concurrent updates",
+        "Some reports could not be linked to campaign (must be admin-approved, not in another campaign, or were modified concurrently)",
       );
     }
   }

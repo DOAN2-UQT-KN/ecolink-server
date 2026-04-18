@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import prisma from "../../config/prisma.client";
+import { GlobalStatus } from "../../constants/status.enum";
 
 export class OrganizationRepository {
   private prisma: PrismaClient;
@@ -24,6 +25,7 @@ export class OrganizationRepository {
         logoUrl: data.logoUrl,
         backgroundUrl: data.backgroundUrl ?? null,
         contactEmail: data.contactEmail ?? null,
+        status: GlobalStatus._STATUS_DRAFT,
         ownerId: data.ownerId,
         createdBy: data.createdBy ?? data.ownerId,
       },

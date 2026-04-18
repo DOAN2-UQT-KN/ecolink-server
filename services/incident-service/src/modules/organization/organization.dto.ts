@@ -12,11 +12,19 @@ export interface CreateOrganizationBody {
 
 /**
  * Body for PUT /api/v1/organizations/:id/verify (admin).
- * `GlobalStatus._STATUS_APPROVED` (14) approves; `_STATUS_REJECTED` (18) rejects while in review.
+ * `GlobalStatus._STATUS_ACTIVE` (1) approves; `_STATUS_INACTIVE` (2) rejects (draft / awaiting review only).
  */
 export interface AdminVerifyOrganizationBody {
-  /** `GlobalStatus`: use `_STATUS_APPROVED` (14) to approve, `_STATUS_REJECTED` (18) to reject. */
+  /** `GlobalStatus`: use `_STATUS_ACTIVE` (1) to approve, `_STATUS_INACTIVE` (2) to reject. */
   status: number;
+}
+
+/** Public owner profile on organization responses (from identity-service; no email). */
+export interface OrganizationOwnerResponse {
+  id: string;
+  name: string;
+  avatar: string | null;
+  bio: string | null;
 }
 
 /** Body for PUT /api/v1/organizations/:id (owner). At least one field required. */
@@ -40,6 +48,8 @@ export interface OrganizationResponse {
   /** `GlobalStatus` numeric value (e.g. in-review until admin approves via verify endpoint). */
   status: number;
   ownerId: string;
+  /** Owner profile from identity-service (name, avatar, bio). */
+  owner: OrganizationOwnerResponse;
   createdAt: Date;
   updatedAt: Date;
   /**

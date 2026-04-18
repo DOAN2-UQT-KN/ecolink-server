@@ -1,6 +1,6 @@
 import { Prisma, PrismaClient } from "@prisma/client";
 import prisma from "../../config/prisma.client";
-import { GlobalStatus } from "../../constants/status.enum";
+import { GlobalStatus, ReportStatus } from "../../constants/status.enum";
 import { CampaignWithReports } from "./campaign.entity";
 
 const SUBMISSION_STATUSES_AWAITING_REVIEW: number[] = [
@@ -191,6 +191,8 @@ export class CampaignRepository {
       where: {
         id: { in: reportIds },
         deletedAt: null,
+        campaignId: null,
+        status: ReportStatus._STATUS_PENDING,
       },
       select: { id: true },
     });

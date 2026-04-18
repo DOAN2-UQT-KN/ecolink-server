@@ -372,19 +372,16 @@ export class OrganizationController {
 
   /**
    * Approve or reject an organization (admin only) via body `status`:
-   * `GlobalStatus._STATUS_APPROVED` (14) or `_STATUS_REJECTED` (18).
+   * `GlobalStatus._STATUS_ACTIVE` (1) or `_STATUS_INACTIVE` (2).
    */
   adminVerifyOrganization = [
     orgIdParam,
     body("status")
       .isInt()
       .toInt()
-      .isIn([
-        GlobalStatus._STATUS_APPROVED,
-        GlobalStatus._STATUS_REJECTED,
-      ])
+      .isIn([GlobalStatus._STATUS_ACTIVE, GlobalStatus._STATUS_INACTIVE])
       .withMessage(
-        "status must be GlobalStatus approved (14) to approve or rejected (18) to reject",
+        "status must be GlobalStatus active (1) to approve or inactive (2) to reject",
       ),
 
     async (req: Request, res: Response): Promise<void> => {
@@ -420,7 +417,7 @@ export class OrganizationController {
           status,
         );
         const message =
-          status === GlobalStatus._STATUS_APPROVED
+          status === GlobalStatus._STATUS_ACTIVE
             ? "Organization approved successfully"
             : "Organization rejected successfully";
         return sendSuccess(res, HTTP_STATUS.OK.withMessage(message), {

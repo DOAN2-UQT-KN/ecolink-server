@@ -17,18 +17,22 @@ import type {
   OrganizationListQuery,
   OrganizationMemberResponse,
   OrganizationMembersListQuery,
+  OrganizationOwnerResponse,
   OrganizationResponse,
   UpdateOrganizationBody,
 } from "./organization.dto";
 import { issueOrganizationContactEmailToken } from "./identity-organization-contact-email.client";
+import { fetchOrganizationOwnersByUserIds } from "./identity-user.client";
 import { enqueueOrganizationContactVerificationEmail } from "./organization-contact-email-notify.client";
 import { buildVerifyContactEmailRequestUrl } from "./organization-contact-email-urls";
 import { organizationJoiningRequestRepository } from "./organization_joining_request.repository";
 import { organizationMemberRepository } from "./organization_member.repository";
 import { organizationRepository } from "./organization.repository";
 
+type OrganizationCore = Omit<OrganizationResponse, "owner">;
+
 export class OrganizationService {
-  private toOrganizationResponse(row: {
+  private organizationCoreFromRow(row: {
     id: string;
     name: string;
     description: string | null;
@@ -40,7 +44,7 @@ export class OrganizationService {
     ownerId: string;
     createdAt: Date;
     updatedAt: Date;
-  }): OrganizationResponse {
+  }): OrganizationCore {
     return {
       id: row.id,
       name: row.name,
@@ -54,6 +58,28 @@ export class OrganizationService {
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
+  }
+
+  private ownerFallback(ownerId: string): OrganizationOwnerResponse {
+    return { id: ownerId, name: "", avatar: null, bio: null };
+  }
+
+  private async withOwner(core: OrganizationCore): Promise<OrganizationResponse> {
+    const map = await fetchOrganizationOwnersByUserIds([core.ownerId]);
+    return {
+      ...core,
+      owner: map.get(core.ownerId) ?? this.ownerFallback(core.ownerId),
+    };
+  }
+
+  private async withOwners(
+    cores: OrganizationCore[],
+  ): Promise<OrganizationResponse[]> {
+    const map = await fetchOrganizationOwnersByUserIds(cores.map((c) => c.ownerId));
+    return cores.map((c) => ({
+      ...c,
+      owner: map.get(c.ownerId) ?? this.ownerFallback(c.ownerId),
+    }));
   }
 
   private toJoinRequestResponse(row: {
@@ -119,7 +145,7 @@ export class OrganizationService {
       });
     }
 
-    return this.toOrganizationResponse(created);
+    return this.withOwner(this.organizationCoreFromRow(created));
   }
 
   private async queueOrganizationContactVerificationEmail(
@@ -176,9 +202,7 @@ export class OrganizationService {
   async adminVerifyOrganization(
     organizationId: string,
     adminUserId: string,
-    targetStatus:
-      | GlobalStatus._STATUS_APPROVED
-      | GlobalStatus._STATUS_REJECTED,
+    targetStatus: GlobalStatus._STATUS_ACTIVE | GlobalStatus._STATUS_INACTIVE,
   ): Promise<OrganizationResponse> {
     const existing = await organizationRepository.findById(organizationId);
     if (!existing) {
@@ -187,13 +211,14 @@ export class OrganizationService {
       );
     }
 
-    if (targetStatus === GlobalStatus._STATUS_APPROVED) {
-      if (existing.status === GlobalStatus._STATUS_APPROVED) {
-        return this.toOrganizationResponse(existing);
+    if (targetStatus === GlobalStatus._STATUS_ACTIVE) {
+      if (existing.status === GlobalStatus._STATUS_ACTIVE) {
+        return this.withOwner(this.organizationCoreFromRow(existing));
       }
       const canApprove =
-        existing.status === GlobalStatus._STATUS_INREVIEW ||
-        existing.status === GlobalStatus._STATUS_REJECTED;
+        existing.status === GlobalStatus._STATUS_DRAFT ||
+        existing.status === GlobalStatus._STATUS_INACTIVE ||
+        existing.status === GlobalStatus._STATUS_INREVIEW;
       if (!canApprove) {
         throw new HttpError(
           HTTP_STATUS.BAD_REQUEST.withMessage(
@@ -202,34 +227,37 @@ export class OrganizationService {
         );
       }
       const updated = await organizationRepository.update(organizationId, {
-        status: GlobalStatus._STATUS_APPROVED,
+        status: GlobalStatus._STATUS_ACTIVE,
         updatedBy: adminUserId,
       });
-      return this.toOrganizationResponse(updated);
+      return this.withOwner(this.organizationCoreFromRow(updated));
     }
 
-    if (existing.status === GlobalStatus._STATUS_REJECTED) {
-      return this.toOrganizationResponse(existing);
+    if (existing.status === GlobalStatus._STATUS_INACTIVE) {
+      return this.withOwner(this.organizationCoreFromRow(existing));
     }
-    if (existing.status === GlobalStatus._STATUS_APPROVED) {
+    if (existing.status === GlobalStatus._STATUS_ACTIVE) {
       throw new HttpError(
         HTTP_STATUS.BAD_REQUEST.withMessage(
-          "Cannot reject an organization that is already approved",
+          "Cannot reject an organization that is already active",
         ),
       );
     }
-    if (existing.status !== GlobalStatus._STATUS_INREVIEW) {
+    const canReject =
+      existing.status === GlobalStatus._STATUS_DRAFT ||
+      existing.status === GlobalStatus._STATUS_INREVIEW;
+    if (!canReject) {
       throw new HttpError(
         HTTP_STATUS.BAD_REQUEST.withMessage(
-          "Organization can only be rejected while it is in review",
+          "Organization can only be rejected while it is in draft or awaiting review",
         ),
       );
     }
     const updated = await organizationRepository.update(organizationId, {
-      status: GlobalStatus._STATUS_REJECTED,
+      status: GlobalStatus._STATUS_INACTIVE,
       updatedBy: adminUserId,
     });
-    return this.toOrganizationResponse(updated);
+    return this.withOwner(this.organizationCoreFromRow(updated));
   }
 
   /** Owner-only: partial update; changing `contactEmail` resets verification and queues a new email. */
@@ -299,7 +327,7 @@ export class OrganizationService {
       });
     }
 
-    return this.toOrganizationResponse(updated);
+    return this.withOwner(this.organizationCoreFromRow(updated));
   }
 
   /** Owner-only: resend contact verification when email is not yet verified. */
@@ -355,7 +383,7 @@ export class OrganizationService {
       );
     }
 
-    return this.toOrganizationResponse(org);
+    return this.withOwner(this.organizationCoreFromRow(org));
   }
 
   /**
@@ -385,7 +413,7 @@ export class OrganizationService {
   ): Promise<OrganizationResponse | null> {
     const row = await organizationRepository.findById(organizationId);
     if (!row) return null;
-    const organization = this.toOrganizationResponse(row);
+    const organization = await this.withOwner(this.organizationCoreFromRow(row));
     if (!viewerUserId) {
       return organization;
     }
@@ -477,7 +505,9 @@ export class OrganizationService {
         { skip, take: limit, sortBy, sortOrder },
       );
 
-    const organizations = rows.map((r) => this.toOrganizationResponse(r));
+    const organizations = await this.withOwners(
+      rows.map((r) => this.organizationCoreFromRow(r)),
+    );
     return {
       organizations: await this.withOrganizationListRequestStatus(
         organizations,
@@ -530,7 +560,9 @@ export class OrganizationService {
       { skip, take: limit, sortBy, sortOrder },
     );
 
-    const organizations = rows.map((r) => this.toOrganizationResponse(r));
+    const organizations = await this.withOwners(
+      rows.map((r) => this.organizationCoreFromRow(r)),
+    );
     return {
       organizations: await this.withOrganizationListRequestStatus(
         organizations,

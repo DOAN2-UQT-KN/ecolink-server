@@ -29,7 +29,7 @@ model Report {
   /** Human-readable location text (e.g. street / place name from reverse geocoding). */
   detailAddress String? @map("detail_address")
 
-  status Int? @default(9)
+  status Int? @default(4)
 
   /** Admin moderation: only admins can set true (see verify endpoint). */
   isVerify Boolean @default(false) @map("is_verify")
@@ -60,7 +60,7 @@ model Campaign {
   id          String  @id @default(uuid()) @db.Uuid
   title       String  @db.VarChar(200)
   description String?
-  status      Int     @default(9)
+  status      Int     @default(4)
 
   /** Level key into reward-service `difficulties` (volunteer cap, green points). */
   difficulty Int @default(1)
@@ -417,8 +417,8 @@ model Organization {
 
   /** Whether `contactEmail` has been confirmed (e.g. OTP); not set by create body. */
   isEmailVerified Boolean @default(false) @map("is_email_verified")
-  /** Lifecycle (e.g. `GlobalStatus._STATUS_INREVIEW` until an admin approves). */
-  status Int @default(9)
+  /** Lifecycle: `GlobalStatus._STATUS_DRAFT` until admin approves (`ACTIVE`) or rejects (`INACTIVE`). */
+  status Int @default(4)
 
   ownerId String @map("owner_id") @db.Uuid
 

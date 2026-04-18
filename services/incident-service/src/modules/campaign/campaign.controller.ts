@@ -280,6 +280,65 @@ export class CampaignController {
   ];
 
   /**
+   * Reject a draft campaign (admin only).
+   */
+  adminRejectCampaign = [
+    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: errors.array(),
+        });
+      }
+
+      try {
+        const userId = req.user?.userId;
+        if (!userId) {
+          return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+        }
+
+        const role = req.user?.role;
+        const normalizedRole = role?.toLowerCase();
+        if (!normalizedRole || normalizedRole !== "admin") {
+          return sendError(
+            res,
+            HTTP_STATUS.FORBIDDEN.withMessage(
+              "Only admin can reject a campaign",
+            ),
+          );
+        }
+
+        const campaign = await campaignService.adminRejectCampaign(
+          req.params.id,
+          userId,
+          req.user?.userId,
+        );
+        sendSuccess(
+          res,
+          HTTP_STATUS.OK.withMessage("Campaign rejected successfully"),
+          { campaign },
+        );
+      } catch (error) {
+        console.error("Admin reject campaign error:", error);
+        if (sendHttpErrorResponse(res, error)) {
+          return;
+        }
+        if (error instanceof Error) {
+          if (error.message.includes("not found")) {
+            return sendError(
+              res,
+              HTTP_STATUS.NOT_FOUND.withMessage("Campaign not found"),
+            );
+          }
+        }
+        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+      }
+    },
+  ];
+
+  /**
    * List campaigns with more than one submission awaiting approve/reject (admin only).
    */
   getCampaignsAwaitingMultiSubmissionReview = [

@@ -117,6 +117,17 @@ router.put(
 router.get("/:id", authenticate, campaignController.getCampaignById);
 
 /**
+ * @route   PUT /api/v1/campaigns/:id/reject
+ * @desc    Admin reject draft campaign (status → inactive; linked reports return to pending)
+ * @access  Private (Admin only)
+ */
+router.put(
+  "/:id/reject",
+  authenticate,
+  campaignController.adminRejectCampaign,
+);
+
+/**
  * @route   PUT /api/v1/campaigns/:id/verify
  * @desc    Admin-approve campaign (status → active, is_verify)
  * @access  Private (Admin only)

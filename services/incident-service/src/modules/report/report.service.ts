@@ -30,8 +30,8 @@ import { savedResourceRepository } from "../saved_resource/saved_resource.reposi
 import { defaultResourceVoteSummary } from "../vote/vote.dto";
 import { voteService } from "../vote/vote.service";
 
-/** Admin moderation: report is banned (same numeric value as GlobalStatus._STATUS_REJECTED). */
-const REPORT_STATUS_BANNED = ReportStatus._STATUS_REJECTED;
+/** Admin moderation: report is banned / hidden (`GlobalStatus._STATUS_INACTIVE`). */
+const REPORT_STATUS_BANNED = ReportStatus._STATUS_INACTIVE;
 
 export class ReportService {
   constructor() {}
@@ -127,7 +127,7 @@ export class ReportService {
           latitude: request.latitude,
           longitude: request.longitude,
           detailAddress: request.detailAddress,
-          status: ReportStatus._STATUS_INREVIEW,
+          status: ReportStatus._STATUS_DRAFT,
           isVerify: false,
           aiVerified: false,
         },
@@ -441,7 +441,7 @@ export class ReportService {
 
     await reportRepository.update(reportId, {
       aiVerified: false,
-      status: ReportStatus._STATUS_INREVIEW,
+      status: ReportStatus._STATUS_DRAFT,
     });
 
     reportAnalysisQueueService
@@ -491,7 +491,7 @@ export class ReportService {
   }
 
   /**
-   * Ban a report (moderation). Admin-only; sets status to rejected/banned.
+   * Ban a report (moderation). Admin-only; sets status to inactive (banned).
    */
   async adminBanReport(
     id: string,
@@ -533,7 +533,8 @@ export class ReportService {
   }
 
   /**
-   * Admin approval: marks report verified and sets status active (separate from AI aiVerified).
+   * Admin approval: marks report verified and sets status pending (eligible for campaigns;
+   * separate from AI `aiVerified`).
    */
   async adminVerifyReport(
     id: string,
@@ -550,7 +551,7 @@ export class ReportService {
 
     const report = await reportRepository.update(id, {
       isVerify: true,
-      status: ReportStatus._STATUS_ACTIVE,
+      status: ReportStatus._STATUS_PENDING,
     });
     return this.withReportVote(toReportResponse(report), viewerUserId);
   }

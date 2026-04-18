@@ -81,6 +81,31 @@ router.post(
   },
 );
 
+/**
+ * Incident-service (and peers): batch-load users by id for denormalized responses (e.g. org owner).
+ */
+router.post(
+  "/users/by-ids",
+  body("ids").isArray({ min: 1, max: 100 }),
+  body("ids.*").isUUID(),
+  async (req, res): Promise<void> => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
+      return;
+    }
+
+    const ids = (req.body as { ids: string[] }).ids;
+    try {
+      const users = await userService.getUsersByIds(ids);
+      sendSuccess(res, HTTP_STATUS.OK, { users });
+    } catch (error) {
+      console.error("Internal users by-ids error:", error);
+      sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+    }
+  },
+);
+
 router.get(
   "/users/:id/email",
   param("id").isUUID(),
