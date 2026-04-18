@@ -70,3 +70,50 @@ model GreenPointTransaction {
   @@index([type])
   @@map("green_point_transactions")
 }
+
+/// Catalog item users can redeem for green points.
+model Gift {
+  id String @id @default(uuid()) @db.Uuid
+
+  name String @db.VarChar(255)
+
+  mediaId String @map("media_id") @db.Uuid
+
+  description String @db.Text
+
+  /// Green points required to redeem once.
+  greenPoints Int @map("green_points")
+
+  /// Remaining stock; null means unlimited.
+  stockRemaining Int? @map("stock_remaining")
+
+  isActive Boolean @default(true) @map("is_active")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  redemptions GiftRedemption[]
+
+  @@index([deletedAt])
+  @@index([isActive])
+  @@map("gifts")
+}
+
+model GiftRedemption {
+  id String @id @default(uuid()) @db.Uuid
+
+  userId String @map("user_id") @db.Uuid
+
+  giftId String @map("gift_id") @db.Uuid
+
+  greenPointsSpent Int @map("green_points_spent")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  gift Gift @relation(fields: [giftId], references: [id], onDelete: Restrict)
+
+  @@index([userId])
+  @@index([giftId])
+  @@map("gift_redemptions")
+}

@@ -8,6 +8,7 @@ import { mountOpenApi, routeModulesFrom } from "@da2/express-swagger";
 import { OPENAPI_ROUTE_MODELS } from "./openapi/route-models";
 import internalRoutes from "./internal/internal.routes";
 import difficultyApiRoutes from "./modules/difficulty/difficulty.api.routes";
+import giftApiRoutes from "./modules/gift/gift.api.routes";
 import { errorHandler } from "./middleware/error.middleware";
 
 dotenv.config();
@@ -17,10 +18,11 @@ const PORT = Number(process.env.PORT) || 3002;
 
 mountOpenApi(app, {
   title: "Reward service",
-  description: "Campaign difficulties (volunteer caps, green points)",
+  description: "Campaign difficulties, green points, and gift redemptions",
   serverUrl: process.env.SWAGGER_SERVER_URL || `http://localhost:${PORT}`,
   routeFiles: routeModulesFrom(__dirname, [
     "modules/difficulty/difficulty.api.routes",
+    "modules/gift/gift.api.routes",
   ]),
   typescript: {
     projectRoot: path.join(__dirname, ".."),
@@ -49,6 +51,7 @@ app.get("/health", (_req, res) => {
 });
 
 app.use("/api/v1", difficultyApiRoutes);
+app.use("/api/v1", giftApiRoutes);
 app.use("/internal/v1", internalRoutes);
 
 app.use(errorHandler);

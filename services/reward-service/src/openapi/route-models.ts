@@ -8,4 +8,19 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
     requestBody: "UpdateDifficultyBody",
     responseData: "DifficultyOneEnvelopeData",
   },
+  "GET /api/v1/gifts": {
+    query: "GiftListQuery",
+    responseData: "GiftsListEnvelopeData",
+  },
+  "POST /api/v1/gifts": {
+    requestBody: "CreateGiftBody",
+    responseData: "GiftOneEnvelopeData",
+  },
+  "PUT /api/v1/gifts/:id": {
+    requestBody: "UpdateGiftBody",
+    responseData: "GiftOneEnvelopeData",
+  },
+  "POST /api/v1/gifts/:id/redeem": {
+    responseData: "GiftRedemptionOneEnvelopeData",
+  },
 };

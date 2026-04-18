@@ -6,6 +6,7 @@ export const GreenPointTransactionType = {
   CAMPAIGN_COMPLETION: "CAMPAIGN_COMPLETION",
   UPVOTE: "UPVOTE",
   REFERRAL: "REFERRAL",
+  GIFT_REDEEM: "GIFT_REDEEM",
 } as const;
 
 export type GreenPointTransactionTypeName =
@@ -18,6 +19,7 @@ export const GreenPointResourceType = {
   CAMPAIGN: "CAMPAIGN",
   REPORT: "REPORT",
   USER: "USER",
+  GIFT_REDEMPTION: "GIFT_REDEMPTION",
 } as const;
 
 export type GreenPointResourceTypeName =

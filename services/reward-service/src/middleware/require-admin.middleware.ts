@@ -10,7 +10,7 @@ export const requireAdmin = (
   if (!role || role !== "admin") {
     sendError(
       res,
-      HTTP_STATUS.FORBIDDEN.withMessage("Only admin can update difficulties"),
+      HTTP_STATUS.FORBIDDEN.withMessage("Admin access required"),
     );
     return;
   }
