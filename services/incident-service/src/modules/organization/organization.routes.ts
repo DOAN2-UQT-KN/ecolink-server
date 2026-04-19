@@ -152,7 +152,7 @@ router.delete(
 
 /**
  * @route   GET /api/v1/organizations/:id/members
- * @desc    List approved members (owner only; owner is not in this list).
+ * @desc    List approved members (owner only; owner is not in this list). Pagination: page, limit. Filter: userId, search (member display name, case-insensitive contains, via identity-service).
  * @access  Private
  */
 router.get(

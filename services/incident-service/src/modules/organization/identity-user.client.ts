@@ -35,6 +35,8 @@ function pickNullableString(v: unknown): string | null {
  * Loads owner profiles from identity-service (internal batch). Wire format uses snake_case keys.
  * On failure or missing users, returns a partial map; callers should fall back per `ownerId`.
  */
+const INTERNAL_USERS_BY_IDS_MAX = 100;
+
 export async function fetchOrganizationOwnersByUserIds(
   userIds: string[],
 ): Promise<Map<string, OrganizationOwnerResponse>> {
@@ -46,22 +48,25 @@ export async function fetchOrganizationOwnersByUserIds(
 
   try {
     const client = getClient();
-    const { data } = await client.post<
-      SuccessEnvelope<{ users?: Record<string, unknown>[] }>
-    >("/internal/v1/users/by-ids", { ids: unique });
-    if (!data?.success || !Array.isArray(data.data?.users)) {
-      throw new Error("Identity service did not return users");
-    }
-    for (const raw of data.data.users) {
-      const row = raw as Record<string, unknown>;
-      const id = pickString(row.id);
-      if (!id) continue;
-      out.set(id, {
-        id,
-        name: pickString(row.name) ?? "",
-        avatar: pickNullableString(row.avatar),
-        bio: pickNullableString(row.bio),
-      });
+    for (let i = 0; i < unique.length; i += INTERNAL_USERS_BY_IDS_MAX) {
+      const chunk = unique.slice(i, i + INTERNAL_USERS_BY_IDS_MAX);
+      const { data } = await client.post<
+        SuccessEnvelope<{ users?: Record<string, unknown>[] }>
+      >("/internal/v1/users/by-ids", { ids: chunk });
+      if (!data?.success || !Array.isArray(data.data?.users)) {
+        throw new Error("Identity service did not return users");
+      }
+      for (const raw of data.data.users) {
+        const row = raw as Record<string, unknown>;
+        const id = pickString(row.id);
+        if (!id) continue;
+        out.set(id, {
+          id,
+          name: pickString(row.name) ?? "",
+          avatar: pickNullableString(row.avatar),
+          bio: pickNullableString(row.bio),
+        });
+      }
     }
   } catch (e) {
     console.error("[identity-user.client] fetchOrganizationOwnersByUserIds:", e);

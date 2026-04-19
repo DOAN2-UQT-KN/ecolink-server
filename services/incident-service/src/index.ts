@@ -11,6 +11,7 @@ import campaignRoutes from "./modules/campaign/campaign.routes";
 import voteRoutes from "./modules/vote/vote.routes";
 import savedResourceRoutes from "./modules/saved_resource/saved_resource.routes";
 import organizationRoutes from "./modules/organization/organization.routes";
+import adminMediaRoutes from "./modules/admin_media/admin-media.routes";
 import { errorHandler } from "./middleware/error.middleware";
 import {
   camelCaseRequestBody,
@@ -28,6 +29,7 @@ const swaggerRouteFiles = routeModulesFrom(__dirname, [
   "modules/vote/vote.routes",
   "modules/saved_resource/saved_resource.routes",
   "modules/organization/organization.routes",
+  "modules/admin_media/admin-media.routes",
 ]);
 
 // Middleware
@@ -71,6 +73,7 @@ app.use("/api/v1/campaigns", campaignRoutes);
 app.use("/api/v1/incident/votes", voteRoutes);
 app.use("/incident/saved-resources", savedResourceRoutes);
 app.use("/api/v1/organizations", organizationRoutes);
+app.use("/api/v1/admin/media", adminMediaRoutes);
 
 // Error handling
 app.use(errorHandler);

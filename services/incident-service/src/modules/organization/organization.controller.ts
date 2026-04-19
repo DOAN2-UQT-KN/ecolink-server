@@ -833,10 +833,14 @@ export class OrganizationController {
   listMembers = [
     orgIdParam,
     query("userId").optional().isUUID(),
-    query("page").optional().isInt({ min: 1 }),
-    query("limit").optional().isInt({ min: 1, max: 100 }),
+    query("user_id").optional().isUUID(),
+    query("search").optional().isString().trim(),
+    query("page").optional().isInt({ min: 1 }).toInt(),
+    query("limit").optional().isInt({ min: 1, max: 100 }).toInt(),
     query("sortBy").optional().isIn(["createdAt", "updatedAt"]),
+    query("sort_by").optional().isIn(["created_at", "updated_at"]),
     query("sortOrder").optional().isIn(["asc", "desc"]),
+    query("sort_order").optional().isIn(["asc", "desc"]),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -851,19 +855,31 @@ export class OrganizationController {
         return sendError(res, HTTP_STATUS.UNAUTHORIZED);
       }
 
+      const memberUserId =
+        (req.query.userId as string | undefined)?.trim() ||
+        (req.query.user_id as string | undefined)?.trim();
+
+      const sortByRaw = req.query.sortBy ?? req.query.sort_by;
+      let sortBy: OrganizationMembersListQuery["sortBy"] = "createdAt";
+      if (sortByRaw === "updatedAt" || sortByRaw === "updated_at") {
+        sortBy = "updatedAt";
+      }
+
+      const sortOrderRaw = req.query.sortOrder ?? req.query.sort_order;
+      const sortOrder: OrganizationMembersListQuery["sortOrder"] =
+        sortOrderRaw === "asc" ? "asc" : "desc";
+
+      const searchRaw = req.query.search;
       const q: OrganizationMembersListQuery = {
-        userId: req.query.userId
-          ? String(req.query.userId).trim()
-          : undefined,
-        page: req.query.page
-          ? parseInt(String(req.query.page), 10)
-          : undefined,
-        limit: req.query.limit
-          ? parseInt(String(req.query.limit), 10)
-          : undefined,
-        sortBy: req.query.sortBy as OrganizationMembersListQuery["sortBy"],
-        sortOrder:
-          req.query.sortOrder as OrganizationMembersListQuery["sortOrder"],
+        userId: memberUserId || undefined,
+        search:
+          searchRaw !== undefined && String(searchRaw).trim().length > 0
+            ? String(searchRaw).trim()
+            : undefined,
+        page: req.query.page as number | undefined,
+        limit: req.query.limit as number | undefined,
+        sortBy,
+        sortOrder,
       };
 
       try {

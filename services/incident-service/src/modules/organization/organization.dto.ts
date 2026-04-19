@@ -155,6 +155,8 @@ export interface MyOrganizationJoinRequestsQuery {
 /** Query for GET /api/v1/organizations/:id/members (owner). */
 export interface OrganizationMembersListQuery {
   userId?: string;
+  /** Case-insensitive substring match on member display name (from identity-service). */
+  search?: string;
   page?: number;
   limit?: number;
   sortBy?: "createdAt" | "updatedAt";

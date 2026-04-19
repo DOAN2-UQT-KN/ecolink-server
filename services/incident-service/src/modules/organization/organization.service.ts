@@ -834,6 +834,49 @@ export class OrganizationService {
     const sortOrder = query.sortOrder ?? "desc";
     const skip = (page - 1) * limit;
 
+    const searchTerm = query.search?.trim();
+    if (searchTerm) {
+      let rows =
+        await organizationMemberRepository.findAllActiveByOrganization(
+          organizationId,
+        );
+      if (query.userId) {
+        rows = rows.filter((r) => r.userId === query.userId);
+      }
+      const distinctUserIds = [...new Set(rows.map((r) => r.userId))];
+      const profiles = await fetchOrganizationOwnersByUserIds(distinctUserIds);
+      const needle = searchTerm.toLowerCase();
+      let matched = rows.filter((r) => {
+        const name = profiles.get(r.userId)?.name?.toLowerCase() ?? "";
+        return name.includes(needle);
+      });
+
+      const dir = sortOrder === "asc" ? 1 : -1;
+      matched.sort((a, b) => {
+        const av =
+          sortBy === "updatedAt" ? a.updatedAt.getTime() : a.createdAt.getTime();
+        const bv =
+          sortBy === "updatedAt" ? b.updatedAt.getTime() : b.createdAt.getTime();
+        return (av - bv) * dir;
+      });
+
+      const total = matched.length;
+      const pageRows = matched.slice(skip, skip + limit);
+      const members: OrganizationMemberResponse[] = pageRows.map((r) => ({
+        organizationId: r.organizationId,
+        userId: r.userId,
+        createdAt: r.createdAt,
+      }));
+
+      return {
+        members,
+        total,
+        page,
+        limit,
+        totalPages: total === 0 ? 0 : Math.ceil(total / limit),
+      };
+    }
+
     const { rows, total } =
       await organizationMemberRepository.findByOrganizationPaginated(
         organizationId,

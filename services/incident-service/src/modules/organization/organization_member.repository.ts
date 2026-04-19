@@ -64,6 +64,19 @@ export class OrganizationMemberRepository {
     return { rows, total };
   }
 
+  /** All active memberships for an org (for in-memory name filter + pagination). */
+  async findAllActiveByOrganization(organizationId: string) {
+    return this.prisma.organizationMember.findMany({
+      where: { organizationId, deletedAt: null },
+      select: {
+        organizationId: true,
+        userId: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+  }
+
   /** Soft-delete active membership; returns whether a row was updated. */
   async softDeleteMembership(
     organizationId: string,
