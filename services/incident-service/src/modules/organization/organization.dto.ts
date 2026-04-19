@@ -65,6 +65,8 @@ export interface OrganizationJoinRequestResponse {
   id: string;
   organizationId: string;
   requesterId: string;
+  /** Requester profile from identity-service (same shape as organization `owner`). */
+  requester: OrganizationOwnerResponse;
   status: number;
   createdAt: Date;
   updatedAt: Date;
@@ -82,6 +84,8 @@ export interface OrganizationJoinRequestDetailResponse
 export interface OrganizationMemberResponse {
   organizationId: string;
   userId: string;
+  /** Member profile from identity-service (same shape as organization `owner`). */
+  user: OrganizationOwnerResponse;
   createdAt: Date;
 }
 

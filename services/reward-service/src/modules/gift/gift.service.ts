@@ -7,6 +7,7 @@ import {
 } from "../green-point/green-point-transaction.constants";
 import {
   CreateGiftBody,
+  GiftRedemptionListItemResponse,
   GiftRedemptionResponse,
   GiftResponse,
   toGiftRedemptionResponse,
@@ -73,6 +74,51 @@ export class GiftService {
     ]);
 
     return { gifts: rows.map(toGiftResponse), total };
+  }
+
+  async getGreenPointBalance(userId: string): Promise<number> {
+    const row = await prisma.userGreenPointBalance.findUnique({
+      where: { userId },
+    });
+    return row?.balance ?? 0;
+  }
+
+  async listRedemptionsForUser(
+    userId: string,
+    page: number,
+    limit: number,
+  ): Promise<{ redemptions: GiftRedemptionListItemResponse[]; total: number }> {
+    const skip = (page - 1) * limit;
+    const where = { userId };
+
+    const [rows, total] = await Promise.all([
+      prisma.giftRedemption.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+        include: { gift: true },
+      }),
+      prisma.giftRedemption.count({ where }),
+    ]);
+
+    const redemptions: GiftRedemptionListItemResponse[] = rows.map((r) => ({
+      id: r.id,
+      giftId: r.giftId,
+      greenPointsSpent: r.greenPointsSpent,
+      createdAt: r.createdAt.toISOString(),
+      gift: r.gift
+        ? {
+            id: r.gift.id,
+            name: r.gift.name,
+            description: r.gift.description,
+            mediaId: r.gift.mediaId,
+            greenPoints: r.gift.greenPoints,
+          }
+        : null,
+    }));
+
+    return { redemptions, total };
   }
 
   async create(body: CreateGiftBody): Promise<GiftResponse> {

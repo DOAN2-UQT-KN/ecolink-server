@@ -23,4 +23,11 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
   "POST /api/v1/gifts/:id/redeem": {
     responseData: "GiftRedemptionOneEnvelopeData",
   },
+  "GET /api/v1/gifts/me/green-points": {
+    responseData: "MyGreenPointsEnvelopeData",
+  },
+  "GET /api/v1/gifts/me/redemptions": {
+    query: "MyGiftRedemptionsQuery",
+    responseData: "MyGiftRedemptionsEnvelopeData",
+  },
 };

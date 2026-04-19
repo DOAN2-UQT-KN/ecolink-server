@@ -82,18 +82,24 @@ export class OrganizationService {
     }));
   }
 
-  private toJoinRequestResponse(row: {
-    id: string;
-    organizationId: string;
-    requesterId: string;
-    status: number;
-    createdAt: Date;
-    updatedAt: Date;
-  }): OrganizationJoinRequestResponse {
+  private joinRequestResponseFromRow(
+    row: {
+      id: string;
+      organizationId: string;
+      requesterId: string;
+      status: number;
+      createdAt: Date;
+      updatedAt: Date;
+    },
+    requesterById: Map<string, OrganizationOwnerResponse>,
+  ): OrganizationJoinRequestResponse {
     return {
       id: row.id,
       organizationId: row.organizationId,
       requesterId: row.requesterId,
+      requester:
+        requesterById.get(row.requesterId) ??
+        this.ownerFallback(row.requesterId),
       status: row.status,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
@@ -101,8 +107,11 @@ export class OrganizationService {
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private toJoinRequestDetailResponse(r: any): OrganizationJoinRequestDetailResponse {
-    const base = this.toJoinRequestResponse(r);
+  private toJoinRequestDetailResponse(
+    r: any,
+    requesterById: Map<string, OrganizationOwnerResponse>,
+  ): OrganizationJoinRequestDetailResponse {
+    const base = this.joinRequestResponseFromRow(r, requesterById);
     const org = r.organization;
     return {
       ...base,
@@ -618,7 +627,10 @@ export class OrganizationService {
       organizationId,
       requesterId,
     });
-    return this.toJoinRequestResponse(row);
+    const requesterById = await fetchOrganizationOwnersByUserIds([
+      row.requesterId,
+    ]);
+    return this.joinRequestResponseFromRow(row, requesterById);
   }
 
   async listJoinRequestsForOwner(
@@ -662,8 +674,14 @@ export class OrganizationService {
         { skip, take: limit, sortBy, sortOrder },
       );
 
+    const requesterById = await fetchOrganizationOwnersByUserIds([
+      ...new Set(rows.map((r) => r.requesterId)),
+    ]);
+
     return {
-      joinRequests: rows.map((r) => this.toJoinRequestResponse(r)),
+      joinRequests: rows.map((r) =>
+        this.joinRequestResponseFromRow(r, requesterById),
+      ),
       total,
       page,
       limit,
@@ -697,8 +715,14 @@ export class OrganizationService {
         { skip, take: limit, sortBy, sortOrder },
       );
 
+    const requesterById = await fetchOrganizationOwnersByUserIds([
+      ...new Set(rows.map((r) => r.requesterId)),
+    ]);
+
     return {
-      joinRequests: rows.map((r) => this.toJoinRequestDetailResponse(r)),
+      joinRequests: rows.map((r) =>
+        this.toJoinRequestDetailResponse(r, requesterById),
+      ),
       total,
       page,
       limit,
@@ -774,7 +798,10 @@ export class OrganizationService {
     if (!updated) {
       throw new HttpError(HTTP_STATUS.JOIN_REQUEST_NOT_FOUND);
     }
-    return this.toJoinRequestResponse(updated);
+    const requesterById = await fetchOrganizationOwnersByUserIds([
+      updated.requesterId,
+    ]);
+    return this.joinRequestResponseFromRow(updated, requesterById);
   }
 
   async cancelJoinRequest(
@@ -866,6 +893,8 @@ export class OrganizationService {
       const members: OrganizationMemberResponse[] = pageRows.map((r) => ({
         organizationId: r.organizationId,
         userId: r.userId,
+        user:
+          profiles.get(r.userId) ?? this.ownerFallback(r.userId),
         createdAt: r.createdAt,
       }));
 
@@ -885,9 +914,14 @@ export class OrganizationService {
         { skip, take: limit, sortBy, sortOrder },
       );
 
+    const userById = await fetchOrganizationOwnersByUserIds(
+      rows.map((r) => r.userId),
+    );
+
     const members: OrganizationMemberResponse[] = rows.map((r) => ({
       organizationId: r.organizationId,
       userId: r.userId,
+      user: userById.get(r.userId) ?? this.ownerFallback(r.userId),
       createdAt: r.createdAt,
     }));
 

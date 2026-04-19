@@ -92,3 +92,34 @@ export interface GiftOneEnvelopeData {
 export interface GiftRedemptionOneEnvelopeData {
   redemption: GiftRedemptionResponse;
 }
+
+/** Snapshot of the gift at list time (for volunteer redemption history). */
+export interface GiftRedemptionGiftSnapshot {
+  id: string;
+  name: string;
+  description: string;
+  mediaId: string;
+  greenPoints: number;
+}
+
+export interface GiftRedemptionListItemResponse {
+  id: string;
+  giftId: string;
+  greenPointsSpent: number;
+  createdAt: string;
+  gift: GiftRedemptionGiftSnapshot | null;
+}
+
+export interface MyGreenPointsEnvelopeData {
+  balance: number;
+}
+
+export interface MyGiftRedemptionsQuery {
+  page?: number;
+  limit?: number;
+}
+
+export interface MyGiftRedemptionsEnvelopeData {
+  redemptions: GiftRedemptionListItemResponse[];
+  meta: GiftListMeta;
+}

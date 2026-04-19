@@ -112,7 +112,7 @@ router.post(
 
 /**
  * @route   GET /api/v1/organizations/:id
- * @desc    Organization by id.
+ * @desc    Organization by id (includes `owner` profile from identity-service: id, name, avatar, bio).
  * @access  Private
  */
 router.get("/:id", authenticate, organizationController.getOrganizationById);
@@ -130,7 +130,7 @@ router.post(
 
 /**
  * @route   GET /api/v1/organizations/:id/join-requests
- * @desc    List join requests for an organization (owner only).
+ * @desc    List join requests for an organization (owner only). Each item includes `requester` profile (identity-service).
  * @access  Private
  */
 router.get(
@@ -152,7 +152,7 @@ router.delete(
 
 /**
  * @route   GET /api/v1/organizations/:id/members
- * @desc    List approved members (owner only; owner is not in this list). Pagination: page, limit. Filter: userId, search (member display name, case-insensitive contains, via identity-service).
+ * @desc    List approved members (owner only; owner is not in this list). Each item includes `user` profile (identity-service). Pagination: page, limit. Filter: userId, search (member display name, case-insensitive contains, via identity-service).
  * @access  Private
  */
 router.get(
