@@ -53,6 +53,6 @@ COPY --from=builder --chown=nodejs:nodejs /app/services/identity-service/prisma 
 
 USER nodejs
 
-EXPOSE 8080
+EXPOSE 3000
 
 CMD ["npm", "run", "start:production"]

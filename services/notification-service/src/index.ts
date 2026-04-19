@@ -12,7 +12,7 @@ import { errorHandler } from "./middleware/error.middleware";
 dotenv.config();
 
 const app: Application = express();
-const PORT = Number(process.env.PORT) || 3002;
+const PORT = Number(process.env.PORT) || 3003;
 
 const swaggerRouteFiles = routeModulesFrom(__dirname, [
   "modules/notification/notification.routes",

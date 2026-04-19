@@ -47,6 +47,6 @@ COPY --from=builder --chown=nodejs:nodejs /app/services/notification-service/tem
 
 USER nodejs
 
-EXPOSE 8080
+EXPOSE 3003
 
 CMD ["npm", "run", "start:production"]

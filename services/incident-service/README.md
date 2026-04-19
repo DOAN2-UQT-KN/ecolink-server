@@ -128,8 +128,8 @@ DATABASE_URL=postgresql://postgres:password@localhost:5432/incidentdb?schema=pub
 JWT_SECRET=your-secret-key
 CORS_ORIGIN=*
 AI_SERVICE_URL=http://ai-service:3004
-REWARD_SERVICE_URL=http://reward-service:3005
-NOTIFICATION_SERVICE_URL=http://notification-service:3006
+REWARD_SERVICE_URL=http://reward-service:3002
+NOTIFICATION_SERVICE_URL=http://notification-service:3003
 ```
 
 ## TODO

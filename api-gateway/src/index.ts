@@ -8,7 +8,7 @@ import { mountGatewaySwaggerUi } from "@da2/express-swagger";
 dotenv.config();
 
 const app = express();
-const port = Number(process.env.PORT) || 8081;
+const port = Number(process.env.PORT) || 8080;
 
 const IDENTITY_SERVICE_URL =
   process.env.IDENTITY_SERVICE_URL || "http://localhost:3000";
