@@ -1,0 +1,90 @@
+name: Deploy Reward Service
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Optional custom image tag (mặc định dùng short SHA)"
+        required: false
+        type: string
+  push:
+    branches:
+      - "main"
+    paths:
+      - "services/reward-service/**"
+      - "shared/**"
+      - ".github/workflows/reward-service.yml"
+
+permissions:
+  contents: read
+
+env:
+  DOCKER_IMAGE: uqtri/reward-service
+  ARGOCD_REPO: DOAN2-UQT-KN/ecolink-argocd
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: services/reward-service/package-lock.json
+
+      - name: Install dependencies
+        run: cd services/reward-service && npm ci
+
+      - name: Build app
+        run: cd services/reward-service && npm run build
+
+      - name: Set image tag
+        id: vars
+        run: |
+          if [ -n "${{ github.event.inputs.image_tag }}" ]; then
+            TAG="${{ github.event.inputs.image_tag }}"
+          else
+            TAG="$(date +'%Y%m%d-%H%M%S')-${GITHUB_SHA::7}"
+          fi
+          echo "IMAGE_TAG=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          # Dockerfile COPY paths are relative to backend repo root (services/…, shared/…)
+          context: .
+          file: ./services/reward-service/Dockerfile
+          push: true
+          build-args: |
+            APP_ENV=production
+          tags: |
+            ${{ env.DOCKER_IMAGE }}:${{ steps.vars.outputs.IMAGE_TAG }}
+            ${{ env.DOCKER_IMAGE }}:latest
+
+      - name: Trigger ArgoCD update-image event
+        uses: peter-evans/repository-dispatch@v4
+        with:
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          repository: ${{ env.ARGOCD_REPO }}
+          event-type: update-image
+          client-payload: |
+            {
+              "file": "applications/reward-service.yaml",
+              "image": "uqtri/reward-service",
+              "tag": "${{ steps.vars.outputs.IMAGE_TAG }}"
+            }
+
