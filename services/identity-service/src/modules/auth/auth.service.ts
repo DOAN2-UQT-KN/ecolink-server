@@ -101,11 +101,12 @@ export class AuthService {
       return null;
     }
 
+    const role = await roleRepository.findRoleById(user.id);
     // Generate tokens
     const tokens = generateTokens({
       userId: user.id,
       email: user.email,
-      role: user.roleId,
+      role: role?.name,
     });
 
     const refreshExpiresAt = getJwtExpiresAt(tokens.refreshToken);
