@@ -1,0 +1,20 @@
+{
+  "name": "@da2/queue",
+  "version": "1.0.0",
+  "description": "Shared durable background-job infrastructure: BackgroundJobQueue, QueueWorker, and related types",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@aws-sdk/client-sqs": "^3.879.0",
+    "@prisma/client": "^6.19.2",
+    "@da2/constants": "file:../../da2-constants"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.37",
+    "prisma": "^6.19.2",
+    "typescript": "^5.3.3"
+  }
+}

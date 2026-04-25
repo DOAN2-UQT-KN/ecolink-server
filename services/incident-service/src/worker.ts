@@ -1,17 +1,15 @@
-import dotenv from "dotenv";
+import "dotenv/config";
 import prisma from "./config/prisma.client";
-import { BackgroundJobOrchestratorWorker } from "./modules/background-job/worker/background-job-orchestrator.worker";
-import { reportAnalysisJobHandler } from "./modules/report/worker/report-analysis-job.handler";
-
-dotenv.config();
-
-const worker = new BackgroundJobOrchestratorWorker([reportAnalysisJobHandler]);
+/**
+ * Initialize all SQS queues and start their polling loops.
+ * Queue registration is self-contained: importing register is sufficient.
+ */
+import "./queue/register";
 
 console.log("Worker started");
 
 const shutdown = async (signal: string): Promise<void> => {
   console.log(`[Worker] received ${signal}, shutting down`);
-  await worker.stop();
   await prisma.$disconnect();
   process.exit(0);
 };
@@ -23,5 +21,3 @@ process.on("SIGINT", () => {
 process.on("SIGTERM", () => {
   void shutdown("SIGTERM");
 });
-
-worker.start();
