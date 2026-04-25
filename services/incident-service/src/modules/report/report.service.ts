@@ -23,7 +23,8 @@ import {
 } from "../../constants/status.enum";
 import prisma from "../../config/prisma.client";
 import { randomUUID } from "node:crypto";
-import { reportAnalysisQueueService } from "./queue/report-analysis-queue.service";
+import { ReportJobType } from "../../constants/job-type.enum";
+import { backgroundJobDispatcher } from "../../queue/register";
 import { backgroundJobRepository } from "../background-job/background-job.repository";
 import { HttpError, HTTP_STATUS } from "../../constants/http-status";
 import { savedResourceRepository } from "../saved_resource/saved_resource.repository";
@@ -166,12 +167,12 @@ export class ReportService {
     });
 
     // Publish async analysis job so report creation stays fast and resilient.
-    reportAnalysisQueueService
-      .enqueueAnalysis(
-        reportAndMedia.report.id,
-        reportAndMedia.reportMediaFileIds,
-      )
-      .catch((err) => {
+    backgroundJobDispatcher
+      .enqueue(ReportJobType.ANALYZE_REPORT, {
+        reportId: reportAndMedia.report.id,
+        reportMediaFileIds: reportAndMedia.reportMediaFileIds,
+      })
+      .catch((err: Error) => {
         console.error("Failed to enqueue AI analysis job:", err.message);
       });
 
@@ -200,7 +201,11 @@ export class ReportService {
     if (!report) return null;
 
     const { total, pendingOrInProcess } =
-      await backgroundJobRepository.countAnalyzeReportJobsForReport(reportId);
+      await backgroundJobRepository.countJobsForPayload(
+        ReportJobType.ANALYZE_REPORT,
+        ["reportId"],
+        reportId,
+      );
 
     return {
       allDone: pendingOrInProcess === 0,
@@ -444,9 +449,12 @@ export class ReportService {
       status: ReportStatus._STATUS_DRAFT,
     });
 
-    reportAnalysisQueueService
-      .enqueueAnalysis(reportId, reportMediaFileIds)
-      .catch((err) => {
+    backgroundJobDispatcher
+      .enqueue(ReportJobType.ANALYZE_REPORT, {
+        reportId,
+        reportMediaFileIds,
+      })
+      .catch((err: Error) => {
         console.error("Failed to enqueue AI analysis job:", err.message);
       });
 
