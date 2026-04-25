@@ -29,7 +29,7 @@ model Report {
   /** Human-readable location text (e.g. street / place name from reverse geocoding). */
   detailAddress String? @map("detail_address")
 
-  status Int? @default(4)
+  status Int? @default(12)
 
   /** Admin moderation: only admins can set true (see verify endpoint). */
   isVerify Boolean @default(false) @map("is_verify")
@@ -60,7 +60,7 @@ model Campaign {
   id          String  @id @default(uuid()) @db.Uuid
   title       String  @db.VarChar(200)
   description String?
-  status      Int     @default(4)
+  status      Int     @default(12)
   startDate   DateTime? @map("start_date")
   endDate     DateTime? @map("end_date")
   detailAddress String? @map("detail_address") @db.VarChar(255)
@@ -142,7 +142,7 @@ model CampaignTask {
   title       String? @db.VarChar(200)
   description String?
 
-  status Int @default(21)
+  status Int @default(12)
 
   scheduledTime DateTime? @map("scheduled_time")
 
@@ -215,7 +215,7 @@ model CampaignSubmission {
   title       String? @db.VarChar(200)
   description String?
 
-  status Int @default(9) // in review → approved / rejected after process
+  status Int @default(12) // PENDING → in review / approved / rejected after process
 
   createdBy String? @map("created_by") @db.Uuid
   updatedBy String? @map("updated_by") @db.Uuid
@@ -420,8 +420,8 @@ model Organization {
 
   /** Whether `contactEmail` has been confirmed (e.g. OTP); not set by create body. */
   isEmailVerified Boolean @default(false) @map("is_email_verified")
-  /** Lifecycle: `GlobalStatus._STATUS_DRAFT` until admin approves (`ACTIVE`) or rejects (`INACTIVE`). */
-  status Int @default(4)
+  /** Lifecycle: `GlobalStatus._STATUS_PENDING` until admin approves (`ACTIVE`) or rejects (`INACTIVE`). */
+  status Int @default(12)
 
   ownerId String @map("owner_id") @db.Uuid
 
