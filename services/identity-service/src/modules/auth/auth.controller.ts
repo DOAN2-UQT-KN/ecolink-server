@@ -6,9 +6,61 @@ import {
   sendSuccess,
 } from "../../constants/http-status";
 import { authService } from "./auth.service";
+import { GoogleOauthCallbackQuery } from "./auth.dto";
+import { googleOauthService } from "../oauth/google.service";
 
 export class AuthController {
   constructor() { }
+
+  googleAuthorize = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const state =
+        typeof req.query.state === "string" ? req.query.state : undefined;
+      const authorizationUrl = googleOauthService.getAuthorizationUrl(state);
+      sendSuccess(res, HTTP_STATUS.OK, { authorizationUrl });
+    } catch (error) {
+      console.error("Google authorize error:", error);
+      sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+    }
+  };
+
+  googleCallback = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { code, error } = req.query as GoogleOauthCallbackQuery;
+      if (error) {
+        return sendError(
+          res,
+          HTTP_STATUS.BAD_REQUEST.withMessage(
+            typeof error === "string" ? error : "google_oauth_failed",
+          ),
+        );
+      }
+      if (!code) {
+        return sendError(
+          res,
+          HTTP_STATUS.BAD_REQUEST.withMessage("no_code"),
+        );
+      }
+
+      const result = await googleOauthService.handleCallback(code);
+      const isProduction = process.env.NODE_ENV === "production";
+
+      res.cookie("accessToken", result.accessToken, {
+        httpOnly: true,
+        secure: isProduction,
+        sameSite: isProduction ? "strict" : "lax",
+        maxAge: 15 * 60 * 1000,
+      });
+
+      sendSuccess(res, HTTP_STATUS.OK, result);
+    } catch (error) {
+      console.error("Google callback error:", error);
+      sendError(
+        res,
+        HTTP_STATUS.INTERNAL_SERVER_ERROR.withMessage("callback_failed"),
+      );
+    }
+  };
 
   signup = [
     body("email").isEmail().withMessage("Valid email is required"),
@@ -67,14 +119,14 @@ export class AuthController {
         if (!result) {
           return sendError(res, HTTP_STATUS.INVALID_CREDENTIALS);
         }
-
+        
         const isProduction = process.env.NODE_ENV === "production";
 
         // Set access token cookie (httpOnly)
         res.cookie("accessToken", result.accessToken, {
           httpOnly: true,
           secure: isProduction,
-          sameSite: isProduction ? "strict" : "none",
+          sameSite: isProduction ? "strict" : "lax",
           maxAge: 15 * 60 * 1000, // 15 minutes
         });
 

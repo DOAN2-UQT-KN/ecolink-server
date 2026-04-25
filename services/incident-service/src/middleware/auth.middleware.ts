@@ -25,14 +25,13 @@ export const authenticate = (
     const token = authHeader?.startsWith("Bearer ")
       ? authHeader.substring(7)
       : req.cookies?.accessToken;
-
     if (!token) {
       sendError(res, HTTP_STATUS.TOKEN_MISSING);
       return;
     }
 
     // Verify token
-    const decoded = verifyToken(token);
+    const decoded = verifyToken(token.trim());
 
     // Attach user to request
     req.user = decoded;

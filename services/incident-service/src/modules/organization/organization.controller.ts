@@ -386,7 +386,7 @@ export class OrganizationController {
 
   /**
    * Approve or reject an organization (admin only) via body `status`:
-   * `GlobalStatus._STATUS_ACTIVE` (1) or `_STATUS_INACTIVE` (2).
+   * `GlobalStatus._STATUS_ACTIVE` (1) to approve, `_STATUS_INACTIVE` (2) to reject.
    */
   adminVerifyOrganization = [
     orgIdParam,
@@ -395,7 +395,7 @@ export class OrganizationController {
       .toInt()
       .isIn([GlobalStatus._STATUS_ACTIVE, GlobalStatus._STATUS_INACTIVE])
       .withMessage(
-        "status must be GlobalStatus active (1) to approve or inactive (2) to reject",
+        "status must be 1 (approved) to approve or 2 (rejected) to reject",
       ),
 
     async (req: Request, res: Response): Promise<void> => {

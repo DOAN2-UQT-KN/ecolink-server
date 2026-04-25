@@ -1,7 +1,10 @@
 import jwt, { Secret, SignOptions } from 'jsonwebtoken';
 import type { StringValue } from 'ms';
 
-const JWT_SECRET: Secret = process.env.JWT_SECRET || 'fallback-secret-key';
+const JWT_SECRET: Secret = (process.env.JWT_SECRET ?? "").trim();
+if (!JWT_SECRET) {
+    throw new Error("JWT_SECRET is not set");
+}
 const JWT_EXPIRES_IN = (process.env.JWT_EXPIRES_IN || '30m') as StringValue;
 const JWT_REFRESH_EXPIRES_IN = (process.env.JWT_REFRESH_EXPIRES_IN || '30d') as StringValue;
 

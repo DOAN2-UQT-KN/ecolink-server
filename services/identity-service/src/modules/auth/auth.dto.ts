@@ -41,6 +41,12 @@ export interface ResetPasswordRequest {
   newPassword: string;
 }
 
+export interface GoogleOauthCallbackQuery {
+  code?: string;
+  state?: string;
+  error?: string;
+}
+
 // Auth Response DTOs
 export interface SignupResponse {
   id: string;

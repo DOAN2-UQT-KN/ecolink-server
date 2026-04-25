@@ -1,9 +1,9 @@
+import "dotenv/config";
 import express, { Application } from "express";
 import path from "path";
 import cors from "cors";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
-import dotenv from "dotenv";
 import {
   mountOpenApi,
   routeModulesFrom,
@@ -16,11 +16,8 @@ import { caseTransformMiddleware } from "./middleware/case-transform.middleware"
 import { errorHandler } from "./middleware/error.middleware";
 import internalRoutes from "./internal/internal.routes";
 
-dotenv.config();
-
 const app: Application = express();
 const PORT = process.env.PORT || 3000;
-
 const swaggerRouteFiles = routeModulesFrom(__dirname, [
   "modules/auth/auth.routes",
   "modules/user/user.routes",
@@ -65,6 +62,7 @@ app.get("/health", (_req, res) => {
 app.use("/internal/v1", internalRoutes);
 
 // Routes
+app.use("/auth", authRoutes);
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/users", userRoutes);
 app.use("/api/v1/roles", roleRoutes);

@@ -19,6 +19,20 @@ router.post("/sign-up", authController.signup);
 router.post("/sign-in", authController.login);
 
 /**
+ * @route   GET /api/v1/auth/oauth/google
+ * @desc    Get Google OAuth authorization URL
+ * @access  Public
+ */
+router.get("/oauth/google", authController.googleAuthorize);
+
+/**
+ * @route   GET /api/v1/auth/oauth/google/callback
+ * @desc    Handle Google OAuth callback and sign in
+ * @access  Public
+ */
+router.get("/oauth/google/callback", authController.googleCallback);
+
+/**
  * @route   POST /api/v1/auth/refresh-token
  * @desc    Refresh access token using refresh token
  * @access  Public

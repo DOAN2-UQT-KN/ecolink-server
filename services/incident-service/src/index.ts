@@ -21,7 +21,6 @@ import "./worker";
 
 const app: Application = express();
 const PORT = Number(process.env.PORT) || 3001;
-
 const swaggerRouteFiles = routeModulesFrom(__dirname, [
   "modules/report/report.routes",
   "modules/campaign/campaign.routes",
