@@ -30,7 +30,10 @@ import { HttpError, HTTP_STATUS } from "../../constants/http-status";
 import { savedResourceRepository } from "../saved_resource/saved_resource.repository";
 import { defaultResourceVoteSummary } from "../vote/vote.dto";
 import { voteService } from "../vote/vote.service";
-import { fetchOrganizationOwnersByUserIds } from "../organization/identity-user.client";
+import {
+  fetchOrganizationOwnersByUserIds,
+  getUserProfile,
+} from "../organization/identity-user.client";
 import type { OrganizationOwnerResponse } from "../organization/organization.dto";
 
 /** Admin moderation: report is banned / hidden (`GlobalStatus._STATUS_INACTIVE`). */
@@ -68,7 +71,8 @@ export class ReportService {
         ({
           ...r,
           user: r.userId
-            ? (map.get(r.userId) ?? this.reporterProfileFallback(r.userId))
+            ? (getUserProfile(map, r.userId) ??
+              this.reporterProfileFallback(r.userId))
             : null,
         }) as T,
     );

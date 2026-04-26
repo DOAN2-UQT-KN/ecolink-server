@@ -32,15 +32,101 @@ function pickNullableString(v: unknown): string | null {
 }
 
 /**
- * Loads owner profiles from identity-service (internal batch). Wire format uses snake_case keys.
- * On failure or missing users, returns a partial map; callers should fall back per `ownerId`.
+ * Scalars may arrive as non-strings (e.g. legacy clients); coerce for display fields.
+ */
+function pickDisplayString(
+  value: unknown,
+  ...alts: Array<unknown>
+): string {
+  const candidates: unknown[] = [value, ...alts];
+  for (const v of candidates) {
+    if (v === null || v === undefined) continue;
+    if (typeof v === "string") return v;
+    if (typeof v === "number" || typeof v === "boolean") {
+      return String(v);
+    }
+  }
+  return "";
+}
+
+/**
+ * `fetchOrganizationOwnersByUserIds` stores entries under **lowercase** user id keys
+ * (UUIDs are case-insensitive, but `Map` lookups are not).
+ */
+export function getUserProfile(
+  m: ReadonlyMap<string, OrganizationOwnerResponse>,
+  userId: string,
+): OrganizationOwnerResponse | undefined {
+  return m.get(userId.toLowerCase().trim());
+}
+
+function mapKeyForUserId(userId: string): string {
+  return userId.toLowerCase().trim();
+}
+
+function getUsersArrayFromResponse(data: unknown): unknown[] | null {
+  if (!data || typeof data !== "object") {
+    return null;
+  }
+  const root = data as Record<string, unknown>;
+  if (root.success === false) {
+    return null;
+  }
+  const inner = root.data;
+  if (inner && typeof inner === "object") {
+    const u = (inner as { users?: unknown }).users;
+    if (Array.isArray(u)) {
+      return u;
+    }
+  }
+  const top = root.users;
+  if (Array.isArray(top)) {
+    return top;
+  }
+  return null;
+}
+
+function readProfileFromRow(
+  raw: unknown,
+): OrganizationOwnerResponse | null {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const row = raw as Record<string, unknown>;
+  const id = pickString(row.id) ?? pickString(row.user_id);
+  if (!id) {
+    return null;
+  }
+  const name = pickDisplayString(
+    row.name,
+    row.user_name,
+    row.display_name,
+    row.full_name,
+  );
+  const avatar = pickNullableString(row.avatar) ?? pickNullableString(row.avatar_url);
+  const bio = pickNullableString(row.bio);
+  return {
+    id,
+    name,
+    avatar,
+    bio,
+  };
+}
+
+/**
+ * Loads user profiles from identity-service (internal batch).
+ * Outbound JSON may use snake_case (identity `caseTransformMiddleware` on nested keys
+ * like `role_id`); this parser accepts `id` / `name` / `avatar` and common alternates.
+ * Map keys are **lowercase** user ids; use `getUserProfile(map, id)` to look up.
  */
 const INTERNAL_USERS_BY_IDS_MAX = 100;
 
 export async function fetchOrganizationOwnersByUserIds(
   userIds: string[],
 ): Promise<Map<string, OrganizationOwnerResponse>> {
-  const unique = [...new Set(userIds)].filter(Boolean);
+  const unique = [
+    ...new Set(userIds.map((id) => id?.trim()).filter(Boolean)),
+  ] as string[];
   const out = new Map<string, OrganizationOwnerResponse>();
   if (unique.length === 0) {
     return out;
@@ -50,22 +136,20 @@ export async function fetchOrganizationOwnersByUserIds(
     const client = getClient();
     for (let i = 0; i < unique.length; i += INTERNAL_USERS_BY_IDS_MAX) {
       const chunk = unique.slice(i, i + INTERNAL_USERS_BY_IDS_MAX);
-      const { data } = await client.post<
-        SuccessEnvelope<{ users?: Record<string, unknown>[] }>
-      >("/internal/v1/users/by-ids", { ids: chunk });
-      if (!data?.success || !Array.isArray(data.data?.users)) {
+      const { data } = await client.post<SuccessEnvelope<{ users?: unknown }>>(
+        "/internal/v1/users/by-ids",
+        { ids: chunk },
+      );
+      const users = getUsersArrayFromResponse(data);
+      if (users === null) {
         throw new Error("Identity service did not return users");
       }
-      for (const raw of data.data.users) {
-        const row = raw as Record<string, unknown>;
-        const id = pickString(row.id);
-        if (!id) continue;
-        out.set(id, {
-          id,
-          name: pickString(row.name) ?? "",
-          avatar: pickNullableString(row.avatar),
-          bio: pickNullableString(row.bio),
-        });
+      for (const raw of users) {
+        const profile = readProfileFromRow(raw);
+        if (!profile) {
+          continue;
+        }
+        out.set(mapKeyForUserId(profile.id), profile);
       }
     }
   } catch (e) {

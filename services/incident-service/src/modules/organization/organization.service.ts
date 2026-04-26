@@ -22,7 +22,10 @@ import type {
   UpdateOrganizationBody,
 } from "./organization.dto";
 import { issueOrganizationContactEmailToken } from "./identity-organization-contact-email.client";
-import { fetchOrganizationOwnersByUserIds } from "./identity-user.client";
+import {
+  fetchOrganizationOwnersByUserIds,
+  getUserProfile,
+} from "./identity-user.client";
 import { enqueueOrganizationContactVerificationEmail } from "./organization-contact-email-notify.client";
 import { buildVerifyContactEmailRequestUrl } from "./organization-contact-email-urls";
 import { organizationJoiningRequestRepository } from "./organization_joining_request.repository";
@@ -68,7 +71,8 @@ export class OrganizationService {
     const map = await fetchOrganizationOwnersByUserIds([core.ownerId]);
     return {
       ...core,
-      owner: map.get(core.ownerId) ?? this.ownerFallback(core.ownerId),
+      owner:
+        getUserProfile(map, core.ownerId) ?? this.ownerFallback(core.ownerId),
     };
   }
 
@@ -78,7 +82,7 @@ export class OrganizationService {
     const map = await fetchOrganizationOwnersByUserIds(cores.map((c) => c.ownerId));
     return cores.map((c) => ({
       ...c,
-      owner: map.get(c.ownerId) ?? this.ownerFallback(c.ownerId),
+      owner: getUserProfile(map, c.ownerId) ?? this.ownerFallback(c.ownerId),
     }));
   }
 
@@ -98,7 +102,7 @@ export class OrganizationService {
       organizationId: row.organizationId,
       requesterId: row.requesterId,
       requester:
-        requesterById.get(row.requesterId) ??
+        getUserProfile(requesterById, row.requesterId) ??
         this.ownerFallback(row.requesterId),
       status: row.status,
       createdAt: row.createdAt,
@@ -877,7 +881,7 @@ export class OrganizationService {
       const profiles = await fetchOrganizationOwnersByUserIds(distinctUserIds);
       const needle = searchTerm.toLowerCase();
       let matched = rows.filter((r) => {
-        const name = profiles.get(r.userId)?.name?.toLowerCase() ?? "";
+        const name = getUserProfile(profiles, r.userId)?.name?.toLowerCase() ?? "";
         return name.includes(needle);
       });
 
@@ -896,7 +900,7 @@ export class OrganizationService {
         organizationId: r.organizationId,
         userId: r.userId,
         user:
-          profiles.get(r.userId) ?? this.ownerFallback(r.userId),
+          getUserProfile(profiles, r.userId) ?? this.ownerFallback(r.userId),
         createdAt: r.createdAt,
       }));
 
@@ -923,7 +927,7 @@ export class OrganizationService {
     const members: OrganizationMemberResponse[] = rows.map((r) => ({
       organizationId: r.organizationId,
       userId: r.userId,
-      user: userById.get(r.userId) ?? this.ownerFallback(r.userId),
+      user: getUserProfile(userById, r.userId) ?? this.ownerFallback(r.userId),
       createdAt: r.createdAt,
     }));
 

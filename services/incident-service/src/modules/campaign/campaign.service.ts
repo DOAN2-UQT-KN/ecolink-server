@@ -27,7 +27,10 @@ import {
 import { savedResourceRepository } from "../saved_resource/saved_resource.repository";
 import { defaultResourceVoteSummary } from "../vote/vote.dto";
 import { voteService } from "../vote/vote.service";
-import { fetchOrganizationOwnersByUserIds } from "../organization/identity-user.client";
+import {
+  fetchOrganizationOwnersByUserIds,
+  getUserProfile,
+} from "../organization/identity-user.client";
 import type { OrganizationOwnerResponse } from "../organization/organization.dto";
 import { toReportResponse } from "../report/report.entity";
 import type { ReportResponse } from "../report/report.dto";
@@ -91,7 +94,8 @@ export class CampaignService {
     return campaigns.map((campaign) => {
       const orgRow = organizationMap.get(campaign.organizationId);
       const orgOwner = orgRow
-        ? (profileMap.get(orgRow.ownerId) ?? this.ownerFallback(orgRow.ownerId))
+        ? (getUserProfile(profileMap, orgRow.ownerId) ??
+          this.ownerFallback(orgRow.ownerId))
         : null;
       const organization = orgRow
         ? {
@@ -108,7 +112,7 @@ export class CampaignService {
         Organization: organization,
         reports: reportsByCampaignId.get(campaign.id) ?? [],
         managers: campaign.managers.map((manager) => {
-          const profile = profileMap.get(manager.id);
+          const profile = getUserProfile(profileMap, manager.id);
           return {
             id: manager.id,
             name: profile?.name ?? "",

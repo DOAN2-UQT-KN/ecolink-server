@@ -49,7 +49,9 @@ export class OrganizationRepository {
       where: { id },
       data: {
         ...(data.name !== undefined && { name: data.name }),
-        ...(data.description !== undefined && { description: data.description }),
+        ...(data.description !== undefined && {
+          description: data.description,
+        }),
         ...(data.logoUrl !== undefined && { logoUrl: data.logoUrl }),
         ...(data.backgroundUrl !== undefined && {
           backgroundUrl: data.backgroundUrl,
