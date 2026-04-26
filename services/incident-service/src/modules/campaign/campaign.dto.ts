@@ -99,6 +99,10 @@ export interface AddCampaignManagersRequest {
 export interface CampaignManagerAssignmentResponse {
   campaignId: string;
   userId: string;
+  /** Display name from identity-service; empty string when not found. */
+  name: string;
+  /** Avatar URL from identity-service; null when not found. */
+  avatar: string | null;
   assignedBy: string | null;
   assignedAt: Date;
 }

@@ -7,6 +7,10 @@ import {
 } from "../campaign.dto";
 import { campaignRepository } from "../campaign.repository";
 import { HttpError, HTTP_STATUS } from "../../../constants/http-status";
+import {
+  fetchOrganizationOwnersByUserIds,
+  getUserProfile,
+} from "../../organization/identity-user.client";
 
 export class CampaignManagerService {
   constructor() {}
@@ -77,12 +81,25 @@ export class CampaignManagerService {
       addedManagers.push({
         campaignId,
         userId: manager.userId,
+        name: "",
+        avatar: null,
         assignedBy: manager.assignedBy,
         assignedAt: manager.assignedAt,
       });
     }
 
-    return addedManagers;
+    // Enrich all newly added managers with identity-service profiles in one batch.
+    const profileMap = await fetchOrganizationOwnersByUserIds(
+      addedManagers.map((m) => m.userId),
+    );
+    return addedManagers.map((m) => {
+      const profile = getUserProfile(profileMap, m.userId);
+      return {
+        ...m,
+        name: profile?.name ?? "",
+        avatar: profile?.avatar ?? null,
+      };
+    });
   }
 
   /**
@@ -193,13 +210,23 @@ export class CampaignManagerService {
         sortOrder,
       });
 
+    // Enrich managers with name / avatar from identity-service.
+    const profileMap = await fetchOrganizationOwnersByUserIds(
+      rows.map((m) => m.userId),
+    );
+
     return {
-      managers: rows.map((m) => ({
-        campaignId,
-        userId: m.userId,
-        assignedBy: m.assignedBy,
-        assignedAt: m.assignedAt,
-      })),
+      managers: rows.map((m) => {
+        const profile = getUserProfile(profileMap, m.userId);
+        return {
+          campaignId,
+          userId: m.userId,
+          name: profile?.name ?? "",
+          avatar: profile?.avatar ?? null,
+          assignedBy: m.assignedBy,
+          assignedAt: m.assignedAt,
+        };
+      }),
       total,
       page,
       limit,
