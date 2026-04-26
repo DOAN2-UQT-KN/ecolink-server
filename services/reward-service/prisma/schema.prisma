@@ -117,3 +117,20 @@ model GiftRedemption {
   @@index([giftId])
   @@map("gift_redemptions")
 }
+
+/// Outbox + tracking for reward-service background jobs (e.g. green-point SQS worker, @da2/queue).
+model RewardBackgroundJob {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  jobType     String    @map("job_type") @db.VarChar(100)
+  payload     Json
+  status      Int       @default(12)
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(5) @map("max_attempts")
+  processedAt DateTime? @map("processed_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@index([jobType, status])
+  @@index([status])
+  @@map("reward_background_jobs")
+}

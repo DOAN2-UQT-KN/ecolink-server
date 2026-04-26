@@ -1,16 +1,14 @@
-import dotenv from "dotenv";
+import "dotenv/config";
 import prisma from "./config/prisma.client";
-import { GreenPointQueueWorker } from "./modules/green-point/green-point-queue.worker";
+import { startAllQueues, stopAllQueues } from "./queue/register";
 
-dotenv.config();
-
-const worker = new GreenPointQueueWorker();
+startAllQueues();
 
 console.log("Reward green-point worker started");
 
 const shutdown = async (signal: string): Promise<void> => {
   console.log(`[RewardWorker] received ${signal}, shutting down`);
-  await worker.stop();
+  await stopAllQueues();
   await prisma.$disconnect();
   process.exit(0);
 };
@@ -22,5 +20,3 @@ process.on("SIGINT", () => {
 process.on("SIGTERM", () => {
   void shutdown("SIGTERM");
 });
-
-worker.start();

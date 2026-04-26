@@ -78,7 +78,7 @@ router.post(
 
       // Strategy `validatePayload` / enqueue guards (client payload mistakes)
       if (
-        /required|must be|At most|not an array|Each credit/i.test(message)
+        /required|must be|not an array|Each credit/i.test(message)
       ) {
         sendError(res, HTTP_STATUS.BAD_REQUEST.withMessage(message));
         return;

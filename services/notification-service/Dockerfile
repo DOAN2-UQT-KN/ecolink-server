@@ -8,6 +8,9 @@ WORKDIR /app/services/notification-service
 COPY shared/da2-constants /app/shared/da2-constants
 RUN cd /app/shared/da2-constants && npm ci && npm run build && npm cache clean --force
 
+COPY shared/da2-queue /app/shared/da2-queue
+RUN cd /app/shared/da2-queue && npm ci && npm cache clean --force
+
 COPY shared/express-swagger /app/shared/express-swagger
 
 COPY services/notification-service/package*.json ./
@@ -37,6 +40,7 @@ COPY --from=builder --chown=nodejs:nodejs /app/services/notification-service/nod
 COPY --from=builder --chown=nodejs:nodejs /app/services/notification-service/package*.json ./
 
 COPY --from=builder --chown=nodejs:nodejs /app/shared/da2-constants /app/shared/da2-constants
+COPY --from=builder --chown=nodejs:nodejs /app/shared/da2-queue /app/shared/da2-queue
 COPY --from=builder --chown=nodejs:nodejs /app/shared/express-swagger /app/shared/express-swagger
 
 COPY --from=builder --chown=nodejs:nodejs /app/services/notification-service/dist ./dist

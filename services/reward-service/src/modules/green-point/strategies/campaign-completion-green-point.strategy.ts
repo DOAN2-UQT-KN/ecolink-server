@@ -4,10 +4,7 @@ import {
   GreenPointResourceType,
   GreenPointTransactionType,
 } from "../green-point-transaction.constants";
-import {
-  CAMPAIGN_COMPLETION_JOB_TYPE,
-  MAX_CAMPAIGN_COMPLETION_CREDITS_PER_ENQUEUE,
-} from "../green-point.types";
+import { CAMPAIGN_COMPLETION_JOB_TYPE } from "../green-point.types";
 import type { CampaignCompletionGreenPointsPayload } from "../green-point.types";
 import type {
   GreenPointApplyResult,
@@ -29,11 +26,6 @@ export class CampaignCompletionGreenPointStrategy
     }
     if (!Array.isArray(p.credits)) {
       throw new Error("credits must be an array");
-    }
-    if (p.credits.length > MAX_CAMPAIGN_COMPLETION_CREDITS_PER_ENQUEUE) {
-      throw new Error(
-        `At most ${MAX_CAMPAIGN_COMPLETION_CREDITS_PER_ENQUEUE} credits per enqueue request`,
-      );
     }
     for (const row of p.credits) {
       if (row === null || typeof row !== "object") {

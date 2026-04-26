@@ -23,9 +23,6 @@ export const KNOWN_GREEN_POINT_JOB_TYPES = [
 export type KnownGreenPointJobType =
   (typeof KNOWN_GREEN_POINT_JOB_TYPES)[number];
 
-/** Max rows in `credits` for {@link CAMPAIGN_COMPLETION_JOB_TYPE} payloads. */
-export const MAX_CAMPAIGN_COMPLETION_CREDITS_PER_ENQUEUE = 5_000;
-
 /** Generic internal enqueue body: discriminates strategy via `type`. */
 export interface GreenPointEnqueueRequestBody {
   type: KnownGreenPointJobType;
