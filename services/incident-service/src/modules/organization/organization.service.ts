@@ -173,6 +173,8 @@ export class OrganizationService {
       toEmail: contactEmail,
       organizationName,
       verifyUrl,
+      organizationId,
+      ownerUserId,
     });
   }
 

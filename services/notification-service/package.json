@@ -5,8 +5,9 @@
   "main": "dist/index.js",
   "scripts": {
     "build:constants": "npm ci --prefix ../../shared/da2-constants && npm run build --prefix ../../shared/da2-constants",
+    "build:queue": "npm ci --prefix ../../shared/da2-queue && npm run build --prefix ../../shared/da2-queue",
     "build:express-swagger": "npm ci --prefix ../../shared/express-swagger && npm run build --prefix ../../shared/express-swagger",
-    "prebuild": "npm run build:constants && npm run build:express-swagger",
+    "prebuild": "npm run build:constants && npm run build:queue && npm run build:express-swagger",
     "build": "tsc",
     "start": "node dist/index.js",
     "start:production": "npm run prisma:migrate:deploy && npm run start",
@@ -26,6 +27,7 @@
   "dependencies": {
     "@aws-sdk/client-sqs": "^3.879.0",
     "@da2/constants": "file:../../shared/da2-constants",
+    "@da2/queue": "file:../../shared/da2-queue",
     "@da2/express-swagger": "file:../../shared/express-swagger",
     "@prisma/client": "^6.19.2",
     "cookie-parser": "^1.4.6",

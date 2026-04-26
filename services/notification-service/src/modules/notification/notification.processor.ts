@@ -1,10 +1,10 @@
 import type { Notification } from "@prisma/client";
-import { getChannel } from "../channels/channel.factory";
+import { getChannel } from "../../channels/channel.factory";
 import {
   isValidNotificationKind,
   normalizePayload,
-} from "../channels/notification-channel.strategy";
-import type { SendNotificationJobPayload } from "../notification-queue/notification-job.types";
+} from "../../channels/notification-channel.strategy";
+import type { SendNotificationJobPayload } from "../../queue/notification-job.types";
 
 /**
  * Queue worker entry: validate job, resolve channel strategy, deliver.

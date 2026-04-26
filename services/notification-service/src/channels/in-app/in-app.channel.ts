@@ -1,11 +1,11 @@
 import { NotificationType } from "@prisma/client";
-import { prisma } from "../../../lib/prisma";
-import { notificationTemplateEngine } from "../../templates/notification-template.engine";
+import { prisma } from "../../lib/prisma";
+import { notificationTemplateEngine } from "../../modules/templates/notification-template.engine";
 import type {
   ChannelDeliveryResult,
   NotificationChannelStrategy,
 } from "../notification-channel.strategy";
-import type { SendNotificationJobPayload } from "../../notification-queue/notification-job.types";
+import type { SendNotificationJobPayload } from "../../queue/notification-job.types";
 
 class InAppNotificationChannel implements NotificationChannelStrategy {
   readonly prismaType = NotificationType.WEBSITE;

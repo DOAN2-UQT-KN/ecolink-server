@@ -12,7 +12,7 @@ export interface EnqueueNotificationJobRequest {
 
 /** @openapi */
 export interface EnqueueNotificationJobResponseData {
-  jobId: string;
+  accepted: boolean;
 }
 
 /** @openapi */

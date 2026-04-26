@@ -12,6 +12,8 @@ export async function enqueueOrganizationContactVerificationEmail(params: {
   toEmail: string;
   organizationName: string;
   verifyUrl: string;
+  organizationId: string;
+  ownerUserId: string;
 }): Promise<void> {
   const baseURL = process.env.NOTIFICATION_SERVICE_URL?.trim();
   const key = process.env.INTERNAL_NOTIFICATION_API_KEY?.trim();
@@ -40,6 +42,8 @@ export async function enqueueOrganizationContactVerificationEmail(params: {
         organizationName: params.organizationName,
         verifyUrl: params.verifyUrl,
         appName,
+        organizationId: params.organizationId,
+        ownerUserId: params.ownerUserId,
       },
     },
   );

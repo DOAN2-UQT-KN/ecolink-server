@@ -3,7 +3,11 @@ import { body, param, query, validationResult } from "express-validator";
 import { NotificationKind } from "@prisma/client";
 import { HTTP_STATUS, sendError, sendSuccess } from "../../constants/http-status";
 import { notificationService } from "./notification.service";
-import { enqueueSendNotification } from "../notification-queue/notification-queue.service";
+import { backgroundJobDispatcher } from "../../queue/register";
+import {
+  NotificationJobType,
+  type SendNotificationJobPayload,
+} from "../../queue/notification-job.types";
 import type { NotificationItemData } from "./notification.dto";
 
 const KIND_VALUES = Object.values(NotificationKind).filter(
@@ -60,7 +64,7 @@ export const notificationController = {
     };
 
     try {
-      const jobPayload = {
+      const jobPayload: SendNotificationJobPayload = {
         type: type as "email" | "website",
         kind: kind as NotificationKind,
         userId,
@@ -102,8 +106,13 @@ export const notificationController = {
         }
       }
 
-      const jobId = await enqueueSendNotification(jobPayload);
-      sendSuccess(res, HTTP_STATUS.ACCEPTED, { jobId });
+      await backgroundJobDispatcher.enqueue(
+        NotificationJobType.SEND_NOTIFICATION,
+        jobPayload,
+      );
+      sendSuccess(res, HTTP_STATUS.ACCEPTED, {
+        accepted: true,
+      });
     } catch (e) {
       const msg =
         e instanceof Error ? e.message : "Failed to enqueue notification job";

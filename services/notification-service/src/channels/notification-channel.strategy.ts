@@ -3,7 +3,7 @@ import {
   type Notification,
   type NotificationType,
 } from "@prisma/client";
-import type { SendNotificationJobPayload } from "../notification-queue/notification-job.types";
+import type { SendNotificationJobPayload } from "../queue/notification-job.types";
 
 export interface ChannelDeliveryResult {
   notification: Notification;
@@ -11,14 +11,9 @@ export interface ChannelDeliveryResult {
   emailSkippedReason?: string;
 }
 
-/**
- * Strategy for one delivery channel (email, in-app, future SMS/push, etc.).
- */
 export interface NotificationChannelStrategy {
   readonly prismaType: NotificationType;
-
   supports(apiType: string): boolean;
-
   deliver(
     job: SendNotificationJobPayload,
     normalizedPayload: Record<string, string>,

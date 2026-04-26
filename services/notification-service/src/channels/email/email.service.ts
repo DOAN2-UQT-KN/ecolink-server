@@ -1,8 +1,8 @@
-import { EmailProvider, emailProvider as defaultProvider } from "./email.provider";
+import {
+  EmailProvider,
+  emailProvider as defaultProvider,
+} from "./email.provider";
 
-/**
- * Application-level email sending; delegates transport to {@link EmailProvider}.
- */
 export class EmailService {
   constructor(private readonly provider: EmailProvider = defaultProvider) {}
 

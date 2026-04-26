@@ -1,12 +1,12 @@
 import { NotificationKind, NotificationType } from "@prisma/client";
-import { prisma } from "../../../lib/prisma";
-import { fetchUserEmailById } from "../../../lib/identity-user.client";
-import { notificationTemplateEngine } from "../../templates/notification-template.engine";
+import { prisma } from "../../lib/prisma";
+import { fetchUserEmailById } from "../../lib/identity-user.client";
+import { notificationTemplateEngine } from "../../modules/templates/notification-template.engine";
 import type {
   ChannelDeliveryResult,
   NotificationChannelStrategy,
 } from "../notification-channel.strategy";
-import type { SendNotificationJobPayload } from "../../notification-queue/notification-job.types";
+import type { SendNotificationJobPayload } from "../../queue/notification-job.types";
 import { emailService } from "./email.service";
 
 class EmailNotificationChannel implements NotificationChannelStrategy {

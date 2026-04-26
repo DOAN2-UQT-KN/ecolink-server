@@ -7,9 +7,6 @@ const channels: NotificationChannelStrategy[] = [
   inAppNotificationChannel,
 ];
 
-/**
- * Returns the channel implementation for an API `type` (e.g. `email`, `website`).
- */
 export function getChannel(apiType: string): NotificationChannelStrategy {
   const channel = channels.find((c) => c.supports(apiType));
   if (!channel) {
