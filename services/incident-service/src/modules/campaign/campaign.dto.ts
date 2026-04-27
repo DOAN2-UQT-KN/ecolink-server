@@ -264,6 +264,7 @@ export interface CampaignListQuery {
   difficulty?: number;
   greenPointsFrom?: number;
   greenPointsTo?: number;
+  isOwner?: boolean;
 }
 
 /** Query for GET /campaigns/admin/awaiting-multi-submission-review. */

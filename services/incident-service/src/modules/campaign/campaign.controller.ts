@@ -226,6 +226,7 @@ export class CampaignController {
     query("difficulty").optional().isInt({ min: 1 }),
     query("greenPointsFrom").optional().isInt({ min: 0 }),
     query("greenPointsTo").optional().isInt({ min: 0 }),
+    query("is_owner").optional().isBoolean(),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -275,6 +276,9 @@ export class CampaignController {
             : undefined,
           greenPointsTo: req.query.greenPointsTo
             ? parseInt(String(req.query.greenPointsTo), 10)
+            : undefined,
+          isOwner: req.query.is_owner !== undefined
+            ? String(req.query.is_owner).toLowerCase() === "true"
             : undefined,
           sortBy: req.query.sortBy as CampaignListQuery["sortBy"],
           sortOrder: req.query.sortOrder as CampaignListQuery["sortOrder"],

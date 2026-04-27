@@ -94,6 +94,7 @@ export class CampaignRepository {
       difficultyLevels?: number[];
       myCampaignsUserId?: string;
       excludeMyCampaignsUserId?: string;
+      isOwner?: boolean;
     };
     skip: number;
     take: number;
@@ -104,7 +105,7 @@ export class CampaignRepository {
 
     const where: Prisma.CampaignWhereInput = {
       deletedAt: null,
-      ...(filters.status !== undefined ? { status: filters.status } : {}),
+      ...(filters.status !== undefined && !filters.isOwner ? { status: filters.status } : {}),
       ...(filters.createdBy ? { createdBy: filters.createdBy } : {}),
       ...(filters.search
         ? {
@@ -128,28 +129,51 @@ export class CampaignRepository {
         ? { difficulty: { in: filters.difficultyLevels } }
         : {}),
       ...(filters.myCampaignsUserId
-        ? {
-            OR: [
-              { createdBy: filters.myCampaignsUserId },
-              {
-                campaignManagers: {
-                  some: {
-                    userId: filters.myCampaignsUserId,
-                    deletedAt: null,
+        ? filters.isOwner
+          ? {
+              OR: [
+                { createdBy: filters.myCampaignsUserId },
+                {
+                  campaignManagers: {
+                    some: {
+                      userId: filters.myCampaignsUserId,
+                      deletedAt: null,
+                    },
                   },
                 },
-              },
-              {
-                campaignJoiningRequests: {
-                  some: {
-                    volunteerId: filters.myCampaignsUserId,
-                    status: JoinRequestStatus._STATUS_APPROVED,
-                    deletedAt: null,
+              ],
+            }
+          : {
+              OR: [
+                {
+                  AND: [
+                    {
+                      OR: [
+                        { createdBy: filters.myCampaignsUserId },
+                        {
+                          campaignManagers: {
+                            some: {
+                              userId: filters.myCampaignsUserId,
+                              deletedAt: null,
+                            },
+                          },
+                        },
+                      ],
+                    },
+                    { status: GlobalStatus._STATUS_ACTIVE },
+                  ],
+                },
+                {
+                  campaignJoiningRequests: {
+                    some: {
+                      volunteerId: filters.myCampaignsUserId,
+                      status: JoinRequestStatus._STATUS_APPROVED,
+                      deletedAt: null,
+                    },
                   },
                 },
-              },
-            ],
-          }
+              ],
+            }
         : {}),
       ...(filters.excludeMyCampaignsUserId
         ? {

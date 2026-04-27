@@ -481,6 +481,7 @@ export class CampaignService {
         difficultyLevels,
         myCampaignsUserId,
         excludeMyCampaignsUserId,
+        isOwner: query.isOwner,
       },
       skip,
       take: limit,
