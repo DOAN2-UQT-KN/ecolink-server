@@ -898,13 +898,20 @@ export class CampaignController {
           ? JoinRequestStatus._STATUS_APPROVED
           : JoinRequestStatus._STATUS_REJECTED;
 
-        const joinRequest =
+        const result =
           await campaignJoiningRequestService.processJoinRequest(
             req.body.requestId,
             managerId,
             status,
           );
-        sendSuccess(res, HTTP_STATUS.OK, { joinRequest });
+        if (result.type === "approved") {
+          sendSuccess(res, HTTP_STATUS.OK, { joinRequest: result.joinRequest });
+        } else {
+          sendSuccess(res, HTTP_STATUS.OK, {
+            deleted: true,
+            requestId: result.requestId,
+          });
+        }
       } catch (error) {
         console.error("Process join request error:", error);
         if (error instanceof Error) {

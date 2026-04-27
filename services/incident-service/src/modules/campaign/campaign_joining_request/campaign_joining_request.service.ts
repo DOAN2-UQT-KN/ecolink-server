@@ -19,6 +19,10 @@ import type {
 export type JoinRequestResponse = CampaignJoinRequestResponse;
 export type JoinRequestDetailResponse = CampaignJoinRequestDetailResponse;
 
+export type ProcessJoinRequestResult =
+    | { type: "approved"; joinRequest: JoinRequestResponse }
+    | { type: "rejected"; requestId: string };
+
 export interface CreateJoinRequestRequest {
     campaignId: string;
 }
@@ -173,14 +177,14 @@ export class CampaignJoiningRequestService {
     }
 
     /**
-     * Approve or reject a join request.
+     * Approve a join request, or decline by soft-deleting it (no REJECTED row).
      * Only campaign managers can process join requests.
      */
     async processJoinRequest(
         requestId: string,
         managerId: string,
         status: GlobalStatus._STATUS_APPROVED | GlobalStatus._STATUS_REJECTED,
-    ): Promise<JoinRequestResponse> {
+    ): Promise<ProcessJoinRequestResult> {
         const request =
             await campaignJoiningRequestRepository.findByIdWithCampaign(requestId);
         if (!request) {
@@ -216,18 +220,22 @@ export class CampaignJoiningRequestService {
                 approvedCount,
                 difficulty,
             );
+            const updated = await campaignJoiningRequestRepository.updateStatus(
+                requestId,
+                status,
+            );
+            const vid = updated.volunteerId;
+            const profileMap = vid
+                ? await fetchOrganizationOwnersByUserIds([vid])
+                : new Map<string, OrganizationOwnerResponse>();
+            return {
+                type: "approved",
+                joinRequest: this.toResponse(updated, profileMap),
+            };
         }
 
-        const updated = await campaignJoiningRequestRepository.updateStatus(
-            requestId,
-            status,
-        );
-
-        const vid = updated.volunteerId;
-        const profileMap = vid
-            ? await fetchOrganizationOwnersByUserIds([vid])
-            : new Map<string, OrganizationOwnerResponse>();
-        return this.toResponse(updated, profileMap);
+        await campaignJoiningRequestRepository.softDelete(requestId);
+        return { type: "rejected", requestId };
     }
 
     /**
