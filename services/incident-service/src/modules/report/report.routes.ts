@@ -34,6 +34,18 @@ router.get("/my", authenticate, reportController.getMyReports);
 router.get("/by-ids", authenticate, reportController.getReportsByIds);
 
 /**
+ * @route   GET /api/v1/reports/media-files/by-ids
+ * @desc    Report media file rows by ids (max 100); viewer must own the report or report must be verified.
+ * @access  Private
+ * @query   mediaFileIds — comma-separated or repeated UUIDs (report_media_files.id)
+ */
+router.get(
+  "/media-files/by-ids",
+  authenticate,
+  reportController.getReportMediaFilesByIds,
+);
+
+/**
  * @route   GET /api/v1/reports/:id/background-jobs/status
  * @desc    Check if all background jobs for this report are done (no pending/in-process)
  * @access  Private

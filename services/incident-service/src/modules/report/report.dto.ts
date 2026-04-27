@@ -28,6 +28,16 @@ export interface AddReportImagesRequest {
   imageUrls: string[];
 }
 
+/** One row from GET /api/v1/reports/media-files/by-ids (snake_case in HTTP response). */
+export interface ReportMediaFileByIdResponse {
+  id: string;
+  reportId: string | null;
+  mediaId: string;
+  url: string;
+  type: string;
+  createdAt: Date;
+}
+
 export interface ReportSearchQuery {
   search?: string; // Search in title/description
   status?: number; // Filter by status

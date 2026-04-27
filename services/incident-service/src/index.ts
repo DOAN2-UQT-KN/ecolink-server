@@ -27,7 +27,7 @@ const swaggerRouteFiles = routeModulesFrom(__dirname, [
   "modules/vote/vote.routes",
   "modules/saved_resource/saved_resource.routes",
   "modules/organization/organization.routes",
-  "modules/admin_media/admin-media.routes", 
+  "modules/admin_media/admin-media.routes",
 ]);
 
 // Middleware

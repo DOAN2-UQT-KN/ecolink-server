@@ -16,12 +16,14 @@ const INCIDENT_SERVICE_URL =
   process.env.INCIDENT_SERVICE_URL || "http://localhost:3001";
 const REWARD_SERVICE_URL =
   process.env.REWARD_SERVICE_URL || "http://localhost:3002";
+const AI_SERVICE_URL =
+  process.env.AI_SERVICE_URL || "http://localhost:3004";
 const GATEWAY_PUBLIC_URL =
   process.env.GATEWAY_PUBLIC_URL || `http://localhost:${port}`;
 
 console.log("🚀 API Gateway starting...");
 console.log(
-  `🔗 IDENTITY_SERVICE_URL=${IDENTITY_SERVICE_URL} INCIDENT_SERVICE_URL=${INCIDENT_SERVICE_URL} REWARD_SERVICE_URL=${REWARD_SERVICE_URL}`,
+  `🔗 IDENTITY_SERVICE_URL=${IDENTITY_SERVICE_URL} INCIDENT_SERVICE_URL=${INCIDENT_SERVICE_URL} REWARD_SERVICE_URL=${REWARD_SERVICE_URL} AI_SERVICE_URL=${AI_SERVICE_URL}`,
 );
 
 app.use(
@@ -170,6 +172,15 @@ app.use(
   "/api/v1/gifts",
   proxy(REWARD_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/gifts${req.url}`,
+  }),
+);
+
+// Chat / LLM agents (Python ai-service) — SSE; avoid buffering upstream
+app.use(
+  "/api/v1/chat",
+  proxy(AI_SERVICE_URL, {
+    proxyReqPathResolver: (req) => `/api/v1/chat${req.url}`,
+    parseReqBody: false,
   }),
 );
 

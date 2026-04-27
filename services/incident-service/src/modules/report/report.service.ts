@@ -13,6 +13,7 @@ import {
   ReportDetailResponse,
   PaginatedReportsResponse,
   ReportBackgroundJobsStatusResponse,
+  ReportMediaFileByIdResponse,
 } from "./report.dto";
 import { reportMediaRepository } from "./report_media.repository";
 import {
@@ -290,6 +291,40 @@ export class ReportService {
       .filter((row): row is ReportWithMediaFiles => row !== undefined);
     const details = await this.reportsWithMediaToDetails(ordered);
     return this.attachVotesToReports(details, viewerUserId);
+  }
+
+  /**
+   * Batch lookup of report_media_files by id. Only files the viewer may see
+   * (report owner or verified report) are returned; order matches `ids`.
+   */
+  async getReportMediaFilesByIds(
+    ids: string[],
+    viewerUserId: string,
+  ): Promise<ReportMediaFileByIdResponse[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+    const rows = await reportMediaRepository.findManyByIdsVisibleToViewer(
+      ids,
+      viewerUserId,
+    );
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const out: ReportMediaFileByIdResponse[] = [];
+    for (const id of ids) {
+      const row = byId.get(id);
+      if (!row) {
+        continue;
+      }
+      out.push({
+        id: row.id,
+        reportId: row.reportId,
+        mediaId: row.mediaId,
+        url: row.media.url,
+        type: row.media.type,
+        createdAt: row.createdAt,
+      });
+    }
+    return out;
   }
 
   private toReportDetailFromLoaded(

@@ -7,7 +7,7 @@ import {
   sendSuccess,
 } from "../../constants/http-status";
 import { reportService } from "./report.service";
-import { ReportSearchQuery } from "./report.dto";
+import { ReportSearchQuery, type ReportMediaFileByIdResponse } from "./report.dto";
 import { normalizeQueryUuidList } from "../../utils/query-uuid-list";
 
 const REPORT_BATCH_QUERY_MAX_IDS = 100;
@@ -156,6 +156,56 @@ export class ReportController {
         sendSuccess(res, HTTP_STATUS.OK, { reports });
       } catch (error) {
         console.error("Get reports by ids error:", error);
+        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+      }
+    },
+  ];
+
+  /**
+   * @query mediaFileIds — required; comma-separated or repeated; max 100 UUIDs (report_media_files.id)
+   */
+  getReportMediaFilesByIds = [
+    async (req: Request, res: Response): Promise<void> => {
+      const parsed = normalizeQueryUuidList(
+        req.query.mediaFileIds ?? req.query.media_file_ids,
+        REPORT_BATCH_QUERY_MAX_IDS,
+      );
+
+      if (parsed.kind === "invalid") {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: [
+            {
+              msg: `mediaFileIds must be valid UUIDs with at most ${REPORT_BATCH_QUERY_MAX_IDS} values (comma-separated or repeated keys)`,
+              path: "query",
+            },
+          ],
+        });
+      }
+
+      if (parsed.kind === "absent" || parsed.ids.length === 0) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: [
+            {
+              msg: "mediaFileIds is required",
+              path: "query",
+            },
+          ],
+        });
+      }
+
+      if (!req.user?.userId) {
+        return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+      }
+
+      try {
+        const mediaFiles: ReportMediaFileByIdResponse[] =
+          await reportService.getReportMediaFilesByIds(
+            parsed.ids,
+            req.user.userId,
+          );
+        sendSuccess(res, HTTP_STATUS.OK, { mediaFiles });
+      } catch (error) {
+        console.error("Get report media files by ids error:", error);
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     },
