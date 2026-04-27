@@ -1474,6 +1474,68 @@ export class CampaignController {
       }
     },
   ];
+
+  updateCampaignTaskResult = [
+    param("taskId").isUUID().withMessage("Task ID must be a valid UUID"),
+    body("result")
+      .exists()
+      .withMessage("result is required")
+      .isObject()
+      .withMessage("result must be an object"),
+    body("result.description").optional().isString(),
+    body("result.file").optional().isArray(),
+    body("result.file.*").optional().isString().trim(),
+
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: errors.array(),
+        });
+      }
+
+      const r = req.body?.result as Record<string, unknown> | undefined;
+      if (
+        r == null ||
+        (r.description === undefined && r.file === undefined)
+      ) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: [
+            {
+              msg: "Provide result.description and/or result.file",
+              path: "result",
+            },
+          ],
+        });
+      }
+
+      try {
+        const userId = req.user?.userId;
+        if (!userId) {
+          return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+        }
+
+        const payload: { description?: string; file?: string[] } = {};
+        if (r.description !== undefined) {
+          payload.description = r.description as string;
+        }
+        if (r.file !== undefined) {
+          payload.file = r.file as string[];
+        }
+
+        const task = await campaignTaskService.updateCampaignTaskResult(
+          req.params.taskId,
+          userId,
+          payload,
+        );
+        sendSuccess(res, HTTP_STATUS.OK, { task });
+      } catch (error) {
+        console.error("Update campaign task result error:", error);
+        if (sendHttpErrorResponse(res, error)) return;
+        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+      }
+    },
+  ];
 }
 
 export const campaignController = new CampaignController();

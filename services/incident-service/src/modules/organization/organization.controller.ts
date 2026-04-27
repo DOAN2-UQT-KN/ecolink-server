@@ -1,10 +1,5 @@
 import { Request, Response } from "express";
-import {
-  body,
-  param,
-  query,
-  validationResult,
-} from "express-validator";
+import { body, param, query, validationResult } from "express-validator";
 import { isURL } from "validator";
 import {
   HttpError,
@@ -44,9 +39,7 @@ function parseOrganizationListEmailVerifiedQuery(
   return undefined;
 }
 
-function parseMyOrganizationsIsOwnerQuery(
-  req: Request,
-): boolean | undefined {
+function parseMyOrganizationsIsOwnerQuery(req: Request): boolean | undefined {
   const raw = req.query.isOwner ?? req.query.is_owner;
   if (raw === undefined || raw === "") return undefined;
   const s = String(raw).toLowerCase();
@@ -93,7 +86,9 @@ function assertOptionalQueryIntTokenList(
   }
 }
 
-function parseOrganizationListOrgStatusQuery(req: Request): number[] | undefined {
+function parseOrganizationListOrgStatusQuery(
+  req: Request,
+): number[] | undefined {
   const tokens = normalizeOrganizationQueryIntTokens(req.query.status);
   if (tokens.length === 0) return undefined;
   return [...new Set(tokens.map((t) => parseInt(t, 10)))];
@@ -127,7 +122,9 @@ export class OrganizationController {
       .trim()
       .isLength({ max: 2048 })
       .isURL({ require_tld: false })
-      .withMessage("logo_url must be a non-empty valid URL (max 2048 characters)"),
+      .withMessage(
+        "logo_url must be a non-empty valid URL (max 2048 characters)",
+      ),
     body("backgroundUrl")
       .optional()
       .trim()
@@ -212,15 +209,11 @@ export class OrganizationController {
       }
 
       const q: OrganizationListQuery = {
-        search: req.query.search
-          ? String(req.query.search).trim()
-          : undefined,
+        search: req.query.search ? String(req.query.search).trim() : undefined,
         status: parseOrganizationListOrgStatusQuery(req),
         isEmailVerified: parseOrganizationListEmailVerifiedQuery(req),
         requestStatus: parseOrganizationListRequestStatusFilterQuery(req),
-        page: req.query.page
-          ? parseInt(String(req.query.page), 10)
-          : undefined,
+        page: req.query.page ? parseInt(String(req.query.page), 10) : undefined,
         limit: req.query.limit
           ? parseInt(String(req.query.limit), 10)
           : undefined,
@@ -351,29 +344,21 @@ export class OrganizationController {
       }
 
       const q: MyOrganizationsListQuery = {
-        search: req.query.search
-          ? String(req.query.search).trim()
-          : undefined,
+        search: req.query.search ? String(req.query.search).trim() : undefined,
         status: parseOrganizationListOrgStatusQuery(req),
         isEmailVerified: parseOrganizationListEmailVerifiedQuery(req),
         requestStatus: parseOrganizationListRequestStatusFilterQuery(req),
         isOwner: parseMyOrganizationsIsOwnerQuery(req),
-        page: req.query.page
-          ? parseInt(String(req.query.page), 10)
-          : undefined,
+        page: req.query.page ? parseInt(String(req.query.page), 10) : undefined,
         limit: req.query.limit
           ? parseInt(String(req.query.limit), 10)
           : undefined,
         sortBy: req.query.sortBy as MyOrganizationsListQuery["sortBy"],
-        sortOrder:
-          req.query.sortOrder as MyOrganizationsListQuery["sortOrder"],
+        sortOrder: req.query.sortOrder as MyOrganizationsListQuery["sortOrder"],
       };
 
       try {
-        const result = await organizationService.listMyOrganizations(
-          userId,
-          q,
-        );
+        const result = await organizationService.listMyOrganizations(userId, q);
         return sendSuccess(res, HTTP_STATUS.OK, result);
       } catch (error) {
         if (sendHttpErrorResponse(res, error)) {
@@ -669,15 +654,13 @@ export class OrganizationController {
         requesterId: req.query.requesterId
           ? String(req.query.requesterId).trim()
           : undefined,
-        page: req.query.page
-          ? parseInt(String(req.query.page), 10)
-          : undefined,
+        page: req.query.page ? parseInt(String(req.query.page), 10) : undefined,
         limit: req.query.limit
           ? parseInt(String(req.query.limit), 10)
           : undefined,
         sortBy: req.query.sortBy as GetOrganizationJoinRequestsQuery["sortBy"],
-        sortOrder:
-          req.query.sortOrder as GetOrganizationJoinRequestsQuery["sortOrder"],
+        sortOrder: req.query
+          .sortOrder as GetOrganizationJoinRequestsQuery["sortOrder"],
       };
 
       try {
@@ -725,15 +708,13 @@ export class OrganizationController {
           req.query.status !== undefined && req.query.status !== ""
             ? parseInt(String(req.query.status), 10)
             : undefined,
-        page: req.query.page
-          ? parseInt(String(req.query.page), 10)
-          : undefined,
+        page: req.query.page ? parseInt(String(req.query.page), 10) : undefined,
         limit: req.query.limit
           ? parseInt(String(req.query.limit), 10)
           : undefined,
         sortBy: req.query.sortBy as MyOrganizationJoinRequestsQuery["sortBy"],
-        sortOrder:
-          req.query.sortOrder as MyOrganizationJoinRequestsQuery["sortOrder"],
+        sortOrder: req.query
+          .sortOrder as MyOrganizationJoinRequestsQuery["sortOrder"],
       };
 
       try {
@@ -802,10 +783,7 @@ export class OrganizationController {
       }
 
       try {
-        await organizationService.cancelJoinRequest(
-          req.body.requestId,
-          userId,
-        );
+        await organizationService.cancelJoinRequest(req.body.requestId, userId);
         return sendSuccess(res, HTTP_STATUS.OK);
       } catch (error) {
         if (sendHttpErrorResponse(res, error)) {
@@ -899,7 +877,7 @@ export class OrganizationController {
       try {
         const result = await organizationService.listMembersForOwner(
           req.params.id,
-          userId,
+          // userId,
           q,
         );
         return sendSuccess(res, HTTP_STATUS.OK, result);

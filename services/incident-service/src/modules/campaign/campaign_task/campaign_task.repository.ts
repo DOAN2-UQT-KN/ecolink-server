@@ -1,6 +1,22 @@
 import { PrismaClient, Prisma } from "@prisma/client";
 import prisma from "../../../config/prisma.client";
 
+/** Include task result files with media URLs for API mapping. */
+export const campaignTaskWithResultInclude = {
+  campaignTaskResult: {
+    include: {
+      files: {
+        include: { media: true },
+        orderBy: { createdAt: "asc" as const },
+      },
+    },
+  },
+} satisfies Prisma.CampaignTaskInclude;
+
+export type CampaignTaskWithResult = Prisma.CampaignTaskGetPayload<{
+  include: typeof campaignTaskWithResultInclude;
+}>;
+
 export class CampaignTaskRepository {
   private prisma: PrismaClient;
 
@@ -9,12 +25,16 @@ export class CampaignTaskRepository {
   }
 
   async create(data: Prisma.CampaignTaskCreateInput) {
-    return this.prisma.campaignTask.create({ data });
+    return this.prisma.campaignTask.create({
+      data,
+      include: campaignTaskWithResultInclude,
+    });
   }
 
   async findById(id: string) {
     return this.prisma.campaignTask.findFirst({
       where: { id, deletedAt: null },
+      include: campaignTaskWithResultInclude,
     });
   }
 
@@ -22,6 +42,7 @@ export class CampaignTaskRepository {
     return this.prisma.campaignTask.findFirst({
       where: { id, deletedAt: null },
       include: {
+        ...campaignTaskWithResultInclude,
         campaignTaskAssignments: {
           where: { deletedAt: null },
         },
@@ -33,6 +54,7 @@ export class CampaignTaskRepository {
     return this.prisma.campaignTask.findMany({
       where: { campaignId, deletedAt: null },
       include: {
+        ...campaignTaskWithResultInclude,
         campaignTaskAssignments: {
           where: { deletedAt: null },
         },
@@ -45,6 +67,7 @@ export class CampaignTaskRepository {
     return this.prisma.campaignTask.update({
       where: { id },
       data,
+      include: campaignTaskWithResultInclude,
     });
   }
 
@@ -90,6 +113,7 @@ export class CampaignTaskRepository {
       include: {
         campaignTask: {
           include: {
+            ...campaignTaskWithResultInclude,
             campaign: {
               select: {
                 id: true,

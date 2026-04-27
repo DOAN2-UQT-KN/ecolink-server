@@ -1,9 +1,11 @@
 import { campaignTaskRepository } from "./campaign_task.repository";
+import type { CampaignTaskWithResult } from "./campaign_task.repository";
 import { campaignRepository } from "../campaign.repository";
 import { campaignManagerService } from "../campaign_manager/campaign_manager.service";
 import { campaignJoiningRequestService } from "../campaign_joining_request/campaign_joining_request.service";
 import { GlobalStatus, TaskStatus } from "../../../constants/status.enum";
 import { HttpError, HTTP_STATUS } from "../../../constants/http-status";
+import prisma from "../../../config/prisma.client";
 
 export interface CreateTaskRequest {
   campaignId: string;
@@ -19,6 +21,11 @@ export interface UpdateTaskRequest {
   scheduledTime?: string;
 }
 
+export interface CampaignTaskResultResponse {
+  description: string;
+  file: string[];
+}
+
 export interface TaskResponse {
   id: string;
   campaignId: string | null;
@@ -29,6 +36,7 @@ export interface TaskResponse {
   createdBy: string | null;
   createdAt: Date;
   updatedAt: Date;
+  result: CampaignTaskResultResponse;
 }
 
 export interface TaskDetailResponse extends TaskResponse {
@@ -329,10 +337,98 @@ export class CampaignTaskService {
             scheduledTime: a.campaignTask.scheduledTime,
             createdBy: a.campaignTask.createdBy,
             createdAt: a.campaignTask.createdAt,
+            result: this.mapTaskResult(a.campaignTask.campaignTaskResult),
             campaign: a.campaignTask.campaign,
           }
         : null,
     }));
+  }
+
+  async updateCampaignTaskResult(
+    taskId: string,
+    userId: string,
+    request: { description?: string; file?: string[] },
+  ): Promise<TaskResponse> {
+    const task = await campaignTaskRepository.findById(taskId);
+    if (!task) {
+      throw new HttpError(HTTP_STATUS.TASK_NOT_FOUND);
+    }
+
+    if (!task.campaignId) {
+      throw new HttpError(
+        HTTP_STATUS.BAD_REQUEST.withMessage("Task has no associated campaign"),
+      );
+    }
+
+    const assignment = await campaignTaskRepository.findAssignment(
+      taskId,
+      userId,
+    );
+    const canManage = await campaignManagerService.canManageCampaign(
+      task.campaignId,
+      userId,
+    );
+    if (!assignment && !canManage) {
+      throw new HttpError(
+        HTTP_STATUS.FORBIDDEN.withMessage(
+          "Only assigned volunteers or campaign managers can update task results",
+        ),
+      );
+    }
+
+    await prisma.$transaction(async (tx) => {
+      let resultRow = await tx.campaignTaskResult.findUnique({
+        where: { campaignTaskId: taskId },
+      });
+
+      if (!resultRow) {
+        resultRow = await tx.campaignTaskResult.create({
+          data: {
+            campaignTaskId: taskId,
+            description:
+              request.description !== undefined ? request.description : "",
+            createdBy: userId,
+            updatedBy: userId,
+          },
+        });
+      } else if (request.description !== undefined) {
+        await tx.campaignTaskResult.update({
+          where: { id: resultRow.id },
+          data: { description: request.description, updatedBy: userId },
+        });
+      }
+
+      if (request.file !== undefined) {
+        const resultId = resultRow.id;
+        await tx.campaignTaskResultFile.deleteMany({
+          where: { campaignTaskResultId: resultId },
+        });
+        for (const url of request.file) {
+          const media = await tx.media.create({
+            data: {
+              url,
+              type: "CAMPAIGN_TASK_RESULT",
+              createdBy: userId,
+              updatedBy: userId,
+            },
+          });
+          await tx.campaignTaskResultFile.create({
+            data: {
+              campaignTaskResultId: resultId,
+              mediaId: media.id,
+              createdBy: userId,
+              updatedBy: userId,
+            },
+          });
+        }
+      }
+    });
+
+    const updated = await campaignTaskRepository.findById(taskId);
+    if (!updated) {
+      throw new HttpError(HTTP_STATUS.TASK_NOT_FOUND);
+    }
+    return this.toTaskResponse(updated);
   }
 
   async updateTaskStatusByVolunteer(
@@ -359,17 +455,25 @@ export class CampaignTaskService {
     return this.toTaskResponse(updated);
   }
 
-  private toTaskResponse(task: {
-    id: string;
-    campaignId: string | null;
-    title: string | null;
-    description: string | null;
-    status: number;
-    scheduledTime: Date | null;
-    createdBy: string | null;
-    createdAt: Date;
-    updatedAt: Date;
-  }): TaskResponse {
+  private mapTaskResult(
+    row:
+      | {
+          description: string | null;
+          files: { media: { url: string } }[];
+        }
+      | null
+      | undefined,
+  ): CampaignTaskResultResponse {
+    if (!row) {
+      return { description: "", file: [] };
+    }
+    return {
+      description: row.description ?? "",
+      file: row.files.map((f) => f.media.url),
+    };
+  }
+
+  private toTaskResponse(task: CampaignTaskWithResult): TaskResponse {
     return {
       id: task.id,
       campaignId: task.campaignId,
@@ -380,6 +484,7 @@ export class CampaignTaskService {
       createdBy: task.createdBy,
       createdAt: task.createdAt,
       updatedAt: task.updatedAt,
+      result: this.mapTaskResult(task.campaignTaskResult),
     };
   }
 }

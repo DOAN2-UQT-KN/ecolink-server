@@ -112,6 +112,18 @@ router.put(
 );
 
 /**
+ * @route   PUT /api/v1/campaigns/tasks/:taskId/result
+ * @desc    Update task result (description and/or file URLs). Assigned volunteer or campaign manager.
+ * @access  Private
+ * @body    { result: { description?, file?: string[] } } — sending file replaces all attachments
+ */
+router.put(
+  "/tasks/:taskId/result",
+  authenticate,
+  campaignController.updateCampaignTaskResult,
+);
+
+/**
  * @route   GET /api/v1/campaigns/:id
  * @desc    Get campaign by ID
  * @access  Private

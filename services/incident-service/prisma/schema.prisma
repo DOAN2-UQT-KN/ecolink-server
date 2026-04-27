@@ -108,6 +108,8 @@ model Media {
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
+  campaignTaskResultFiles CampaignTaskResultFile[]
+
   @@index([type])
   @@index([deletedAt])
   @@map("media")
@@ -157,10 +159,48 @@ model CampaignTask {
   // Relations
   campaign                Campaign?                @relation(fields: [campaignId], references: [id])
   campaignTaskAssignments CampaignTaskAssignment[]
+  campaignTaskResult      CampaignTaskResult?
 
   @@index([campaignId])
   @@index([status])
   @@map("campaign_tasks")
+}
+
+/** Optional evidence / notes submitted for a campaign task (one row per task). */
+model CampaignTaskResult {
+  id             String  @id @default(uuid()) @db.Uuid
+  campaignTaskId String  @unique @map("campaign_task_id") @db.Uuid
+  description    String?
+
+  createdBy String? @map("created_by") @db.Uuid
+  updatedBy String? @map("updated_by") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  campaignTask CampaignTask               @relation(fields: [campaignTaskId], references: [id], onDelete: Cascade)
+  files        CampaignTaskResultFile[]
+
+  @@map("campaign_task_results")
+}
+
+model CampaignTaskResultFile {
+  id                   String @id @default(uuid()) @db.Uuid
+  campaignTaskResultId String @map("campaign_task_result_id") @db.Uuid
+  mediaId              String @map("media_id") @db.Uuid
+
+  createdBy String? @map("created_by") @db.Uuid
+  updatedBy String? @map("updated_by") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  campaignTaskResult CampaignTaskResult @relation(fields: [campaignTaskResultId], references: [id], onDelete: Cascade)
+  media              Media              @relation(fields: [mediaId], references: [id])
+
+  @@index([campaignTaskResultId])
+  @@index([mediaId])
+  @@map("campaign_task_result_files")
 }
 
 model CampaignTaskAssignment {

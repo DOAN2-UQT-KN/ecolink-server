@@ -1,11 +1,5 @@
-import {
-  GlobalStatus,
-  JoinRequestStatus,
-} from "../../constants/status.enum";
-import {
-  HttpError,
-  HTTP_STATUS,
-} from "../../constants/http-status";
+import { GlobalStatus, JoinRequestStatus } from "../../constants/status.enum";
+import { HttpError, HTTP_STATUS } from "../../constants/http-status";
 import prisma from "../../config/prisma.client";
 import type {
   CreateOrganizationBody,
@@ -67,7 +61,9 @@ export class OrganizationService {
     return { id: ownerId, name: "", avatar: null, bio: null };
   }
 
-  private async withOwner(core: OrganizationCore): Promise<OrganizationResponse> {
+  private async withOwner(
+    core: OrganizationCore,
+  ): Promise<OrganizationResponse> {
     const map = await fetchOrganizationOwnersByUserIds([core.ownerId]);
     return {
       ...core,
@@ -79,7 +75,9 @@ export class OrganizationService {
   private async withOwners(
     cores: OrganizationCore[],
   ): Promise<OrganizationResponse[]> {
-    const map = await fetchOrganizationOwnersByUserIds(cores.map((c) => c.ownerId));
+    const map = await fetchOrganizationOwnersByUserIds(
+      cores.map((c) => c.ownerId),
+    );
     return cores.map((c) => ({
       ...c,
       owner: getUserProfile(map, c.ownerId) ?? this.ownerFallback(c.ownerId),
@@ -311,9 +309,7 @@ export class OrganizationService {
     }
     if (body.backgroundUrl !== undefined) {
       patch.backgroundUrl =
-        body.backgroundUrl === null
-          ? null
-          : body.backgroundUrl.trim() || null;
+        body.backgroundUrl === null ? null : body.backgroundUrl.trim() || null;
     }
 
     let contactEmailChanged = false;
@@ -428,7 +424,9 @@ export class OrganizationService {
   ): Promise<OrganizationResponse | null> {
     const row = await organizationRepository.findById(organizationId);
     if (!row) return null;
-    const organization = await this.withOwner(this.organizationCoreFromRow(row));
+    const organization = await this.withOwner(
+      this.organizationCoreFromRow(row),
+    );
     if (!viewerUserId) {
       return organization;
     }
@@ -494,10 +492,11 @@ export class OrganizationService {
     const sortOrder = query.sortOrder ?? "desc";
     const skip = (page - 1) * limit;
 
-    const joinRequestOrgIds = await this.organizationIdsForJoinRequestStatusFilter(
-      userId,
-      query.requestStatus,
-    );
+    const joinRequestOrgIds =
+      await this.organizationIdsForJoinRequestStatusFilter(
+        userId,
+        query.requestStatus,
+      );
     if (joinRequestOrgIds !== undefined && joinRequestOrgIds.length === 0) {
       return {
         organizations: [],
@@ -552,10 +551,11 @@ export class OrganizationService {
     const sortOrder = query.sortOrder ?? "desc";
     const skip = (page - 1) * limit;
 
-    const joinRequestOrgIds = await this.organizationIdsForJoinRequestStatusFilter(
-      viewerUserId,
-      query.requestStatus,
-    );
+    const joinRequestOrgIds =
+      await this.organizationIdsForJoinRequestStatusFilter(
+        viewerUserId,
+        query.requestStatus,
+      );
     if (joinRequestOrgIds !== undefined && joinRequestOrgIds.length === 0) {
       return {
         organizations: [],
@@ -616,15 +616,16 @@ export class OrganizationService {
     );
     if (isMember) {
       throw new HttpError(
-        HTTP_STATUS.CONFLICT.withMessage("Already a member of this organization"),
+        HTTP_STATUS.CONFLICT.withMessage(
+          "Already a member of this organization",
+        ),
       );
     }
 
-    const pending =
-      await organizationJoiningRequestRepository.findPending(
-        organizationId,
-        requesterId,
-      );
+    const pending = await organizationJoiningRequestRepository.findPending(
+      organizationId,
+      requesterId,
+    );
     if (pending) {
       throw new HttpError(HTTP_STATUS.JOIN_REQUEST_ALREADY_EXISTS);
     }
@@ -839,7 +840,7 @@ export class OrganizationService {
 
   async listMembersForOwner(
     organizationId: string,
-    ownerId: string,
+    // ownerId: string,
     query: OrganizationMembersListQuery,
   ): Promise<{
     members: OrganizationMemberResponse[];
@@ -854,13 +855,13 @@ export class OrganizationService {
         HTTP_STATUS.NOT_FOUND.withMessage("Organization not found"),
       );
     }
-    if (org.ownerId !== ownerId) {
-      throw new HttpError(
-        HTTP_STATUS.FORBIDDEN.withMessage(
-          "Only the organization owner can list members",
-        ),
-      );
-    }
+    // if (org.ownerId !== ownerId) {
+    //   throw new HttpError(
+    //     HTTP_STATUS.FORBIDDEN.withMessage(
+    //       "Only the organization owner can list members",
+    //     ),
+    //   );
+    // }
 
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
@@ -881,16 +882,21 @@ export class OrganizationService {
       const profiles = await fetchOrganizationOwnersByUserIds(distinctUserIds);
       const needle = searchTerm.toLowerCase();
       let matched = rows.filter((r) => {
-        const name = getUserProfile(profiles, r.userId)?.name?.toLowerCase() ?? "";
+        const name =
+          getUserProfile(profiles, r.userId)?.name?.toLowerCase() ?? "";
         return name.includes(needle);
       });
 
       const dir = sortOrder === "asc" ? 1 : -1;
       matched.sort((a, b) => {
         const av =
-          sortBy === "updatedAt" ? a.updatedAt.getTime() : a.createdAt.getTime();
+          sortBy === "updatedAt"
+            ? a.updatedAt.getTime()
+            : a.createdAt.getTime();
         const bv =
-          sortBy === "updatedAt" ? b.updatedAt.getTime() : b.createdAt.getTime();
+          sortBy === "updatedAt"
+            ? b.updatedAt.getTime()
+            : b.createdAt.getTime();
         return (av - bv) * dir;
       });
 
