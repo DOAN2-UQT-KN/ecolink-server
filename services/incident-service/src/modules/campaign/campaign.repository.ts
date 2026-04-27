@@ -93,6 +93,7 @@ export class CampaignRepository {
       difficulty?: number;
       difficultyLevels?: number[];
       myCampaignsUserId?: string;
+      excludeMyCampaignsUserId?: string;
     };
     skip: number;
     take: number;
@@ -148,6 +149,32 @@ export class CampaignRepository {
                 },
               },
             ],
+          }
+        : {}),
+      ...(filters.excludeMyCampaignsUserId
+        ? {
+            NOT: {
+              OR: [
+                { createdBy: filters.excludeMyCampaignsUserId },
+                {
+                  campaignManagers: {
+                    some: {
+                      userId: filters.excludeMyCampaignsUserId,
+                      deletedAt: null,
+                    },
+                  },
+                },
+                {
+                  campaignJoiningRequests: {
+                    some: {
+                      volunteerId: filters.excludeMyCampaignsUserId,
+                      status: JoinRequestStatus._STATUS_APPROVED,
+                      deletedAt: null,
+                    },
+                  },
+                },
+              ],
+            },
           }
         : {}),
     };

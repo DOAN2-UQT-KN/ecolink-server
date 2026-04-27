@@ -419,6 +419,7 @@ export class CampaignService {
     query: CampaignListQuery,
     viewerUserId?: string | null,
     myCampaignsUserId?: string,
+    excludeMyCampaignsUserId?: string,
   ): Promise<{
     campaigns: CampaignResponse[];
     total: number;
@@ -479,6 +480,7 @@ export class CampaignService {
         difficulty: query.difficulty,
         difficultyLevels,
         myCampaignsUserId,
+        excludeMyCampaignsUserId,
       },
       skip,
       take: limit,

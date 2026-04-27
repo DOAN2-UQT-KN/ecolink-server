@@ -198,7 +198,12 @@ export class CampaignController {
           sortOrder: req.query.sortOrder as CampaignListQuery["sortOrder"],
         };
 
-        const result = await campaignService.getCampaigns(q, req.user?.userId);
+        const result = await campaignService.getCampaigns(
+          q,
+          req.user?.userId,
+          undefined,
+          req.user?.userId,
+        );
         sendSuccess(res, HTTP_STATUS.OK, result);
       } catch (error) {
         console.error("Get campaigns error:", error);
