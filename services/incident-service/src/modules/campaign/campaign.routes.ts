@@ -34,6 +34,14 @@ router.get(
 router.get("/by-ids", authenticate, campaignController.getCampaignsByIds);
 
 /**
+ * @route   GET /api/v1/campaigns/my
+ * @desc    List campaigns that the user is owner or their join request is approved
+ * @access  Private
+ * @query   search?, status?, page, limit, sortBy (createdAt|updatedAt|title), sortOrder (asc|desc), greenPointsFrom?, greenPointsTo?
+ */
+router.get("/my", authenticate, campaignController.getMyCampaigns);
+
+/**
  * @route   GET /api/v1/campaigns/admin/awaiting-multi-submission-review
  * @desc    Campaigns with more than one submission awaiting approve/reject (admin)
  * @access  Private (Admin only)

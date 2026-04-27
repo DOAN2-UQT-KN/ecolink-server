@@ -418,6 +418,7 @@ export class CampaignService {
   async getCampaigns(
     query: CampaignListQuery,
     viewerUserId?: string | null,
+    myCampaignsUserId?: string,
   ): Promise<{
     campaigns: CampaignResponse[];
     total: number;
@@ -431,6 +432,40 @@ export class CampaignService {
     const sortOrder = query.sortOrder ?? "desc";
     const skip = (page - 1) * limit;
 
+    const difficulties = await rewardServiceClient.getDifficulties();
+    const greenByLevel = new Map(
+      difficulties.map((d) => [d.level, d.greenPoints]),
+    );
+    const maxByLevel = new Map(
+      difficulties.map((d) => [d.level, d.maxVolunteers]),
+    );
+
+    let difficultyLevels: number[] | undefined;
+    if (
+      query.greenPointsFrom !== undefined ||
+      query.greenPointsTo !== undefined
+    ) {
+      difficultyLevels = difficulties
+        .filter((d) => {
+          if (
+            query.greenPointsFrom !== undefined &&
+            d.greenPoints < query.greenPointsFrom
+          )
+            return false;
+          if (
+            query.greenPointsTo !== undefined &&
+            d.greenPoints > query.greenPointsTo
+          )
+            return false;
+          return true;
+        })
+        .map((d) => d.level);
+
+      if (difficultyLevels.length === 0) {
+        return { campaigns: [], total: 0, page, limit, totalPages: 0 };
+      }
+    }
+
     const { rows, total } = await campaignRepository.findManyPaginated({
       filters: {
         search: query.search,
@@ -442,6 +477,8 @@ export class CampaignService {
         longitude: query.longitude,
         radiusKm: query.radiusKm,
         difficulty: query.difficulty,
+        difficultyLevels,
+        myCampaignsUserId,
       },
       skip,
       take: limit,
@@ -449,13 +486,6 @@ export class CampaignService {
       sortOrder,
     });
 
-    const difficulties = await rewardServiceClient.getDifficulties();
-    const greenByLevel = new Map(
-      difficulties.map((d) => [d.level, d.greenPoints]),
-    );
-    const maxByLevel = new Map(
-      difficulties.map((d) => [d.level, d.maxVolunteers]),
-    );
     const approvedByCampaignId =
       await campaignJoiningRequestRepository.countApprovedByCampaignIds(
         rows.map((c) => c.id),
@@ -488,6 +518,19 @@ export class CampaignService {
       limit,
       totalPages: Math.ceil(total / limit),
     };
+  }
+
+  async getMyCampaigns(
+    query: CampaignListQuery,
+    userId: string,
+  ): Promise<{
+    campaigns: CampaignResponse[];
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  }> {
+    return this.getCampaigns(query, userId, userId);
   }
 
   /**

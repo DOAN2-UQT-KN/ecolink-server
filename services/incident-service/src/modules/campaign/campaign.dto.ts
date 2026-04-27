@@ -262,6 +262,8 @@ export interface CampaignListQuery {
   longitude?: number;
   radiusKm?: number;
   difficulty?: number;
+  greenPointsFrom?: number;
+  greenPointsTo?: number;
 }
 
 /** Query for GET /campaigns/admin/awaiting-multi-submission-review. */

@@ -9,6 +9,8 @@ const SUBMISSION_STATUSES_AWAITING_REVIEW: number[] = [
   GlobalStatus._STATUS_PENDING,
 ];
 
+import { JoinRequestStatus } from "../../constants/status.enum";
+
 export class CampaignRepository {
   private prisma: PrismaClient;
 
@@ -89,6 +91,8 @@ export class CampaignRepository {
       longitude?: number;
       radiusKm?: number;
       difficulty?: number;
+      difficultyLevels?: number[];
+      myCampaignsUserId?: string;
     };
     skip: number;
     take: number;
@@ -117,6 +121,33 @@ export class CampaignRepository {
                 deletedAt: null,
               },
             },
+          }
+        : {}),
+      ...(filters.difficultyLevels && filters.difficultyLevels.length > 0
+        ? { difficulty: { in: filters.difficultyLevels } }
+        : {}),
+      ...(filters.myCampaignsUserId
+        ? {
+            OR: [
+              { createdBy: filters.myCampaignsUserId },
+              {
+                campaignManagers: {
+                  some: {
+                    userId: filters.myCampaignsUserId,
+                    deletedAt: null,
+                  },
+                },
+              },
+              {
+                campaignJoiningRequests: {
+                  some: {
+                    volunteerId: filters.myCampaignsUserId,
+                    status: JoinRequestStatus._STATUS_APPROVED,
+                    deletedAt: null,
+                  },
+                },
+              },
+            ],
           }
         : {}),
     };

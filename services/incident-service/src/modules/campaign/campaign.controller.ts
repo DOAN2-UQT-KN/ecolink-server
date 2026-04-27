@@ -141,6 +141,8 @@ export class CampaignController {
     query("longitude").optional().isFloat({ min: -180, max: 180 }),
     query("radiusKm").optional().isFloat({ min: 0 }),
     query("difficulty").optional().isInt({ min: 1 }),
+    query("greenPointsFrom").optional().isInt({ min: 0 }),
+    query("greenPointsTo").optional().isInt({ min: 0 }),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -186,6 +188,12 @@ export class CampaignController {
           difficulty: req.query.difficulty
             ? parseInt(String(req.query.difficulty), 10)
             : undefined,
+          greenPointsFrom: req.query.greenPointsFrom
+            ? parseInt(String(req.query.greenPointsFrom), 10)
+            : undefined,
+          greenPointsTo: req.query.greenPointsTo
+            ? parseInt(String(req.query.greenPointsTo), 10)
+            : undefined,
           sortBy: req.query.sortBy as CampaignListQuery["sortBy"],
           sortOrder: req.query.sortOrder as CampaignListQuery["sortOrder"],
         };
@@ -194,6 +202,83 @@ export class CampaignController {
         sendSuccess(res, HTTP_STATUS.OK, result);
       } catch (error) {
         console.error("Get campaigns error:", error);
+        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+      }
+    },
+  ];
+
+  getMyCampaigns = [
+    query("search").optional().trim(),
+    query("status").optional().isInt(),
+    query("page").optional().isInt({ min: 1 }),
+    query("limit").optional().isInt({ min: 1, max: 100 }),
+    query("sortBy").optional().isIn(["createdAt", "updatedAt", "title"]),
+    query("sortOrder").optional().isIn(["asc", "desc"]),
+    query("organizationId").optional().isUUID(),
+    query("latitude").optional().isFloat({ min: -90, max: 90 }),
+    query("longitude").optional().isFloat({ min: -180, max: 180 }),
+    query("radiusKm").optional().isFloat({ min: 0 }),
+    query("difficulty").optional().isInt({ min: 1 }),
+    query("greenPointsFrom").optional().isInt({ min: 0 }),
+    query("greenPointsTo").optional().isInt({ min: 0 }),
+
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: errors.array(),
+        });
+      }
+
+      try {
+        const userId = req.user?.userId;
+        if (!userId) {
+          return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+        }
+
+        const q: CampaignListQuery = {
+          search: req.query.search
+            ? String(req.query.search).trim()
+            : undefined,
+          page: req.query.page
+            ? parseInt(String(req.query.page), 10)
+            : undefined,
+          limit: req.query.limit
+            ? parseInt(String(req.query.limit), 10)
+            : undefined,
+          status:
+            req.query.status !== undefined && req.query.status !== ""
+              ? parseInt(String(req.query.status), 10)
+              : undefined,
+          organizationId: req.query.organizationId
+            ? String(req.query.organizationId).trim()
+            : undefined,
+          latitude: req.query.latitude
+            ? parseFloat(String(req.query.latitude))
+            : undefined,
+          longitude: req.query.longitude
+            ? parseFloat(String(req.query.longitude))
+            : undefined,
+          radiusKm: req.query.radiusKm
+            ? parseFloat(String(req.query.radiusKm))
+            : undefined,
+          difficulty: req.query.difficulty
+            ? parseInt(String(req.query.difficulty), 10)
+            : undefined,
+          greenPointsFrom: req.query.greenPointsFrom
+            ? parseInt(String(req.query.greenPointsFrom), 10)
+            : undefined,
+          greenPointsTo: req.query.greenPointsTo
+            ? parseInt(String(req.query.greenPointsTo), 10)
+            : undefined,
+          sortBy: req.query.sortBy as CampaignListQuery["sortBy"],
+          sortOrder: req.query.sortOrder as CampaignListQuery["sortOrder"],
+        };
+
+        const result = await campaignService.getMyCampaigns(q, userId);
+        sendSuccess(res, HTTP_STATUS.OK, result);
+      } catch (error) {
+        console.error("Get my campaigns error:", error);
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     },
