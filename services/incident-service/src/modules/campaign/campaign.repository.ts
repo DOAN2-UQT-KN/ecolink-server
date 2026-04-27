@@ -255,7 +255,7 @@ export class CampaignRepository {
         id: { in: reportIds },
         deletedAt: null,
         campaignId: null,
-        status: ReportStatus._STATUS_PENDING,
+        status: ReportStatus._STATUS_TODO,
       },
       select: { id: true },
     });

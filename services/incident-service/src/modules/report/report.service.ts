@@ -170,7 +170,7 @@ export class ReportService {
           latitude: request.latitude,
           longitude: request.longitude,
           detailAddress: request.detailAddress,
-          status: ReportStatus._STATUS_DRAFT,
+          status: ReportStatus._STATUS_PENDING,
           isVerify: false,
           aiVerified: false,
         },
@@ -488,7 +488,7 @@ export class ReportService {
 
     await reportRepository.update(reportId, {
       aiVerified: false,
-      status: ReportStatus._STATUS_DRAFT,
+      status: ReportStatus._STATUS_PENDING,
     });
 
     backgroundJobDispatcher
@@ -601,7 +601,7 @@ export class ReportService {
 
     const report = await reportRepository.update(id, {
       isVerify: true,
-      status: ReportStatus._STATUS_PENDING,
+      status: ReportStatus._STATUS_TODO,
     });
     return this.withReportVote(toReportResponse(report), viewerUserId);
   }

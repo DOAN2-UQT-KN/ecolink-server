@@ -25,7 +25,7 @@ export class OrganizationRepository {
         logoUrl: data.logoUrl,
         backgroundUrl: data.backgroundUrl ?? null,
         contactEmail: data.contactEmail ?? null,
-        status: GlobalStatus._STATUS_DRAFT,
+        status: GlobalStatus._STATUS_PENDING,
         ownerId: data.ownerId,
         createdBy: data.createdBy ?? data.ownerId,
       },

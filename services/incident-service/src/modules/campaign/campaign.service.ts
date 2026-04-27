@@ -314,7 +314,7 @@ export class CampaignService {
             longitude: request.longitude,
             radiusKm: request.radiusKm,
             difficulty: request.difficulty,
-            status: GlobalStatus._STATUS_DRAFT,
+            status: GlobalStatus._STATUS_PENDING,
             organizationId: request.organizationId,
             createdBy: userId,
             updatedBy: userId,
@@ -732,7 +732,7 @@ export class CampaignService {
             },
             data: {
               campaignId: null,
-              status: ReportStatus._STATUS_PENDING,
+              status: ReportStatus._STATUS_TODO,
               updatedBy: userId,
             },
           });
@@ -842,7 +842,7 @@ export class CampaignService {
           },
           data: {
             campaignId: null,
-            status: ReportStatus._STATUS_PENDING,
+            status: ReportStatus._STATUS_TODO,
             updatedBy: adminUserId,
           },
         });
@@ -1009,7 +1009,7 @@ export class CampaignService {
           },
           data: {
             campaignId: null,
-            status: ReportStatus._STATUS_PENDING,
+            status: ReportStatus._STATUS_TODO,
             updatedBy: userId,
           },
         });
@@ -1097,7 +1097,7 @@ export class CampaignService {
         id: { in: reportIds },
         deletedAt: null,
         campaignId: null,
-        status: ReportStatus._STATUS_PENDING,
+        status: ReportStatus._STATUS_TODO,
       },
       data: {
         campaignId,
