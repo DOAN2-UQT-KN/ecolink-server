@@ -19,11 +19,7 @@ router.post("/", authenticate, campaignController.createCampaign);
  * @access  Private
  * @query   search?, status?, createdBy?, managerId?, page, limit, sortBy (createdAt|updatedAt|title), sortOrder (asc|desc)
  */
-router.get(
-  "/",
-  // authenticate,
-  campaignController.getCampaigns,
-);
+router.get("/", authenticate, campaignController.getCampaigns);
 
 /**
  * @route   GET /api/v1/campaigns/by-ids
