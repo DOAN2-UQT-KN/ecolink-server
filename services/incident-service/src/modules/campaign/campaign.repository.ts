@@ -107,6 +107,7 @@ export class CampaignRepository {
       deletedAt: null,
       ...(filters.status !== undefined && !filters.isOwner ? { status: filters.status } : {}),
       ...(filters.createdBy ? { createdBy: filters.createdBy } : {}),
+      ...(filters.organizationId ? { organizationId: filters.organizationId } : {}),
       ...(filters.search
         ? {
             title: {
