@@ -16,8 +16,7 @@ const INCIDENT_SERVICE_URL =
   process.env.INCIDENT_SERVICE_URL || "http://localhost:3001";
 const REWARD_SERVICE_URL =
   process.env.REWARD_SERVICE_URL || "http://localhost:3002";
-const AI_SERVICE_URL =
-  process.env.AI_SERVICE_URL || "http://localhost:3004";
+const AI_SERVICE_URL = process.env.AI_SERVICE_URL || "http://localhost:3004";
 const GATEWAY_PUBLIC_URL =
   process.env.GATEWAY_PUBLIC_URL || `http://localhost:${port}`;
 
@@ -89,10 +88,19 @@ app.get("/api-docs/specs/incident.json", async (req, res, next) => {
   }
 });
 
+app.get("/api-docs/specs/reward.json", async (req, res, next) => {
+  try {
+    await serveRewrittenOpenApi(res, REWARD_SERVICE_URL);
+  } catch (e) {
+    next(e);
+  }
+});
+
 mountGatewaySwaggerUi(app, {
   specs: [
     { name: "Identity", url: "/api-docs/specs/identity.json" },
     { name: "Incident", url: "/api-docs/specs/incident.json" },
+    { name: "Reward", url: "/api-docs/specs/reward.json" },
   ],
 });
 
