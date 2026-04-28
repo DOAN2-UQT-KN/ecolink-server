@@ -15,6 +15,7 @@ export interface PointsTransactionResponse {
   type: string;
   resourceId: string;
   resourceType: string;
+  resource?: Record<string, unknown> | null;
   points: number;
   createdAt: string;
   updatedAt: string;

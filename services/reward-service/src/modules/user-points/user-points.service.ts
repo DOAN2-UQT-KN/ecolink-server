@@ -1,6 +1,11 @@
 import { Prisma } from "@prisma/client";
 import prisma from "../../config/prisma.client";
 import { fetchUsersByIds, getUserProfile } from "../../utils/identity-user.client";
+import { GreenPointResourceType } from "../green-point/green-point-transaction.constants";
+import {
+  fetchCampaignsByIds,
+  fetchReportsByIds,
+} from "../../utils/incident-resource.client";
 
 export class UserPointsService {
   async getPoints(userId: string) {
@@ -24,7 +29,15 @@ export class UserPointsService {
     };
   }
 
-  async getTransactions(userId: string, page: number, limit: number, type?: string, sortBy: string = "createdAt", sortOrder: string = "desc") {
+  async getTransactions(
+    userId: string,
+    page: number,
+    limit: number,
+    type?: string,
+    sortBy: string = "createdAt",
+    sortOrder: string = "desc",
+    authorization?: string,
+  ) {
     const skip = (page - 1) * limit;
     const where: Prisma.GreenPointTransactionWhereInput = { userId, deletedAt: null };
     if (type) {
@@ -39,7 +52,60 @@ export class UserPointsService {
       }),
       prisma.greenPointTransaction.count({ where })
     ]);
-    return { transactions: rows, total };
+
+    const campaignIds = [
+      ...new Set(
+        rows
+          .filter((row) => row.resourceType === GreenPointResourceType.CAMPAIGN)
+          .map((row) => row.resourceId),
+      ),
+    ];
+    const reportIds = [
+      ...new Set(
+        rows
+          .filter((row) => row.resourceType === GreenPointResourceType.REPORT)
+          .map((row) => row.resourceId),
+      ),
+    ];
+    const referralUserIds = [
+      ...new Set(
+        rows
+          .filter((row) => row.resourceType === GreenPointResourceType.USER)
+          .map((row) => row.resourceId),
+      ),
+    ];
+
+    const [campaignMap, reportMap, referralUserMap] = await Promise.all([
+      fetchCampaignsByIds(campaignIds, authorization),
+      fetchReportsByIds(reportIds, authorization),
+      fetchUsersByIds(referralUserIds),
+    ]);
+
+    const transactions = rows.map((row) => {
+      if (row.resourceType === GreenPointResourceType.CAMPAIGN) {
+        return { ...row, resource: campaignMap.get(row.resourceId) ?? null };
+      }
+      if (row.resourceType === GreenPointResourceType.REPORT) {
+        return { ...row, resource: reportMap.get(row.resourceId) ?? null };
+      }
+      if (row.resourceType === GreenPointResourceType.USER) {
+        const profile = getUserProfile(referralUserMap, row.resourceId);
+        return {
+          ...row,
+          resource: profile
+            ? {
+                id: profile.id,
+                name: profile.name,
+                avatar: profile.avatar,
+                bio: profile.bio,
+              }
+            : null,
+        };
+      }
+      return { ...row, resource: null };
+    });
+
+    return { transactions, total };
   }
 
   async getLeaderboard(page: number, limit: number) {

@@ -69,7 +69,8 @@ router.get(
         limit,
         type,
         sortBy,
-        sortOrder
+        sortOrder,
+        req.headers.authorization
       );
 
       const totalPages = total === 0 ? 0 : Math.ceil(total / limit);
