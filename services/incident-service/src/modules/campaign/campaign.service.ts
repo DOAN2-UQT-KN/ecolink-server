@@ -36,6 +36,45 @@ import { reportService } from "../report/report.service";
 export class CampaignService {
   constructor() {}
 
+  private debugWarn(message: string, meta?: Record<string, unknown>): void {
+    if (process.env.NODE_ENV === "production") return;
+    console.warn(`[campaign] ${message}`, meta ?? {});
+  }
+
+  private async resolveTierMaps(levels: number[]): Promise<{
+    greenByLevel: Map<number, number>;
+    maxByLevel: Map<number, number | null>;
+    difficulties: { level: number; greenPoints: number; maxVolunteers: number | null }[];
+  }> {
+    const unique = [...new Set(levels)].filter((l) => Number.isFinite(l));
+    const difficulties = await rewardServiceClient.getDifficulties();
+    if (difficulties.length > 0) {
+      return {
+        greenByLevel: new Map(difficulties.map((d) => [d.level, d.greenPoints])),
+        maxByLevel: new Map(
+          difficulties.map((d) => [d.level, d.maxVolunteers]),
+        ),
+        difficulties,
+      };
+    }
+
+    // Fallback: list endpoint unavailable, but per-level may still work.
+    if (unique.length > 0) {
+      this.debugWarn("reward difficulties list empty; falling back to per-level", {
+        levels: unique,
+      });
+    }
+    const tiers = await Promise.all(
+      unique.map((level) => rewardServiceClient.getDifficultyByLevel(level)),
+    );
+    const resolved = tiers.filter((t): t is NonNullable<typeof t> => t != null);
+    return {
+      greenByLevel: new Map(resolved.map((d) => [d.level, d.greenPoints])),
+      maxByLevel: new Map(resolved.map((d) => [d.level, d.maxVolunteers])),
+      difficulties: resolved,
+    };
+  }
+
   private ownerFallback(userId: string): OrganizationOwnerResponse {
     return { id: userId, name: "", avatar: null, bio: null };
   }
@@ -187,6 +226,12 @@ export class CampaignService {
       rewardServiceClient.getDifficultyByLevel(entity.difficulty),
       campaignJoiningRequestRepository.countApprovedByCampaignId(entity.id),
     ]);
+    if (!tier) {
+      this.debugWarn("missing reward tier for campaign difficulty", {
+        campaignId: entity.id,
+        difficulty: entity.difficulty,
+      });
+    }
     const greenPoints = tier?.greenPoints ?? 0;
     const maxMembers = tier?.maxVolunteers ?? null;
     return toCampaignResponse(entity, greenPoints, currentMembers, maxMembers);
@@ -302,23 +347,27 @@ export class CampaignService {
 
     const created = await prisma.$transaction(
       async (tx) => {
+        // Prisma Client types may lag behind the schema in dev environments.
+        // Keep runtime payload correct, and avoid excess-property TS errors.
+        const createData = ({
+          title: request.title,
+          banner: request.banner,
+          description: request.description,
+          startDate: request.startDate ? new Date(request.startDate) : null,
+          endDate: request.endDate ? new Date(request.endDate) : null,
+          detailAddress: request.detailAddress,
+          latitude: request.latitude,
+          longitude: request.longitude,
+          radiusKm: request.radiusKm,
+          difficulty: request.difficulty,
+          status: GlobalStatus._STATUS_PENDING,
+          organizationId: request.organizationId,
+          createdBy: userId,
+          updatedBy: userId,
+        } as unknown) as Prisma.CampaignUncheckedCreateInput;
+
         const campaign = await tx.campaign.create({
-          data: {
-            title: request.title,
-            banner: request.banner,
-            description: request.description,
-            startDate: request.startDate ? new Date(request.startDate) : null,
-            endDate: request.endDate ? new Date(request.endDate) : null,
-            detailAddress: request.detailAddress,
-            latitude: request.latitude,
-            longitude: request.longitude,
-            radiusKm: request.radiusKm,
-            difficulty: request.difficulty,
-            status: GlobalStatus._STATUS_PENDING,
-            organizationId: request.organizationId,
-            createdBy: userId,
-            updatedBy: userId,
-          },
+          data: createData,
         });
 
         await this.assignManagersToCampaign(
@@ -373,6 +422,7 @@ export class CampaignService {
         id,
         viewerUserId,
       );
+
     const requestStatus = this.joinRequestStatusForCampaignDetail(
       latestJoin?.status,
     );
@@ -389,16 +439,25 @@ export class CampaignService {
     }
     const rows = await campaignRepository.findManyByIds(campaignIds);
     const byId = new Map(rows.map((row) => [row.id, row]));
-    const difficulties = await rewardServiceClient.getDifficulties();
-    const greenByLevel = new Map(
-      difficulties?.map((d) => [d.level, d.greenPoints]),
-    );
-    const maxByLevel = new Map(
-      difficulties?.map((d) => [d.level, d.maxVolunteers]),
-    );
     const resolved = campaignIds
       .map((id) => byId.get(id))
       .filter((row): row is CampaignWithReports => row !== undefined);
+
+    const { greenByLevel, maxByLevel } = await this.resolveTierMaps(
+      resolved.map((c) => c.difficulty),
+    );
+
+    if (resolved.length > 0) {
+      const levels = [...new Set(resolved.map((r) => r.difficulty))];
+      const missing = levels.filter((l) => !greenByLevel.has(l));
+      if (missing.length > 0) {
+        this.debugWarn("missing greenPoints mapping for difficulties in by-ids", {
+          missing,
+          levels,
+        });
+      }
+    }
+
     const approvedByCampaignId =
       await campaignJoiningRequestRepository.countApprovedByCampaignIds(
         resolved.map((c) => c.id),
@@ -433,13 +492,8 @@ export class CampaignService {
     const sortOrder = query.sortOrder ?? "desc";
     const skip = (page - 1) * limit;
 
-    const difficulties = await rewardServiceClient.getDifficulties();
-    const greenByLevel = new Map(
-      difficulties?.map((d) => [d.level, d.greenPoints]),
-    );
-    const maxByLevel = new Map(
-      difficulties?.map((d) => [d.level, d.maxVolunteers]),
-    );
+    const { difficulties, greenByLevel, maxByLevel } =
+      await this.resolveTierMaps([]);
 
     let difficultyLevels: number[] | undefined;
     if (
@@ -461,7 +515,6 @@ export class CampaignService {
           return true;
         })
         .map((d) => d.level);
-
       if (difficultyLevels.length === 0) {
         return { campaigns: [], total: 0, page, limit, totalPages: 0 };
       }
@@ -494,12 +547,29 @@ export class CampaignService {
         rows.map((c) => c.id),
       );
 
+    // If the global list wasn't available, resolve only the levels we need for this page.
+    const tierMaps =
+      difficulties.length > 0
+        ? { greenByLevel, maxByLevel }
+        : await this.resolveTierMaps(rows.map((r) => r.difficulty));
+
+    if (rows.length > 0) {
+      const levels = [...new Set(rows.map((r) => r.difficulty))];
+      const missing = levels.filter((l) => !tierMaps.greenByLevel.has(l));
+      if (missing.length > 0) {
+        this.debugWarn("missing greenPoints mapping for difficulties in list", {
+          missing,
+          levels,
+        });
+      }
+    }
+
     const campaigns = rows.map((campaign) =>
       toCampaignResponse(
         campaign,
-        greenByLevel.get(campaign.difficulty) ?? 0,
+        tierMaps.greenByLevel.get(campaign.difficulty) ?? 0,
         approvedByCampaignId.get(campaign.id) ?? 0,
-        maxByLevel.get(campaign.difficulty) ?? null,
+        tierMaps.maxByLevel.get(campaign.difficulty) ?? null,
       ),
     );
     const campaignsWithVotes = await this.withCampaignVotes(

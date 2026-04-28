@@ -13,6 +13,44 @@ interface SuccessEnvelope<T> {
   data?: T;
 }
 
+function toNumberOrNull(v: unknown): number | null {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string" && v.trim() !== "") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function normalizeDifficulty(row: unknown): RewardDifficulty | null {
+  if (!row || typeof row !== "object") return null;
+  const r = row as Record<string, unknown>;
+
+  const id = typeof r.id === "string" ? r.id : null;
+  const name = typeof r.name === "string" ? r.name : "";
+  const level = toNumberOrNull(r.level);
+  const greenPoints = toNumberOrNull(r.greenPoints);
+  const maxVolunteersRaw = toNumberOrNull(r.maxVolunteers);
+  const maxVolunteers = maxVolunteersRaw === null ? null : maxVolunteersRaw;
+
+  if (!id || level === null || greenPoints === null) return null;
+
+  return {
+    id,
+    name,
+    level,
+    greenPoints,
+    maxVolunteers,
+  };
+}
+
+function normalizeDifficulties(rows: unknown[]): RewardDifficulty[] {
+  return rows
+    .map((r) => normalizeDifficulty(r))
+    .filter((r): r is RewardDifficulty => r !== null);
+}
+
 function readDifficultiesFromResponse(data: unknown): RewardDifficulty[] {
   if (!data || typeof data !== "object") {
     return [];
@@ -25,12 +63,12 @@ function readDifficultiesFromResponse(data: unknown): RewardDifficulty[] {
   if (inner && typeof inner === "object") {
     const innerDifficulties = (inner as { difficulties?: unknown }).difficulties;
     if (Array.isArray(innerDifficulties)) {
-      return innerDifficulties as RewardDifficulty[];
+      return normalizeDifficulties(innerDifficulties);
     }
   }
   const topDifficulties = root.difficulties;
   if (Array.isArray(topDifficulties)) {
-    return topDifficulties as RewardDifficulty[];
+    return normalizeDifficulties(topDifficulties);
   }
   return [];
 }
@@ -51,6 +89,34 @@ export class RewardServiceClient {
     });
   }
 
+  private logCallFailure(
+    action: string,
+    err: unknown,
+    extra?: Record<string, unknown>,
+  ): void {
+    if (process.env.NODE_ENV === "production") return;
+    if (axios.isAxiosError(err)) {
+      const status = err.response?.status;
+      const statusText = err.response?.statusText;
+      const message =
+        (err.response?.data as { message?: string } | undefined)?.message ??
+        err.message;
+      console.warn(`[reward-service] ${action} failed`, {
+        status,
+        statusText,
+        message,
+        baseURL: process.env.REWARD_SERVICE_URL,
+        ...extra,
+      });
+      return;
+    }
+    console.warn(`[reward-service] ${action} failed`, {
+      message: err instanceof Error ? err.message : String(err),
+      baseURL: process.env.REWARD_SERVICE_URL,
+      ...extra,
+    });
+  }
+
   async getDifficulties(): Promise<RewardDifficulty[]> {
     try {
       const client = this.getClient();
@@ -58,7 +124,8 @@ export class RewardServiceClient {
         SuccessEnvelope<{ difficulties: RewardDifficulty[] }>
       >("/internal/v1/difficulties");
       return readDifficultiesFromResponse(data);
-    } catch {
+    } catch (e) {
+      this.logCallFailure("getDifficulties", e);
       return [];
     }
   }
@@ -74,8 +141,9 @@ export class RewardServiceClient {
       if (!data?.success || !data.data?.difficulty) {
         return null;
       }
-      return data.data.difficulty;
+      return normalizeDifficulty(data.data.difficulty);
     } catch (e) {
+      this.logCallFailure("getDifficultyByLevel", e, { level });
       return null;
     }
   }

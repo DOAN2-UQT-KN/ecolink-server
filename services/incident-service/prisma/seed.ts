@@ -186,7 +186,7 @@ async function main() {
       title: "Collect plastics",
       description: "Gather plastics around river edge",
       status: 21,
-      scheduledTime: new Date("2026-01-03T08:00:00Z"),
+      scheduledTime: "2026-01-03T08:00:00Z",
       createdBy: "11111111-1111-1111-1111-111111111141",
       updatedBy: "11111111-1111-1111-1111-111111111141",
       createdAt: new Date("2026-01-01T00:00:00Z"),
