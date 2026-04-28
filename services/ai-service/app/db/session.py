@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.exc import OperationalError
 
 from app.config import settings
 from app.db.models import Base
@@ -56,5 +57,15 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
 async def init_db() -> None:
     if not settings.auto_create_db_tables:
         return
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+    except OperationalError as e:
+        # Surface a clearer hint for the common "database does not exist" case.
+        msg = str(getattr(e, "orig", e))
+        if "does not exist" in msg and "database" in msg:
+            raise RuntimeError(
+                "Database connection failed because the target database does not exist. "
+                "Fix DATABASE_URL (DB name), or create the database, then restart the service."
+            ) from e
+        raise

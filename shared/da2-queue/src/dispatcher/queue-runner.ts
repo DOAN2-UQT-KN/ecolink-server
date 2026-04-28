@@ -16,6 +16,7 @@ export class QueueRunner {
   private readonly _dispatcher = new BackgroundJobDispatcher();
   private readonly routeWorkers = new Map<string, QueueWorker[]>();
   private started = false;
+  private stopping: Promise<void> | null = null;
 
   constructor(private readonly routes: QueueRouteConfig[] = []) {
     for (const route of routes) {
@@ -50,6 +51,28 @@ export class QueueRunner {
     console.log(
       `[QueueRunner] ${totalWorkers} worker(s) started across ${this.routeWorkers.size} route(s)`,
     );
+  }
+
+  /**
+   * Stop all registered workers.
+   *
+   * Safe to call multiple times; concurrent calls are coalesced.
+   */
+  async stopAll(): Promise<void> {
+    if (!this.started) return;
+    if (this.stopping) return this.stopping;
+
+    this.stopping = (async () => {
+      const allWorkers = [...this.routeWorkers.values()].flat();
+      await Promise.all(allWorkers.map((w) => w.stop()));
+      this.started = false;
+      this.stopping = null;
+      console.log(
+        `[QueueRunner] ${allWorkers.length} worker(s) stopped across ${this.routeWorkers.size} route(s)`,
+      );
+    })();
+
+    return this.stopping;
   }
 
   /** Shared dispatcher for enqueueing from the API. */
