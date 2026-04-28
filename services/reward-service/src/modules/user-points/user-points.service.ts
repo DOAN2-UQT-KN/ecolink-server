@@ -74,11 +74,46 @@ export class UserPointsService {
           .map((row) => row.resourceId),
       ),
     ];
+    const giftRedemptionIds = [
+      ...new Set(
+        rows
+          .filter((row) => row.resourceType === GreenPointResourceType.GIFT_REDEMPTION)
+          .map((row) => row.resourceId),
+      ),
+    ];
 
-    const [campaignMap, reportMap, referralUserMap] = await Promise.all([
+    const [campaignMap, reportMap, referralUserMap, giftRedemptionMap] = await Promise.all([
       fetchCampaignsByIds(campaignIds, authorization),
       fetchReportsByIds(reportIds, authorization),
       fetchUsersByIds(referralUserIds),
+      (async () => {
+        const out = new Map<string, Record<string, unknown>>();
+        if (giftRedemptionIds.length === 0) {
+          return out;
+        }
+        const rows = await prisma.giftRedemption.findMany({
+          where: { id: { in: giftRedemptionIds } },
+          include: { gift: true },
+        });
+        for (const redemption of rows) {
+          out.set(redemption.id, {
+            id: redemption.id,
+            giftId: redemption.giftId,
+            greenPointsSpent: redemption.greenPointsSpent,
+            createdAt: redemption.createdAt.toISOString(),
+            gift: redemption.gift
+              ? {
+                  id: redemption.gift.id,
+                  name: redemption.gift.name,
+                  description: redemption.gift.description,
+                  mediaId: redemption.gift.mediaId,
+                  greenPoints: redemption.gift.greenPoints,
+                }
+              : null,
+          });
+        }
+        return out;
+      })(),
     ]);
 
     const transactions = rows.map((row) => {
@@ -101,6 +136,9 @@ export class UserPointsService {
               }
             : null,
         };
+      }
+      if (row.resourceType === GreenPointResourceType.GIFT_REDEMPTION) {
+        return { ...row, resource: giftRedemptionMap.get(row.resourceId) ?? null };
       }
       return { ...row, resource: null };
     });
