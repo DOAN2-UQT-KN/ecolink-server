@@ -23,6 +23,7 @@ export const toReportResponse = (
   status: entity.status,
   isVerify: entity.isVerify,
   aiVerified: entity.aiVerified,
+  aiRecommendation: entity.aiRecommendation,
   createdAt: entity.createdAt,
   updatedAt: entity.updatedAt,
   ...(distance !== undefined && { distance }),

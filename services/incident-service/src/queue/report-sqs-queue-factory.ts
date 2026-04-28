@@ -26,6 +26,7 @@ export class ReportSqsQueueFactory {
     thresholds?: QueueThresholdConfig,
   ) {
     const queueUrl = process.env[queueUrlEnvVar];
+    console.log("QUEUE URL", queueUrl, "!!@")
     if (!queueUrl) {
       throw new Error(`${queueUrlEnvVar} is not configured`);
     }

@@ -1,8 +1,8 @@
 import { QueueWorker } from "@da2/queue";
 import type { BackgroundJobQueue, BackgroundJobEnvelope } from "@da2/queue";
 import type { QueueThresholdConfig } from "@da2/queue";
-import { ReportJobType } from "../../../constants/job-type.enum";
-import { reportAiAnalysisService } from "../report-ai-analysis.service";
+import { ReportJobType } from "../../constants/job-type.enum";
+import { reportAiAnalysisService } from "../../modules/report/report-ai-analysis.service";
 
 interface AnalyzeReportPayload {
   reportId: string;
