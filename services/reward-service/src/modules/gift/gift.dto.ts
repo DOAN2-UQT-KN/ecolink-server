@@ -1,19 +1,35 @@
-import { Gift, GiftRedemption } from "@prisma/client";
+import { Gift, GiftRedemption, Media } from "@prisma/client";
+
+type GiftWithOptionalMedia = Gift & {
+  media?: Media | null;
+};
 
 export interface GiftResponse {
   id: string;
   name: string;
-  mediaId: string;
+  mediaId: string | null;
+  media: {
+    id: string;
+    url: string;
+    type: string;
+  } | null;
   description: string;
   greenPoints: number;
   stockRemaining: number | null;
   isActive: boolean;
 }
 
-export const toGiftResponse = (row: Gift): GiftResponse => ({
+export const toGiftResponse = (row: GiftWithOptionalMedia): GiftResponse => ({
   id: row.id,
   name: row.name,
   mediaId: row.mediaId,
+  media: row.media
+    ? {
+        id: row.media.id,
+        url: row.media.url,
+        type: row.media.type,
+      }
+    : null,
   description: row.description,
   greenPoints: row.greenPoints,
   stockRemaining: row.stockRemaining,
@@ -22,7 +38,7 @@ export const toGiftResponse = (row: Gift): GiftResponse => ({
 
 export interface CreateGiftBody {
   name: string;
-  mediaId: string;
+  imageUrl?: string;
   description: string;
   greenPoints: number;
   stockRemaining?: number | null;
@@ -31,7 +47,7 @@ export interface CreateGiftBody {
 
 export interface UpdateGiftBody {
   name?: string;
-  mediaId?: string;
+  imageUrl?: string;
   description?: string;
   greenPoints?: number;
   stockRemaining?: number | null;
@@ -99,7 +115,7 @@ export interface GiftRedemptionGiftSnapshot {
   id: string;
   name: string;
   description: string;
-  mediaId: string;
+  mediaId: string | null;
   greenPoints: number;
 }
 

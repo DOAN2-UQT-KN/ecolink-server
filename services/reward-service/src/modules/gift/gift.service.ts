@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { randomUUID } from "crypto";
 import prisma from "../../config/prisma.client";
 import { HTTP_STATUS, HttpError } from "../../constants/http-status";
 import {
@@ -77,6 +78,7 @@ export class GiftService {
         orderBy,
         skip,
         take: params.limit,
+        include: { media: true },
       }),
       prisma.gift.count({ where }),
     ]);
@@ -87,6 +89,7 @@ export class GiftService {
   async getGiftById(id: string): Promise<GiftResponse | null> {
     const row = await prisma.gift.findFirst({
       where: { id, deletedAt: null },
+      include: { media: true },
     });
     return row ? toGiftResponse(row) : null;
   }
@@ -139,16 +142,31 @@ export class GiftService {
   }
 
   async create(body: CreateGiftBody): Promise<GiftResponse> {
-    const row = await prisma.gift.create({
-      data: {
-        name: body.name.trim(),
-        mediaId: body.mediaId,
-        description: body.description.trim(),
-        greenPoints: body.greenPoints,
-        stockRemaining:
-          body.stockRemaining === undefined ? null : body.stockRemaining,
-        isActive: body.isActive ?? true,
-      },
+    const row = await prisma.$transaction(async (tx) => {
+      let mediaId: string | null = null;
+      if (body.imageUrl?.trim()) {
+        const media = await tx.media.create({
+          data: {
+            id: randomUUID(),
+            url: body.imageUrl.trim(),
+            type: "GIFT",
+          },
+        });
+        mediaId = media.id;
+      }
+
+      return tx.gift.create({
+        data: {
+          name: body.name.trim(),
+          mediaId,
+          description: body.description.trim(),
+          greenPoints: body.greenPoints,
+          stockRemaining:
+            body.stockRemaining === undefined ? null : body.stockRemaining,
+          isActive: body.isActive ?? true,
+        },
+        include: { media: true },
+      });
     });
     return toGiftResponse(row);
   }
@@ -166,7 +184,6 @@ export class GiftService {
 
     const data: Prisma.GiftUpdateInput = {
       ...(body.name !== undefined ? { name: body.name.trim() } : {}),
-      ...(body.mediaId !== undefined ? { mediaId: body.mediaId } : {}),
       ...(body.description !== undefined
         ? { description: body.description.trim() }
         : {}),
@@ -179,13 +196,35 @@ export class GiftService {
       ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
     };
 
-    if (Object.keys(data).length === 0) {
-      return toGiftResponse(existing);
+    if (Object.keys(data).length === 0 && body.imageUrl === undefined) {
+      const unchanged = await prisma.gift.findFirst({
+        where: { id: existing.id },
+        include: { media: true },
+      });
+      return unchanged ? toGiftResponse(unchanged) : null;
     }
 
-    const updated = await prisma.gift.update({
-      where: { id },
-      data,
+    const updated = await prisma.$transaction(async (tx) => {
+      if (body.imageUrl !== undefined) {
+        if (body.imageUrl.trim()) {
+          const media = await tx.media.create({
+            data: {
+              id: randomUUID(),
+              url: body.imageUrl.trim(),
+              type: "GIFT",
+            },
+          });
+          data.media = { connect: { id: media.id } };
+        } else {
+          data.media = { disconnect: true };
+        }
+      }
+
+      return tx.gift.update({
+        where: { id },
+        data,
+        include: { media: true },
+      });
     });
     return toGiftResponse(updated);
   }

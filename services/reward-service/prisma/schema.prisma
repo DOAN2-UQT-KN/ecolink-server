@@ -71,13 +71,32 @@ model GreenPointTransaction {
   @@map("green_point_transactions")
 }
 
+model Media {
+  id   String @id @default(uuid()) @db.Uuid
+  url  String
+  type String @db.VarChar(50)
+
+  createdBy String? @map("created_by") @db.Uuid
+  updatedBy String? @map("updated_by") @db.Uuid
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  gifts Gift[]
+
+  @@index([type])
+  @@index([deletedAt])
+  @@map("media")
+}
+
 /// Catalog item users can redeem for green points.
 model Gift {
   id String @id @default(uuid()) @db.Uuid
 
   name String @db.VarChar(255)
 
-  mediaId String @map("media_id") @db.Uuid
+  mediaId String? @map("media_id") @db.Uuid
 
   description String @db.Text
 
@@ -94,9 +113,11 @@ model Gift {
   deletedAt DateTime? @map("deleted_at")
 
   redemptions GiftRedemption[]
+  media       Media?           @relation(fields: [mediaId], references: [id], onDelete: Restrict)
 
   @@index([deletedAt])
   @@index([isActive])
+  @@index([mediaId])
   @@map("gifts")
 }
 

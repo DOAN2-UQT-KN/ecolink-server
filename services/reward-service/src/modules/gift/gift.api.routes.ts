@@ -157,7 +157,7 @@ router.post(
   authenticate,
   requireAdmin,
   body("name").trim().isLength({ min: 1, max: 255 }),
-  body("mediaId").isUUID().withMessage("mediaId must be a UUID"),
+  body("imageUrl").optional().isURL().withMessage("imageUrl must be a valid URL"),
   body("description").isString().trim(),
   body("greenPoints")
     .isInt({ min: 0 })
@@ -180,7 +180,7 @@ router.post(
     try {
       const gift = await giftService.create({
         name: req.body.name,
-        mediaId: req.body.mediaId,
+        imageUrl: req.body.imageUrl,
         description: req.body.description,
         greenPoints: req.body.greenPoints,
         stockRemaining: req.body.stockRemaining,
@@ -205,7 +205,7 @@ router.put(
   requireAdmin,
   param("id").isUUID().withMessage("id must be a UUID"),
   body("name").optional().trim().isLength({ min: 1, max: 255 }),
-  body("mediaId").optional().isUUID().withMessage("mediaId must be a UUID"),
+  body("imageUrl").optional().isURL().withMessage("imageUrl must be a valid URL"),
   body("description").optional().isString().trim(),
   body("greenPoints")
     .optional()
@@ -234,7 +234,7 @@ router.put(
       }
       const updated = await giftService.updateById(id, {
         name: req.body.name,
-        mediaId: req.body.mediaId,
+        imageUrl: req.body.imageUrl,
         description: req.body.description,
         greenPoints: req.body.greenPoints,
         stockRemaining: req.body.stockRemaining,
