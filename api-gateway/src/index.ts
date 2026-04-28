@@ -89,10 +89,19 @@ app.get("/api-docs/specs/incident.json", async (req, res, next) => {
   }
 });
 
+app.get("/api-docs/specs/reward.json", async (req, res, next) => {
+  try {
+    await serveRewrittenOpenApi(res, REWARD_SERVICE_URL);
+  } catch (e) {
+    next(e);
+  }
+});
+
 mountGatewaySwaggerUi(app, {
   specs: [
     { name: "Identity", url: "/api-docs/specs/identity.json" },
     { name: "Incident", url: "/api-docs/specs/incident.json" },
+    { name: "Reward", url: "/api-docs/specs/reward.json" },
   ],
 });
 
