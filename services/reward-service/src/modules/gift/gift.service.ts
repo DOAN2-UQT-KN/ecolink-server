@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import { Gift, Media, Prisma } from "@prisma/client";
 import { randomUUID } from "crypto";
 import prisma from "../../config/prisma.client";
 import { HTTP_STATUS, HttpError } from "../../constants/http-status";
@@ -31,6 +31,33 @@ export type ListGiftsParams = {
 };
 
 export class GiftService {
+  private async mapGiftsWithMediaByMediaId(rows: Gift[]): Promise<GiftResponse[]> {
+    const mediaIds = rows
+      .map((row) => row.mediaId)
+      .filter((id): id is string => Boolean(id));
+
+    const mediaRows =
+      mediaIds.length > 0
+        ? await prisma.media.findMany({
+            where: {
+              id: { in: mediaIds },
+              deletedAt: null,
+            },
+          })
+        : [];
+
+    const mediaById = new Map<string, Media>(
+      mediaRows.map((media) => [media.id, media]),
+    );
+
+    return rows.map((row) =>
+      toGiftResponse({
+        ...row,
+        media: row.mediaId ? (mediaById.get(row.mediaId) ?? null) : null,
+      }),
+    );
+  }
+
   async listGifts(params: ListGiftsParams): Promise<{
     gifts: GiftResponse[];
     total: number;
@@ -78,20 +105,24 @@ export class GiftService {
         orderBy,
         skip,
         take: params.limit,
-        include: { media: true },
       }),
       prisma.gift.count({ where }),
     ]);
 
-    return { gifts: rows.map(toGiftResponse), total };
+    const gifts = await this.mapGiftsWithMediaByMediaId(rows);
+    return { gifts, total };
   }
 
   async getGiftById(id: string): Promise<GiftResponse | null> {
     const row = await prisma.gift.findFirst({
       where: { id, deletedAt: null },
-      include: { media: true },
     });
-    return row ? toGiftResponse(row) : null;
+    if (!row) {
+      return null;
+    }
+
+    const [gift] = await this.mapGiftsWithMediaByMediaId([row]);
+    return gift ?? null;
   }
 
   async getGreenPointBalance(userId: string): Promise<number> {
@@ -165,10 +196,10 @@ export class GiftService {
             body.stockRemaining === undefined ? null : body.stockRemaining,
           isActive: body.isActive ?? true,
         },
-        include: { media: true },
       });
     });
-    return toGiftResponse(row);
+    const [gift] = await this.mapGiftsWithMediaByMediaId([row]);
+    return gift;
   }
 
   async updateById(
@@ -199,9 +230,12 @@ export class GiftService {
     if (Object.keys(data).length === 0 && body.imageUrl === undefined) {
       const unchanged = await prisma.gift.findFirst({
         where: { id: existing.id },
-        include: { media: true },
       });
-      return unchanged ? toGiftResponse(unchanged) : null;
+      if (!unchanged) {
+        return null;
+      }
+      const [gift] = await this.mapGiftsWithMediaByMediaId([unchanged]);
+      return gift ?? null;
     }
 
     const updated = await prisma.$transaction(async (tx) => {
@@ -223,10 +257,10 @@ export class GiftService {
       return tx.gift.update({
         where: { id },
         data,
-        include: { media: true },
       });
     });
-    return toGiftResponse(updated);
+    const [gift] = await this.mapGiftsWithMediaByMediaId([updated]);
+    return gift;
   }
 
   async redeem(
