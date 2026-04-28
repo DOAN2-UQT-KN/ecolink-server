@@ -25,6 +25,8 @@ export type ListGiftsParams = {
   greenPointsMin?: number;
   greenPointsMax?: number;
   isAdmin: boolean;
+  sortBy?: "createdAt" | "name" | "greenPoints";
+  sortOrder?: "asc" | "desc";
 };
 
 export class GiftService {
@@ -63,10 +65,16 @@ export class GiftService {
     const where: Prisma.GiftWhereInput = { AND: andParts };
     const skip = (params.page - 1) * params.limit;
 
+    let orderBy: Prisma.GiftOrderByWithRelationInput = { createdAt: "desc" };
+    if (params.sortBy) {
+      const order = params.sortOrder === "asc" ? "asc" : "desc";
+      orderBy = { [params.sortBy]: order };
+    }
+
     const [rows, total] = await Promise.all([
       prisma.gift.findMany({
         where,
-        orderBy: { createdAt: "desc" },
+        orderBy,
         skip,
         take: params.limit,
       }),
@@ -74,6 +82,13 @@ export class GiftService {
     ]);
 
     return { gifts: rows.map(toGiftResponse), total };
+  }
+
+  async getGiftById(id: string): Promise<GiftResponse | null> {
+    const row = await prisma.gift.findFirst({
+      where: { id, deletedAt: null },
+    });
+    return row ? toGiftResponse(row) : null;
   }
 
   async getGreenPointBalance(userId: string): Promise<number> {

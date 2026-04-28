@@ -33,6 +33,8 @@ router.get(
     .withMessage('isActive must be "true" or "false"'),
   query("greenPointsMin").optional().isInt({ min: 0 }).toInt(),
   query("greenPointsMax").optional().isInt({ min: 0 }).toInt(),
+  query("sortBy").optional().isIn(["createdAt", "name", "greenPoints"]),
+  query("sortOrder").optional().isIn(["asc", "desc"]),
 
   async (req, res): Promise<void> => {
     const errors = validationResult(req);
@@ -51,6 +53,8 @@ router.get(
     const isActiveRaw = req.query.isActive as string | undefined;
     const greenPointsMin = req.query.greenPointsMin as number | undefined;
     const greenPointsMax = req.query.greenPointsMax as number | undefined;
+    const sortBy = req.query.sortBy as "createdAt" | "name" | "greenPoints" | undefined;
+    const sortOrder = req.query.sortOrder as "asc" | "desc" | undefined;
 
     const role = req.user?.role?.toLowerCase();
     const isAdmin = role === "admin";
@@ -84,6 +88,8 @@ router.get(
         greenPointsMin,
         greenPointsMax,
         isAdmin,
+        sortBy,
+        sortOrder,
       });
 
       const totalPages = total === 0 ? 0 : Math.ceil(total / limit);
@@ -100,37 +106,13 @@ router.get(
 );
 
 /**
- * @route   GET /api/v1/gifts/me/green-points
- * @desc    Current user's green point balance (0 if no row yet)
- * @access  Private
- */
-router.get("/gifts/me/green-points", authenticate, async (req, res): Promise<void> => {
-  const userId = req.user?.userId;
-  if (!userId) {
-    sendError(res, HTTP_STATUS.UNAUTHORIZED);
-    return;
-  }
-
-  try {
-    const balance = await giftService.getGreenPointBalance(userId);
-    sendSuccess(res, HTTP_STATUS.OK, { balance });
-  } catch (error) {
-    console.error("Get green points balance error:", error);
-    sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
-  }
-});
-
-/**
- * @route   GET /api/v1/gifts/me/redemptions
- * @desc    Paginated gift redemptions for the authenticated user
- * @access  Private
+ * @route   GET /api/v1/gifts/:id
+ * @desc    Get gift details by id
+ * @access  Public
  */
 router.get(
-  "/gifts/me/redemptions",
-  authenticate,
-  query("page").optional().isInt({ min: 1 }).toInt(),
-  query("limit").optional().isInt({ min: 1, max: 100 }).toInt(),
-
+  "/gifts/:id",
+  param("id").isUUID().withMessage("id must be a valid UUID"),
   async (req, res): Promise<void> => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -140,28 +122,16 @@ router.get(
       return;
     }
 
-    const userId = req.user?.userId;
-    if (!userId) {
-      sendError(res, HTTP_STATUS.UNAUTHORIZED);
-      return;
-    }
-
-    const page = (req.query.page as number | undefined) ?? 1;
-    const limit = (req.query.limit as number | undefined) ?? 20;
-
     try {
-      const { redemptions, total } = await giftService.listRedemptionsForUser(
-        userId,
-        page,
-        limit,
-      );
-      const totalPages = total === 0 ? 0 : Math.ceil(total / limit);
-      sendSuccess(res, HTTP_STATUS.OK, {
-        redemptions,
-        meta: { page, limit, total, totalPages },
-      });
+      const id = req.params?.id;
+      const gift = await giftService.getGiftById(id);
+      if (!gift) {
+        sendError(res, HTTP_STATUS.NOT_FOUND.withMessage("Gift not found"));
+        return;
+      }
+      sendSuccess(res, HTTP_STATUS.OK, { gift });
     } catch (error) {
-      console.error("List my gift redemptions error:", error);
+      console.error("Get gift error:", error);
       sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
     }
   },

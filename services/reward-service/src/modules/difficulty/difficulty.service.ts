@@ -6,12 +6,21 @@ import {
 } from "./difficulty.dto";
 
 export class DifficultyService {
-  async listActive(): Promise<DifficultyResponse[]> {
-    const rows = await prisma.difficulty.findMany({
-      where: { deletedAt: null },
-      orderBy: { level: "asc" },
-    });
-    return rows.map(toDifficultyResponse);
+  async listActive(
+    page: number = 1,
+    limit: number = 20,
+  ): Promise<{ difficulties: DifficultyResponse[]; total: number }> {
+    const skip = (page - 1) * limit;
+    const [rows, total] = await Promise.all([
+      prisma.difficulty.findMany({
+        where: { deletedAt: null },
+        orderBy: { level: "asc" },
+        skip,
+        take: limit,
+      }),
+      prisma.difficulty.count({ where: { deletedAt: null } }),
+    ]);
+    return { difficulties: rows.map(toDifficultyResponse), total };
   }
 
   async findByLevel(level: number): Promise<DifficultyResponse | null> {

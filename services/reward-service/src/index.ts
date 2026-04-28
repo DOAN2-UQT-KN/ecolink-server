@@ -9,6 +9,7 @@ import { OPENAPI_ROUTE_MODELS } from "./openapi/route-models";
 import internalRoutes from "./internal/internal.routes";
 import difficultyApiRoutes from "./modules/difficulty/difficulty.api.routes";
 import giftApiRoutes from "./modules/gift/gift.api.routes";
+import userPointsApiRoutes from "./modules/user-points/user-points.api.routes";
 import { errorHandler } from "./middleware/error.middleware";
 
 dotenv.config();
@@ -23,6 +24,7 @@ mountOpenApi(app, {
   routeFiles: routeModulesFrom(__dirname, [
     "modules/difficulty/difficulty.api.routes",
     "modules/gift/gift.api.routes",
+    "modules/user-points/user-points.api.routes",
   ]),
   typescript: {
     projectRoot: path.join(__dirname, ".."),
@@ -52,6 +54,7 @@ app.get("/health", (_req, res) => {
 
 app.use("/api/v1", difficultyApiRoutes);
 app.use("/api/v1", giftApiRoutes);
+app.use("/api/v1", userPointsApiRoutes);
 app.use("/internal/v1", internalRoutes);
 
 app.use(errorHandler);
