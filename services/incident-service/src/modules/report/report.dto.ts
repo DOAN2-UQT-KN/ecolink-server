@@ -77,6 +77,8 @@ export interface ReportResponse {
   /** Admin verification; only admins can set true. */
   isVerify: boolean;
   aiVerified: boolean;
+  /** LLM recommendation after image/object analysis (nullable until analysis completes). */
+  aiRecommendation?: string | null;
   createdAt: Date;
   updatedAt: Date;
   distance?: number; // Distance in meters (when searching with location)

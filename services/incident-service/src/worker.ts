@@ -4,9 +4,10 @@ import prisma from "./config/prisma.client";
  * Initialize all SQS queues and start their polling loops.
  * Queue registration is self-contained: importing register is sufficient.
  */
-import "./queue/register";
+import { startAllQueues } from "./queue/register";
 
 console.log("Worker started");
+startAllQueues();
 
 const shutdown = async (signal: string): Promise<void> => {
   console.log(`[Worker] received ${signal}, shutting down`);

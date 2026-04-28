@@ -36,6 +36,9 @@ model Report {
 
   aiVerified Boolean @default(false) @map("ai_verified")
 
+  /** LLM recommendation after image/object analysis. */
+  aiRecommendation String? @map("ai_recommendation")
+
   createdBy String? @map("created_by") @db.Uuid
   updatedBy String? @map("updated_by") @db.Uuid
 

@@ -1,7 +1,7 @@
 import { QueueRunner, QueueRouteConfig } from "@da2/queue";
 import { ReportSqsQueueFactory } from "./report-sqs-queue-factory";
 import prisma from "../config/prisma.client";
-import { ReportAnalysisWorker } from "../modules/report/worker/report-analysis-worker";
+import { ReportAnalysisWorker } from "./worker/report-analysis-worker";
 import { ReportJobType } from "../constants/job-type.enum";
 import BackgroundJobStore from "./background-job-store";
 
@@ -44,6 +44,7 @@ const queueRunner = new QueueRunner(QUEUE_ROUTES);
  * Call ONLY from the dedicated worker entry point.
  */
 export function startAllQueues(): void {
+  console.log("Starting all queues");
   queueRunner.startAll();
 }
 
