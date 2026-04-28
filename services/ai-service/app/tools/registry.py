@@ -6,6 +6,7 @@ from app.tools.definitions import RegisteredTool, echo_tool, platform_faq_tool
 from app.tools.organization_api import create_organization_tool, list_organizations_tool
 from app.tools.chat_media_api import list_chat_media_by_ids_tool
 from app.tools.report_media_api import list_report_media_files_by_ids_tool
+from app.tools.report_api import create_report_tool
 
 REGISTERED_AGENT_IDS: Final[tuple[str, ...]] = ("ecolink_assistant",)
 
@@ -25,6 +26,7 @@ AGENT_TOOLS: dict[str, list[RegisteredTool]] = {
         platform_faq_tool,
         create_organization_tool,
         list_organizations_tool,
+        create_report_tool,
         list_report_media_files_by_ids_tool,
         list_chat_media_by_ids_tool,
         echo_tool,

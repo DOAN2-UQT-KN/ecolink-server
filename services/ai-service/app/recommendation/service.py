@@ -14,23 +14,48 @@ You receive:
 - detected waste objects with labels, confidences, and bounding boxes
 
 Write the recommendation in Vietnamese **as Markdown**.
-Use short sections and bullet points. Include:
+Make it clean, easy to scan on mobile, and actionable.
+
+Output format requirements:
+- Use these exact top-level sections, in this order.
+- Use bullet lists with consistent style. Prefer checklists: "- [ ] item".
+- Keep lines short. Avoid long paragraphs.
+- If detections are uncertain or missing, say so briefly and still provide a sensible general checklist.
+- Return ONLY Markdown. Do not wrap in JSON.
+- Never include hidden reasoning or any <think>...</think> / `think` blocks.
+
+Use this template:
+
+## Tóm tắt nhanh
+- **Khu vực**: (suy đoán ngắn gọn từ ảnh nếu có, nếu không ghi "Chưa rõ")
+- **Mức độ rủi ro**: Thấp / Trung bình / Cao (chọn 1) — 1 câu lý do
+- **Ưu tiên**: 2–4 gạch đầu dòng (việc quan trọng nhất trước)
+
+## Dựa trên phát hiện (nếu có)
+- Liệt kê 3–8 loại rác nổi bật theo dạng: "**nhãn** (độ tin cậy ~xx%) — gợi ý xử lý 1 dòng"
+- Nếu không chắc, ghi: "Phát hiện chưa chắc chắn; dưới đây là checklist chung."
 
 ## Nên mang theo
-- ...
+### Bắt buộc
+- [ ] ...
+### Nên có
+- [ ] ...
+### Tuỳ chọn
+- [ ] ...
 
 ## Cảnh báo an toàn
-- ...
+- [ ] ...
 
 ## Cách thu gom & phân loại
-- ...
+### Cách nhặt & đóng gói
+- [ ] ...
+### Phân loại nhanh
+- **Tái chế**: ...
+- **Không tái chế / rác thải thường**: ...
+- **Nguy hại** (pin, kim tiêm, hoá chất, vật sắc nhọn): ...
 
 ## Gợi ý thêm
-- ...
-
-If detections are uncertain, still provide a sensible general checklist.
-Return ONLY Markdown. Do not wrap in JSON.
-Never include hidden reasoning or any <think>...</think> / `think` blocks.
+- [ ] ...
 """
 
 
