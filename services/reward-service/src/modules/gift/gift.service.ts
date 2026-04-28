@@ -31,7 +31,9 @@ export type ListGiftsParams = {
 };
 
 export class GiftService {
-  private async mapGiftsWithMediaByMediaId(rows: Gift[]): Promise<GiftResponse[]> {
+  private async mapGiftsWithMediaByMediaId(
+    rows: Gift[],
+  ): Promise<GiftResponse[]> {
     const mediaIds = rows
       .map((row) => row.mediaId)
       .filter((id): id is string => Boolean(id));
@@ -314,7 +316,7 @@ export class GiftService {
           },
         });
 
-        if (gift.greenPoints > 0) {
+        if (gift.greenPoints >= 0) {
           await tx.greenPointTransaction.create({
             data: {
               userId,
