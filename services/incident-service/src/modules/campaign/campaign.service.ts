@@ -347,27 +347,23 @@ export class CampaignService {
 
     const created = await prisma.$transaction(
       async (tx) => {
-        // Prisma Client types may lag behind the schema in dev environments.
-        // Keep runtime payload correct, and avoid excess-property TS errors.
-        const createData = ({
-          title: request.title,
-          banner: request.banner,
-          description: request.description,
-          startDate: request.startDate ? new Date(request.startDate) : null,
-          endDate: request.endDate ? new Date(request.endDate) : null,
-          detailAddress: request.detailAddress,
-          latitude: request.latitude,
-          longitude: request.longitude,
-          radiusKm: request.radiusKm,
-          difficulty: request.difficulty,
-          status: GlobalStatus._STATUS_PENDING,
-          organizationId: request.organizationId,
-          createdBy: userId,
-          updatedBy: userId,
-        } as unknown) as Prisma.CampaignUncheckedCreateInput;
-
         const campaign = await tx.campaign.create({
-          data: createData,
+          data: {
+            title: request.title,
+            banner: request.banner,
+            description: request.description,
+            startDate: request.startDate ? new Date(request.startDate) : null,
+            endDate: request.endDate ? new Date(request.endDate) : null,
+            detailAddress: request.detailAddress,
+            latitude: request.latitude,
+            longitude: request.longitude,
+            radiusKm: request.radiusKm,
+            difficulty: request.difficulty,
+            status: GlobalStatus._STATUS_PENDING,
+            organizationId: request.organizationId,
+            createdBy: userId,
+            updatedBy: userId,
+          } as any,
         });
 
         await this.assignManagersToCampaign(

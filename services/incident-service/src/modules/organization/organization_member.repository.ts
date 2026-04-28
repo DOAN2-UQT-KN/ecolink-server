@@ -32,6 +32,22 @@ export class OrganizationMemberRepository {
     return !!row;
   }
 
+  async findActiveMembershipOrgIds(
+    userId: string,
+    organizationIds: string[],
+  ): Promise<Set<string>> {
+    if (organizationIds.length === 0) return new Set();
+    const rows = await this.prisma.organizationMember.findMany({
+      where: {
+        userId,
+        deletedAt: null,
+        organizationId: { in: organizationIds },
+      },
+      select: { organizationId: true },
+    });
+    return new Set(rows.map((r) => r.organizationId));
+  }
+
   async findByOrganizationPaginated(
     organizationId: string,
     filters: { userId?: string },

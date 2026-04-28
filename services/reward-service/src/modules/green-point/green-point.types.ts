@@ -13,11 +13,16 @@ export const UPVOTE_ADDING_GREEN_POINT_JOB_TYPE =
 export const REFERRAL_ADDING_GREEN_POINT_JOB_TYPE =
   "REFERRAL_ADDING_GREEN_POINTS" as const;
 
+/** SQS envelope `jobType` for a single report completion credit. */
+export const REPORT_COMPLETION_GREEN_POINT_JOB_TYPE =
+  "REPORT_COMPLETION_GREEN_POINTS" as const;
+
 /** Allowed `type` values for POST /internal/v1/green-points/enqueue (keep in sync with factory). */
 export const KNOWN_GREEN_POINT_JOB_TYPES = [
   CAMPAIGN_COMPLETION_JOB_TYPE,
   UPVOTE_ADDING_GREEN_POINT_JOB_TYPE,
   REFERRAL_ADDING_GREEN_POINT_JOB_TYPE,
+  REPORT_COMPLETION_GREEN_POINT_JOB_TYPE,
 ] as const;
 
 export type KnownGreenPointJobType =
@@ -48,6 +53,13 @@ export interface ReferralAddingGreenPointsPayload {
   userId: string;
   points: number;
   resourceId: string;
+}
+
+/** User receiving points for completing a report. */
+export interface ReportCompletionGreenPointsPayload {
+  reportId: string;
+  userId: string;
+  points: number;
 }
 
 export interface GreenPointJobEnvelope {

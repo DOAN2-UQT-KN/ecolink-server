@@ -41,7 +41,14 @@ export class UserPointsService {
     const skip = (page - 1) * limit;
     const where: Prisma.GreenPointTransactionWhereInput = { userId, deletedAt: null };
     if (type) {
-      where.type = type;
+      const normalizedType = type.trim().toLowerCase();
+      if (normalizedType === "earned") {
+        where.points = { gt: 0 };
+      } else if (normalizedType === "spent") {
+        where.points = { lt: 0 };
+      } else {
+        where.type = type;
+      }
     }
     const [rows, total] = await Promise.all([
       prisma.greenPointTransaction.findMany({

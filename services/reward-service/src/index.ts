@@ -11,6 +11,7 @@ import difficultyApiRoutes from "./modules/difficulty/difficulty.api.routes";
 import giftApiRoutes from "./modules/gift/gift.api.routes";
 import userPointsApiRoutes from "./modules/user-points/user-points.api.routes";
 import { errorHandler } from "./middleware/error.middleware";
+import "./worker";
 
 dotenv.config();
 

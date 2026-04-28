@@ -231,7 +231,8 @@ export class OrganizationService {
       const canApprove =
         existing.status === GlobalStatus._STATUS_DRAFT ||
         existing.status === GlobalStatus._STATUS_INACTIVE ||
-        existing.status === GlobalStatus._STATUS_INREVIEW;
+        existing.status === GlobalStatus._STATUS_INREVIEW ||
+        existing.status === GlobalStatus._STATUS_PENDING;
       if (!canApprove) {
         throw new HttpError(
           HTTP_STATUS.BAD_REQUEST.withMessage(
@@ -258,6 +259,7 @@ export class OrganizationService {
     }
     const canReject =
       existing.status === GlobalStatus._STATUS_DRAFT ||
+      existing.status === GlobalStatus._STATUS_PENDING ||
       existing.status === GlobalStatus._STATUS_INREVIEW;
     if (!canReject) {
       throw new HttpError(
@@ -404,6 +406,7 @@ export class OrganizationService {
    */
   private joinRequestStatusForOrganizationDetail(
     joinRequestStatus: number | undefined,
+    isMember: boolean,
   ): number | undefined {
     if (joinRequestStatus === undefined) return undefined;
     if (joinRequestStatus === JoinRequestStatus._STATUS_REJECTED) {
@@ -413,6 +416,14 @@ export class OrganizationService {
       joinRequestStatus === JoinRequestStatus._STATUS_PENDING ||
       joinRequestStatus === JoinRequestStatus._STATUS_APPROVED
     ) {
+      // After leaving, we still may have a historical APPROVED join request.
+      // Exposing that status prevents the client from showing the "Join" CTA.
+      if (
+        joinRequestStatus === JoinRequestStatus._STATUS_APPROVED &&
+        !isMember
+      ) {
+        return undefined;
+      }
       return joinRequestStatus;
     }
     return undefined;
@@ -435,12 +446,20 @@ export class OrganizationService {
         organizationId,
         viewerUserId,
       );
+    const isMember = await organizationMemberRepository.isActiveMember(
+      organizationId,
+      viewerUserId,
+    );
     const requestStatus = this.joinRequestStatusForOrganizationDetail(
       latestJoin?.status,
+      isMember,
     );
-    return requestStatus !== undefined
-      ? { ...organization, requestStatus }
+    const withMember: OrganizationResponse = isMember
+      ? { ...organization, isMember }
       : organization;
+    return requestStatus !== undefined
+      ? { ...withMember, requestStatus }
+      : withMember;
   }
 
   private async organizationIdsForJoinRequestStatusFilter(
@@ -463,16 +482,24 @@ export class OrganizationService {
     if (organizations.length === 0) {
       return organizations;
     }
+    const memberOrgIds =
+      await organizationMemberRepository.findActiveMembershipOrgIds(
+        viewerUserId,
+        organizations.map((o) => o.id),
+      );
     const statusByOrgId =
       await organizationJoiningRequestRepository.findLatestStatusByOrganizationForRequester(
         viewerUserId,
         organizations.map((o) => o.id),
       );
     return organizations.map((org) => {
+      const isMember = memberOrgIds.has(org.id);
       const requestStatus = this.joinRequestStatusForOrganizationDetail(
         statusByOrgId.get(org.id),
+        isMember,
       );
-      return requestStatus !== undefined ? { ...org, requestStatus } : org;
+      const next: OrganizationResponse = isMember ? { ...org, isMember } : org;
+      return requestStatus !== undefined ? { ...next, requestStatus } : next;
     });
   }
 

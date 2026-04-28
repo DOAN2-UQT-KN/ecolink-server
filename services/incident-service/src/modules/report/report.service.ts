@@ -36,6 +36,8 @@ import {
   getUserProfile,
 } from "../organization/identity-user.client";
 import type { OrganizationOwnerResponse } from "../organization/organization.dto";
+import { rewardServiceClient } from "../reward/reward-service.client";
+import { enqueueReportStatusWebsiteNotification } from "./report-status-notify.client";
 
 /** Admin moderation: report is banned / hidden (`GlobalStatus._STATUS_INACTIVE`). */
 const REPORT_STATUS_BANNED = ReportStatus._STATUS_INACTIVE;
@@ -613,7 +615,47 @@ export class ReportService {
       return this.withReportVote(toReportResponse(existing), viewerUserId);
     }
 
+    const previousStatus = existing.status;
     const report = await reportRepository.markReportAsDone(id);
+
+    // Credit green points to the report owner (idempotent at reward-service ledger level).
+    const recipientUserId = report.userId;
+    if (recipientUserId) {
+      const points =
+        Number(process.env.REPORT_COMPLETION_GREEN_POINTS ?? 0) || 0;
+      try {
+        await rewardServiceClient.enqueueReportCompletionGreenPoints({
+          reportId: report.id,
+          userId: recipientUserId,
+          points,
+        });
+      } catch (e) {
+        // Roll back status when reward enqueue fails to keep "done" consistent with rewards.
+        await reportRepository.update(id, {
+          status: previousStatus ?? ReportStatus._STATUS_TODO,
+        });
+        throw e;
+      }
+
+      // Best-effort in-app message; do not block the main action if notifications fail.
+      try {
+        await enqueueReportStatusWebsiteNotification({
+          userId: recipientUserId,
+          reportId: report.id,
+          reportTitle: report.title || "Untitled report",
+          status: "COMPLETED",
+        });
+      } catch (e) {
+        if (process.env.NODE_ENV !== "production") {
+          console.warn("[incident-service] report status notification failed", {
+            reportId: report.id,
+            userId: recipientUserId,
+            message: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
+    }
+
     return this.withReportVote(toReportResponse(report), viewerUserId);
   }
 

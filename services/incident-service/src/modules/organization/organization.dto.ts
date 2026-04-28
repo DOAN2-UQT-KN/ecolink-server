@@ -59,6 +59,12 @@ export interface OrganizationResponse {
    * Omitted if there is no request or the latest is rejected.
    */
   requestStatus?: number;
+  /**
+   * For the current user: true when they are an active member of this organization.
+   * (Owners are exposed separately via `ownerId`.)
+   * Included on GET /organizations/:id, GET /organizations, and GET /organizations/my.
+   */
+  isMember?: boolean;
 }
 
 export interface OrganizationJoinRequestResponse {
