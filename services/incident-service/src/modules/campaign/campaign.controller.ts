@@ -212,6 +212,24 @@ export class CampaignController {
     },
   ];
 
+  /**
+   * All campaigns with status ACTIVE (no pagination).
+   */
+  getAllActiveCampaigns = async (
+    req: Request,
+    res: Response,
+  ): Promise<void> => {
+    try {
+      const result = await campaignService.getAllActiveCampaigns(
+        req.user?.userId,
+      );
+      sendSuccess(res, HTTP_STATUS.OK, result);
+    } catch (error) {
+      console.error("Get all active campaigns error:", error);
+      sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+    }
+  };
+
   getMyCampaigns = [
     query("search").optional().trim(),
     query("status").optional().isInt(),

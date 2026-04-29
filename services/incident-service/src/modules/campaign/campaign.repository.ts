@@ -232,6 +232,29 @@ export class CampaignRepository {
     return { rows, total };
   }
 
+  /** All non-deleted campaigns with status ACTIVE (no pagination). */
+  async findAllActive(params: {
+    sortBy: "createdAt" | "updatedAt" | "title";
+    sortOrder: "asc" | "desc";
+  }): Promise<CampaignWithReports[]> {
+    const { sortBy, sortOrder } = params;
+    const orderBy: Prisma.CampaignOrderByWithRelationInput =
+      sortBy === "title"
+        ? { title: sortOrder }
+        : sortBy === "updatedAt"
+          ? { updatedAt: sortOrder }
+          : { createdAt: sortOrder };
+
+    return this.prisma.campaign.findMany({
+      where: {
+        deletedAt: null,
+        status: GlobalStatus._STATUS_ACTIVE,
+      },
+      include: CampaignRepository.listInclude,
+      orderBy,
+    });
+  }
+
   async update(
     id: string,
     data: Prisma.CampaignUpdateInput,

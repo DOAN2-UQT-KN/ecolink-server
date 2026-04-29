@@ -2,7 +2,7 @@ import { PrismaClient, Prisma } from "@prisma/client";
 import prisma from "../../config/prisma.client";
 import { ReportEntity } from "./report.entity";
 import { ReportSearchWithScope } from "./report.dto";
-import { ReportStatus } from "../../constants/status.enum";
+import { GlobalStatus, ReportStatus } from "../../constants/status.enum";
 
 /** Report row including non-deleted media links (for list/search responses). */
 export type ReportWithMediaFiles = Prisma.ReportGetPayload<{
@@ -88,6 +88,22 @@ export class ReportRepository {
     return this.prisma.report.findMany({
       where: { deletedAt: null },
       orderBy: { createdAt: "desc" },
+    });
+  }
+
+  /** All non-deleted reports with lifecycle status `GlobalStatus._STATUS_ACTIVE` (no pagination). */
+  async findAllToDo(): Promise<ReportWithMediaFiles[]> {
+    return this.prisma.report.findMany({
+      where: {
+        deletedAt: null,
+        status: GlobalStatus._STATUS_TODO,
+      },
+      orderBy: { createdAt: "desc" },
+      include: {
+        reportMediaFiles: {
+          where: { deletedAt: null },
+        },
+      },
     });
   }
 

@@ -593,6 +593,51 @@ export class CampaignService {
     };
   }
 
+  /**
+   * All campaigns with status ACTIVE (`GlobalStatus._STATUS_ACTIVE`), no pagination.
+   */
+  async getAllActiveCampaigns(viewerUserId?: string | null): Promise<{
+    campaigns: CampaignResponse[];
+  }> {
+    const rows = await campaignRepository.findAllActive({
+      sortBy: "createdAt",
+      sortOrder: "desc",
+    });
+    if (rows.length === 0) {
+      return { campaigns: [] };
+    }
+
+    const approvedByCampaignId =
+      await campaignJoiningRequestRepository.countApprovedByCampaignIds(
+        rows.map((c) => c.id),
+      );
+
+    const tierMaps = await this.resolveTierMaps(rows.map((r) => r.difficulty));
+
+    const campaigns = rows.map((campaign) =>
+      toCampaignResponse(
+        campaign,
+        tierMaps.greenByLevel.get(campaign.difficulty) ?? 0,
+        approvedByCampaignId.get(campaign.id) ?? 0,
+        tierMaps.maxByLevel.get(campaign.difficulty) ?? null,
+      ),
+    );
+    const campaignsWithVotes = await this.withCampaignVotes(
+      campaigns,
+      viewerUserId,
+    );
+    const enriched = await this.enrichCampaignsForGet(
+      campaignsWithVotes,
+      viewerUserId,
+    );
+    const campaignsWithRequestStatus =
+      viewerUserId != null && viewerUserId !== ""
+        ? await this.withCampaignListRequestStatus(enriched, viewerUserId)
+        : enriched;
+
+    return { campaigns: campaignsWithRequestStatus };
+  }
+
   async getMyCampaigns(
     query: CampaignListQuery,
     userId: string,

@@ -13,6 +13,9 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
     query: "ReportSearchQuery",
     responseData: "ReportsListEnvelopeData",
   },
+  "GET /api/v1/reports/all": {
+    responseData: "ReportsActiveListEnvelopeData",
+  },
   "GET /api/v1/reports/:id/background-jobs/status": {
     responseData: "BackgroundJobsEnvelopeData",
   },
@@ -47,6 +50,9 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
   "GET /api/v1/campaigns": {
     query: "CampaignListQuery",
     responseData: "PaginatedCampaignsEnvelopeData",
+  },
+  "GET /api/v1/campaigns/all": {
+    responseData: "CampaignsListEnvelopeData",
   },
   "GET /api/v1/campaigns/tasks/my-assigned": {
     responseData: "TasksListEnvelopeData",

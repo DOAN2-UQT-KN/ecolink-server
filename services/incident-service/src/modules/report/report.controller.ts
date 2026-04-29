@@ -212,6 +212,22 @@ export class ReportController {
   ];
 
   /**
+   * All reports with status ACTIVE (no pagination).
+   */
+  getAllActiveReports = async (
+    _req: Request,
+    res: Response,
+  ): Promise<void> => {
+    try {
+      const reports = await reportService.getAllActiveReports(_req.user?.userId);
+      sendSuccess(res, HTTP_STATUS.OK, { reports });
+    } catch (error) {
+      console.error("Get all active reports error:", error);
+      sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+    }
+  };
+
+  /**
    * Get report by ID
    */
   getReportById = async (req: Request, res: Response): Promise<void> => {

@@ -26,6 +26,13 @@ router.get("/search", authenticate, reportController.searchReports);
 router.get("/my", authenticate, reportController.getMyReports);
 
 /**
+ * @route   GET /api/v1/reports/all
+ * @desc    All reports with status ACTIVE only (no pagination)
+ * @access  Private
+ */
+router.get("/all", authenticate, reportController.getAllActiveReports);
+
+/**
  * @route   GET /api/v1/reports/by-ids
  * @desc    Report details by reportIds (max 100 UUIDs), same shape as GET /:id
  * @access  Private

@@ -1,7 +1,4 @@
-import {
-  reportRepository,
-  ReportWithMediaFiles,
-} from "./report.repository";
+import { reportRepository, ReportWithMediaFiles } from "./report.repository";
 import { toReportResponse } from "./report.entity";
 import {
   CreateReportRequest,
@@ -62,9 +59,7 @@ export class ReportService {
       ),
     ];
     if (userIds.length === 0) {
-      return reports.map(
-        (r) => ({ ...r, user: null }) as T,
-      );
+      return reports.map((r) => ({ ...r, user: null }) as T);
     }
     const map = await fetchOrganizationOwnersByUserIds(userIds);
     return reports.map(
@@ -103,8 +98,7 @@ export class ReportService {
     ]);
     const withVotes = reports.map((r) => ({
       ...r,
-      votes:
-        map.get(r.id) ?? defaultResourceVoteSummary(viewerUserId ?? null),
+      votes: map.get(r.id) ?? defaultResourceVoteSummary(viewerUserId ?? null),
       saved: viewerUserId != null ? savedIds.has(r.id) : null,
     }));
     return this.attachReporterProfilesToReports(withVotes);
@@ -682,6 +676,17 @@ export class ReportService {
   ): Promise<PaginatedReportsResponse> {
     const scoped: ReportSearchWithScope = { ...query, scopedUserId: userId };
     return this.searchReports(scoped, userId);
+  }
+
+  /**
+   * All reports with status ACTIVE (`GlobalStatus._STATUS_ACTIVE`), no pagination.
+   */
+  async getAllActiveReports(
+    viewerUserId?: string | null,
+  ): Promise<ReportDetailResponse[]> {
+    const rows = await reportRepository.findAllToDo();
+    const details = await this.reportsWithMediaToDetails(rows);
+    return this.attachVotesToReports(details, viewerUserId);
   }
 
   async searchReports(

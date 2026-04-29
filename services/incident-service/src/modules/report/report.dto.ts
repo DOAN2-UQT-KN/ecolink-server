@@ -134,6 +134,11 @@ export interface ReportDetailEnvelopeData {
 /** OpenAPI: `data` for GET /reports/my (same shape as search: paginated + media) */
 export type ReportsListEnvelopeData = PaginatedReportsResponse;
 
+/** OpenAPI: `data` for GET /reports/all — ACTIVE status only, no pagination */
+export interface ReportsActiveListEnvelopeData {
+  reports: ReportDetailResponse[];
+}
+
 /** OpenAPI: `data` for background job status */
 export interface BackgroundJobsEnvelopeData {
   backgroundJobs: ReportBackgroundJobsStatusResponse;

@@ -22,6 +22,13 @@ router.post("/", authenticate, campaignController.createCampaign);
 router.get("/", authenticate, campaignController.getCampaigns);
 
 /**
+ * @route   GET /api/v1/campaigns/all
+ * @desc    All campaigns with status ACTIVE only (no pagination)
+ * @access  Private
+ */
+router.get("/all", authenticate, campaignController.getAllActiveCampaigns);
+
+/**
  * @route   GET /api/v1/campaigns/by-ids
  * @desc    Campaigns by campaignIds (max 100 UUIDs)
  * @access  Private
