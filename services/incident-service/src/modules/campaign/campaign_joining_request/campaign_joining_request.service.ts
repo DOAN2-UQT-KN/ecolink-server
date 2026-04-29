@@ -5,6 +5,7 @@ import {
 } from "../../organization/identity-user.client";
 import type { OrganizationOwnerResponse } from "../../organization/organization.dto";
 import { campaignJoiningRequestRepository } from "./campaign_joining_request.repository";
+import { campaignAttendanceRepository } from "../campaign_attendance/campaign_attendance.repository";
 import { campaignRepository } from "../campaign.repository";
 import { campaignManagerRepository } from "../campaign_manager/campaign_manager.repository";
 import {
@@ -320,10 +321,24 @@ export class CampaignJoiningRequestService {
           .filter((id): id is string => id != null && id.length > 0),
       ),
     ];
-    const profileMap = await fetchOrganizationOwnersByUserIds(volunteerIds);
+    const [profileMap, checkedInAtByUserId] = await Promise.all([
+      fetchOrganizationOwnersByUserIds(volunteerIds),
+      campaignAttendanceRepository.findCheckedInAtByCampaignAndUserIds(
+        campaignId,
+        volunteerIds,
+      ),
+    ]);
 
     return {
-      volunteers: rows.map((r) => this.toResponse(r, profileMap)),
+      volunteers: rows.map((r) => {
+        const base = this.toResponse(r, profileMap);
+        const vid = r.volunteerId;
+        const checkedInAt =
+          vid != null && vid.length > 0
+            ? checkedInAtByUserId.get(vid) ?? null
+            : null;
+        return { ...base, checkedInAt };
+      }),
       total,
       page,
       limit,

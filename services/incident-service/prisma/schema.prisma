@@ -88,6 +88,7 @@ model Campaign {
   reports                 Report[]
   campaignManagers        CampaignManager[]
   campaignJoiningRequests CampaignJoiningRequest[]
+  campaignAttendanceCheckIns CampaignAttendanceCheckIn[]
   campaignTasks           CampaignTask[]
   campaignSubmissions     CampaignSubmission[]
   campaignResults         CampaignResult[]
@@ -249,6 +250,24 @@ model CampaignJoiningRequest {
   @@index([volunteerId])
   @@index([status])
   @@map("campaign_joining_requests")
+}
+
+/// In-person check-in for approved volunteers (QR flow). Used for completion green points eligibility.
+model CampaignAttendanceCheckIn {
+  id          String   @id @default(uuid()) @db.Uuid
+  campaignId  String   @map("campaign_id") @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  checkedInAt DateTime @default(now()) @map("checked_in_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, userId])
+  @@index([campaignId])
+  @@index([userId])
+  @@map("campaign_attendance_check_ins")
 }
 
 // A submission is created by a campaign manager to document cleanup work.

@@ -146,6 +146,29 @@ router.put("/:id/verify", authenticate, campaignController.adminVerifyCampaign);
 router.put("/:id/mark-done", authenticate, campaignController.markCampaignDone);
 
 /**
+ * @route   POST /api/v1/campaigns/:id/attendance-qr
+ * @desc    Issue a short-lived JWT for attendance QR (campaign managers only; active campaigns).
+ * @access  Private
+ */
+router.post(
+  "/:id/attendance-qr",
+  authenticate,
+  campaignController.issueCampaignAttendanceQr,
+);
+
+/**
+ * @route   POST /api/v1/campaigns/:id/attendance-check-in
+ * @desc    Record in-person check-in using QR token (approved volunteers only).
+ * @access  Private
+ * @body    { token }
+ */
+router.post(
+  "/:id/attendance-check-in",
+  authenticate,
+  campaignController.checkInCampaignAttendance,
+);
+
+/**
  * @route   PUT /api/v1/campaigns/:id
  * @desc    Update campaign by ID
  * @access  Private (Campaign manager only)

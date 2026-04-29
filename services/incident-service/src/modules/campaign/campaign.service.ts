@@ -11,6 +11,7 @@ import { HttpError, HTTP_STATUS } from "../../constants/http-status";
 import { organizationRepository } from "../organization/organization.repository";
 import { rewardServiceClient } from "../reward/reward-service.client";
 import { campaignJoiningRequestRepository } from "./campaign_joining_request/campaign_joining_request.repository";
+import { campaignAttendanceRepository } from "./campaign_attendance/campaign_attendance.repository";
 import { campaignRepository } from "./campaign.repository";
 import {
   CampaignListQuery,
@@ -142,6 +143,11 @@ export class CampaignService {
           }
         : undefined;
 
+      const canManageCampaign =
+        viewerUserId != null &&
+        (campaign.createdBy === viewerUserId ||
+          campaign.managers.some((m) => m.id === viewerUserId));
+
       return {
         ...campaign,
         owner: orgOwner,
@@ -155,6 +161,7 @@ export class CampaignService {
             avatar: profile?.avatar ?? null,
           };
         }),
+        ...(viewerUserId != null ? { canManageCampaign } : {}),
       };
     });
   }
@@ -984,12 +991,18 @@ export class CampaignService {
       throw new Error("Campaign difficulty missing in reward service");
     }
 
-    const volunteerIds =
+    const approvedVolunteerIds =
       await campaignJoiningRequestRepository.findApprovedVolunteerIdsByCampaignId(
         id,
       );
-    const credits = volunteerIds.map((userId) => ({
-      userId,
+    const checkedInUserIds =
+      await campaignAttendanceRepository.findUserIdsByCampaignId(id);
+    const checkedInSet = new Set(checkedInUserIds);
+    const volunteerIds = approvedVolunteerIds.filter((uid) =>
+      checkedInSet.has(uid),
+    );
+    const credits = volunteerIds.map((uid) => ({
+      userId: uid,
       points: tier.greenPoints,
     }));
 
