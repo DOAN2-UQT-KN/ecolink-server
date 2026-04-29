@@ -7,6 +7,7 @@ import logging
 
 from app.chat.router import router as chat_router
 from app.recommendation.router import router as recommendation_router
+from app.social.router import router as social_router
 from app.config import settings
 from app.db.session import init_db
 
@@ -65,3 +66,4 @@ async def health() -> dict[str, str]:
 
 app.include_router(chat_router, prefix="/api/v1/chat")
 app.include_router(recommendation_router, prefix="/api/v1/recommendations")
+app.include_router(social_router, prefix="/api/v1/social")

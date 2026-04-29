@@ -86,6 +86,94 @@ function getUsersArrayFromResponse(data: unknown): unknown[] | null {
   return null;
 }
 
+const INTERNAL_USERS_BY_IDS_MAX = 100;
+
+/** Name + email from identity internal `/users/by-ids` (server-side only). */
+export interface IdentityUserContact {
+  id: string;
+  name: string;
+  email: string | null;
+}
+
+function readIdentityContactFromRow(raw: unknown): IdentityUserContact | null {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const row = raw as Record<string, unknown>;
+  const id = pickString(row.id) ?? pickString(row.user_id);
+  if (!id) {
+    return null;
+  }
+  const name = pickDisplayString(
+    row.name,
+    row.user_name,
+    row.display_name,
+    row.full_name,
+  );
+  const emailRaw =
+    pickNullableString(row.email) ??
+    pickNullableString(row.user_email) ??
+    pickNullableString(row.userEmail);
+  const email =
+    emailRaw && emailRaw.includes("@") ? emailRaw.trim().toLowerCase() : null;
+  return {
+    id,
+    name,
+    email,
+  };
+}
+
+export function getIdentityUserContact(
+  m: ReadonlyMap<string, IdentityUserContact>,
+  userId: string,
+): IdentityUserContact | undefined {
+  return m.get(userId.toLowerCase().trim());
+}
+
+/**
+ * Batch-load users with **email** (internal). Same transport as
+ * `fetchOrganizationOwnersByUserIds`; map keys are lowercase user ids.
+ */
+export async function fetchIdentityUsersWithContactByIds(
+  userIds: string[],
+): Promise<Map<string, IdentityUserContact>> {
+  const unique = [
+    ...new Set(userIds.map((id) => id?.trim()).filter(Boolean)),
+  ] as string[];
+  const out = new Map<string, IdentityUserContact>();
+  if (unique.length === 0) {
+    return out;
+  }
+
+  try {
+    const client = getClient();
+    for (let i = 0; i < unique.length; i += INTERNAL_USERS_BY_IDS_MAX) {
+      const chunk = unique.slice(i, i + INTERNAL_USERS_BY_IDS_MAX);
+      const { data } = await client.post<SuccessEnvelope<{ users?: unknown }>>(
+        "/internal/v1/users/by-ids",
+        { ids: chunk },
+      );
+      const users = getUsersArrayFromResponse(data);
+      if (users === null) {
+        throw new Error("Identity service did not return users");
+      }
+      for (const raw of users) {
+        const row = readIdentityContactFromRow(raw);
+        if (!row) {
+          continue;
+        }
+        out.set(mapKeyForUserId(row.id), row);
+      }
+    }
+  } catch (e) {
+    console.error(
+      "[identity-user.client] fetchIdentityUsersWithContactByIds:",
+      e,
+    );
+  }
+  return out;
+}
+
 function readProfileFromRow(
   raw: unknown,
 ): OrganizationOwnerResponse | null {
@@ -119,8 +207,6 @@ function readProfileFromRow(
  * like `role_id`); this parser accepts `id` / `name` / `avatar` and common alternates.
  * Map keys are **lowercase** user ids; use `getUserProfile(map, id)` to look up.
  */
-const INTERNAL_USERS_BY_IDS_MAX = 100;
-
 export async function fetchOrganizationOwnersByUserIds(
   userIds: string[],
 ): Promise<Map<string, OrganizationOwnerResponse>> {
