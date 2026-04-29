@@ -26,7 +26,9 @@ import { savedResourceRepository } from "../saved_resource/saved_resource.reposi
 import { defaultResourceVoteSummary } from "../vote/vote.dto";
 import { voteService } from "../vote/vote.service";
 import {
+  fetchIdentityUsersWithContactByIds,
   fetchOrganizationOwnersByUserIds,
+  getIdentityUserContact,
   getUserProfile,
 } from "../organization/identity-user.client";
 import type { OrganizationOwnerResponse } from "../organization/organization.dto";
@@ -1043,10 +1045,11 @@ export class CampaignService {
     const checkedInUserIds =
       await campaignAttendanceRepository.findUserIdsByCampaignId(id);
     const checkedInSet = new Set(checkedInUserIds);
-    const volunteerIds = approvedVolunteerIds.filter((uid) =>
+    /** Green points: only volunteers who checked in on site (QR). */
+    const checkedInVolunteerIds = approvedVolunteerIds.filter((uid) =>
       checkedInSet.has(uid),
     );
-    const credits = volunteerIds.map((uid) => ({
+    const credits = checkedInVolunteerIds.map((uid) => ({
       userId: uid,
       points: tier.greenPoints,
     }));
@@ -1073,40 +1076,68 @@ export class CampaignService {
       },
     );
 
-    if (credits.length > 0) {
-      try {
+    try {
+      if (credits.length > 0) {
         await rewardServiceClient.enqueueCampaignCompletionGreenPoints({
           campaignId: id,
           credits,
         });
-      } catch (e) {
-        await prisma.$transaction(
-          async (tx) => {
-            await tx.campaign.update({
-              where: { id },
-              data: {
-                status: GlobalStatus._STATUS_ACTIVE,
-                updatedBy: userId,
-              },
-            });
-            await tx.report.updateMany({
-              where: {
-                campaignId: id,
-                deletedAt: null,
-                status: ReportStatus._STATUS_COMPLETED,
-              },
-              data: {
-                status: ReportStatus._STATUS_INPROCESS,
-                updatedBy: userId,
-              },
-            });
-          },
-          {
-            isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-          },
-        );
-        throw e;
       }
+      /** Facebook / AI thanks: all approved members (check-in is not required for public recognition). */
+      let recognizedVolunteers: { name: string; email: string | null }[] = [];
+      if (approvedVolunteerIds.length > 0) {
+        const contacts =
+          await fetchIdentityUsersWithContactByIds(approvedVolunteerIds);
+        recognizedVolunteers = approvedVolunteerIds
+          .map((vid) => {
+            const u = getIdentityUserContact(contacts, vid);
+            if (!u?.name?.trim()) return null;
+            return {
+              name: u.name.trim(),
+              email: u.email && u.email.length > 0 ? u.email : null,
+            };
+          })
+          .filter(
+            (x): x is { name: string; email: string | null } => x !== null,
+          );
+      }
+
+      await rewardServiceClient.enqueueCampaignFacebookRecognition({
+        campaignId: id,
+        campaignTitle: existing.title,
+        recognizedUserIds: approvedVolunteerIds,
+        completedAt: new Date().toISOString(),
+        bannerUrl: existing.banner ?? null,
+        description: existing.description ?? null,
+        ...(recognizedVolunteers.length > 0 ? { recognizedVolunteers } : {}),
+      });
+    } catch (e) {
+      await prisma.$transaction(
+        async (tx) => {
+          await tx.campaign.update({
+            where: { id },
+            data: {
+              status: GlobalStatus._STATUS_ACTIVE,
+              updatedBy: userId,
+            },
+          });
+          await tx.report.updateMany({
+            where: {
+              campaignId: id,
+              deletedAt: null,
+              status: ReportStatus._STATUS_COMPLETED,
+            },
+            data: {
+              status: ReportStatus._STATUS_INPROCESS,
+              updatedBy: userId,
+            },
+          });
+        },
+        {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        },
+      );
+      throw e;
     }
 
     const updated = await campaignRepository.findById(id);
