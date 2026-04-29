@@ -156,6 +156,9 @@ export class RewardServiceClient {
   private static readonly GREEN_POINT_JOB_REPORT_COMPLETION =
     "REPORT_COMPLETION_GREEN_POINTS" as const;
 
+  private static readonly FACEBOOK_RECOGNITION_JOB_TYPE =
+    "CAMPAIGN_FACEBOOK_RECOGNITION" as const;
+
   /**
    * Queue green-point credits for approved campaign volunteers (reward worker applies
    * with Serializable transactions).
@@ -207,6 +210,45 @@ export class RewardServiceClient {
       });
       if (!data?.success || !data.data?.queued) {
         throw new Error("Invalid reward service enqueue green points response");
+      }
+    } catch (e) {
+      if (axios.isAxiosError(e)) {
+        const apiMsg =
+          (e.response?.data as { message?: string } | undefined)?.message ??
+          e.message;
+        throw new Error(`Reward service enqueue failed: ${apiMsg}`);
+      }
+      throw e;
+    }
+  }
+
+  async enqueueCampaignFacebookRecognition(body: {
+    campaignId: string;
+    campaignTitle: string;
+    recognizedUserIds: string[];
+    completedAt: string;
+    bannerUrl?: string | null;
+    description?: string | null;
+    recognizedVolunteers?: { name: string; email: string | null }[];
+  }): Promise<void> {
+    const client = this.getClient();
+    try {
+      const { data } = await client.post<
+        SuccessEnvelope<{
+          queued: boolean;
+          type: string;
+        }>
+      >("/internal/v1/facebook-recognition/enqueue", {
+        payload: body,
+      });
+      if (
+        !data?.success ||
+        !data.data?.queued ||
+        data.data?.type !== RewardServiceClient.FACEBOOK_RECOGNITION_JOB_TYPE
+      ) {
+        throw new Error(
+          "Invalid reward service enqueue facebook recognition response",
+        );
       }
     } catch (e) {
       if (axios.isAxiosError(e)) {
