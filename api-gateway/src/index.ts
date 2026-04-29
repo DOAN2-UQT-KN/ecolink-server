@@ -175,6 +175,13 @@ app.use(
   }),
 );
 
+app.use(
+  "/api/v1/sos",
+  proxy(INCIDENT_SERVICE_URL, {
+    proxyReqPathResolver: (req) => `/api/v1/sos${req.url}`,
+  }),
+);
+
 // Proxy routes — Reward (gifts, difficulties, points, redemptions, leaderboard)
 app.use(
   "/api/v1/gifts",
