@@ -235,4 +235,16 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
   "DELETE /api/v1/organizations/:id/members/me": {
     omitData: true,
   },
+
+  "POST /api/v1/sos": {
+    requestBody: "CreateSosRequest",
+    responseData: "SosOneEnvelopeData",
+  },
+  "GET /api/v1/sos": {
+    query: "SosListQuery",
+    responseData: "PaginatedSosEnvelopeData",
+  },
+  "PUT /api/v1/sos/:id/solved": {
+    responseData: "SosOneEnvelopeData",
+  },
 };

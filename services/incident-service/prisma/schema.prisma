@@ -92,6 +92,7 @@ model Campaign {
   campaignTasks           CampaignTask[]
   campaignSubmissions     CampaignSubmission[]
   campaignResults         CampaignResult[]
+  sosList                 Sos[]
 
   @@index([status])
   @@index([createdBy])
@@ -523,6 +524,36 @@ model OrganizationMember {
   @@index([organizationId])
   @@index([userId])
   @@map("organization_members")
+}
+
+/// Emergency request created under a specific campaign.
+model Sos {
+  id         Int    @id @default(autoincrement())
+  campaignId String @map("campaign_id") @db.Uuid
+
+  content       String
+  phone         String  @db.VarChar(20)
+  address       String  @db.VarChar(500)
+  detailAddress String? @map("detail_address") @db.VarChar(255)
+
+  latitude  Float
+  longitude Float
+
+  status Int @default(12)
+
+  createdBy String? @map("created_by") @db.Uuid
+  updatedBy String? @map("updated_by") @db.Uuid
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  campaign Campaign @relation(fields: [campaignId], references: [id])
+
+  @@index([campaignId])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("sos")
 }
 
 model OrganizationJoiningRequest {

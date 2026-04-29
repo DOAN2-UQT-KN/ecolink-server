@@ -1067,6 +1067,17 @@ export class CampaignService {
             updatedBy: userId,
           },
         });
+        await tx.sos.updateMany({
+          where: {
+            campaignId: id,
+            deletedAt: null,
+            status: { not: GlobalStatus._STATUS_COMPLETED },
+          },
+          data: {
+            status: GlobalStatus._STATUS_COMPLETED,
+            updatedBy: userId,
+          },
+        });
       },
       {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,

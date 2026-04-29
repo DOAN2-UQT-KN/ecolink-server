@@ -8,6 +8,7 @@ import { mountOpenApi, routeModulesFrom } from "@da2/express-swagger";
 import { OPENAPI_ROUTE_MODELS } from "./openapi/route-models";
 import reportRoutes from "./modules/report/report.routes";
 import campaignRoutes from "./modules/campaign/campaign.routes";
+import sosRoutes from "./modules/sos/sos.routes";
 import voteRoutes from "./modules/vote/vote.routes";
 import savedResourceRoutes from "./modules/saved_resource/saved_resource.routes";
 import organizationRoutes from "./modules/organization/organization.routes";
@@ -24,6 +25,7 @@ const PORT = Number(process.env.PORT) || 3001;
 const swaggerRouteFiles = routeModulesFrom(__dirname, [
   "modules/report/report.routes",
   "modules/campaign/campaign.routes",
+  "modules/sos/sos.routes",
   "modules/vote/vote.routes",
   "modules/saved_resource/saved_resource.routes",
   "modules/organization/organization.routes",
@@ -68,6 +70,7 @@ app.get("/health", (_req, res) => {
 // Routes
 app.use("/api/v1/reports", reportRoutes);
 app.use("/api/v1/campaigns", campaignRoutes);
+app.use("/api/v1/sos", sosRoutes);
 app.use("/api/v1/incident/votes", voteRoutes);
 app.use("/incident/saved-resources", savedResourceRoutes);
 app.use("/api/v1/organizations", organizationRoutes);
