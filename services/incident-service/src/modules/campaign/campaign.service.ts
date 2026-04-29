@@ -11,6 +11,7 @@ import { HttpError, HTTP_STATUS } from "../../constants/http-status";
 import { organizationRepository } from "../organization/organization.repository";
 import { rewardServiceClient } from "../reward/reward-service.client";
 import { campaignJoiningRequestRepository } from "./campaign_joining_request/campaign_joining_request.repository";
+import { campaignAttendanceRepository } from "./campaign_attendance/campaign_attendance.repository";
 import { campaignRepository } from "./campaign.repository";
 import {
   CampaignListQuery,
@@ -142,6 +143,11 @@ export class CampaignService {
           }
         : undefined;
 
+      const canManageCampaign =
+        viewerUserId != null &&
+        (campaign.createdBy === viewerUserId ||
+          campaign.managers.some((m) => m.id === viewerUserId));
+
       return {
         ...campaign,
         owner: orgOwner,
@@ -155,6 +161,7 @@ export class CampaignService {
             avatar: profile?.avatar ?? null,
           };
         }),
+        ...(viewerUserId != null ? { canManageCampaign } : {}),
       };
     });
   }
@@ -347,27 +354,23 @@ export class CampaignService {
 
     const created = await prisma.$transaction(
       async (tx) => {
-        // Prisma Client types may lag behind the schema in dev environments.
-        // Keep runtime payload correct, and avoid excess-property TS errors.
-        const createData = ({
-          title: request.title,
-          banner: request.banner,
-          description: request.description,
-          startDate: request.startDate ? new Date(request.startDate) : null,
-          endDate: request.endDate ? new Date(request.endDate) : null,
-          detailAddress: request.detailAddress,
-          latitude: request.latitude,
-          longitude: request.longitude,
-          radiusKm: request.radiusKm,
-          difficulty: request.difficulty,
-          status: GlobalStatus._STATUS_PENDING,
-          organizationId: request.organizationId,
-          createdBy: userId,
-          updatedBy: userId,
-        } as unknown) as Prisma.CampaignUncheckedCreateInput;
-
         const campaign = await tx.campaign.create({
-          data: createData,
+          data: {
+            title: request.title,
+            banner: request.banner,
+            description: request.description,
+            startDate: request.startDate ? new Date(request.startDate) : null,
+            endDate: request.endDate ? new Date(request.endDate) : null,
+            detailAddress: request.detailAddress,
+            latitude: request.latitude,
+            longitude: request.longitude,
+            radiusKm: request.radiusKm,
+            difficulty: request.difficulty,
+            status: GlobalStatus._STATUS_PENDING,
+            organizationId: request.organizationId,
+            createdBy: userId,
+            updatedBy: userId,
+          } as any,
         });
 
         await this.assignManagersToCampaign(
@@ -1033,12 +1036,18 @@ export class CampaignService {
       throw new Error("Campaign difficulty missing in reward service");
     }
 
-    const volunteerIds =
+    const approvedVolunteerIds =
       await campaignJoiningRequestRepository.findApprovedVolunteerIdsByCampaignId(
         id,
       );
-    const credits = volunteerIds.map((userId) => ({
-      userId,
+    const checkedInUserIds =
+      await campaignAttendanceRepository.findUserIdsByCampaignId(id);
+    const checkedInSet = new Set(checkedInUserIds);
+    const volunteerIds = approvedVolunteerIds.filter((uid) =>
+      checkedInSet.has(uid),
+    );
+    const credits = volunteerIds.map((uid) => ({
+      userId: uid,
       points: tier.greenPoints,
     }));
 

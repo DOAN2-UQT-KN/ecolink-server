@@ -58,6 +58,8 @@ export class SqsBackgroundJobQueue implements BackgroundJobQueue {
       payload,
     };
 
+    console.log(`[SqsBackgroundJobQueue] Enqueuing job:`, JSON.stringify(envelope, null, 2));
+
     try {
       await this._sqs.send(
         new SendMessageCommand({

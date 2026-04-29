@@ -10,6 +10,7 @@ import { campaignService } from "./campaign.service";
 import { campaignManagerService } from "./campaign_manager/campaign_manager.service";
 import { campaignTaskService } from "./campaign_task/campaign_task.service";
 import { campaignJoiningRequestService } from "./campaign_joining_request/campaign_joining_request.service";
+import { campaignAttendanceService } from "./campaign_attendance/campaign_attendance.service";
 import { JoinRequestStatus } from "../../constants/status.enum";
 import type {
   CampaignListQuery,
@@ -1644,6 +1645,82 @@ export class CampaignController {
       } catch (error) {
         console.error("Update campaign task status error:", error);
         if (sendHttpErrorResponse(res, error)) return;
+        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+      }
+    },
+  ];
+
+  issueCampaignAttendanceQr = [
+    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: errors.array(),
+        });
+      }
+
+      try {
+        const userId = req.user?.userId;
+        if (!userId) {
+          return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+        }
+
+        const { token, expiresAt } =
+          await campaignAttendanceService.issueAttendanceQr(
+            req.params.id,
+            userId,
+          );
+
+        sendSuccess(res, HTTP_STATUS.OK, {
+          token,
+          expiresAt,
+        });
+      } catch (error) {
+        console.error("Issue campaign attendance QR error:", error);
+        if (sendHttpErrorResponse(res, error)) {
+          return;
+        }
+        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+      }
+    },
+  ];
+
+  checkInCampaignAttendance = [
+    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+    body("token").notEmpty().withMessage("token is required").isString(),
+
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: errors.array(),
+        });
+      }
+
+      try {
+        const userId = req.user?.userId;
+        if (!userId) {
+          return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+        }
+
+        const rawToken = String(req.body.token).trim();
+        const result = await campaignAttendanceService.checkInWithQrToken(
+          req.params.id,
+          rawToken,
+          userId,
+        );
+
+        sendSuccess(res, HTTP_STATUS.OK, {
+          checkedInAt: result.checkedInAt,
+          alreadyCheckedIn: result.alreadyCheckedIn,
+        });
+      } catch (error) {
+        console.error("Campaign attendance check-in error:", error);
+        if (sendHttpErrorResponse(res, error)) {
+          return;
+        }
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     },

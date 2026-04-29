@@ -109,6 +109,17 @@ router.put("/:id/verify", authenticate, reportController.adminVerifyReport);
  */
 router.put("/:id/ban", authenticate, reportController.adminBanReport);
 
+/**
+ * @route   PUT /api/v1/reports/:id/mark-done
+ * @desc    Mark report as done/completed (admin only)
+ * @access  Private (Admin only)
+ */
+router.put(
+  "/:id/mark-done",
+  authenticate,
+  reportController.adminMarkReportDone,
+);
+
 
 
 /**

@@ -90,6 +90,8 @@ export interface CampaignResponse {
    * Present on GET /campaigns and GET /campaigns/:id; omitted if there is no request or the latest is rejected.
    */
   requestStatus?: number;
+  /** True when the viewer is the campaign creator or an assigned campaign manager. */
+  canManageCampaign?: boolean;
 }
 
 export interface AddCampaignManagersRequest {
@@ -135,6 +137,8 @@ export interface CampaignJoinRequestResponse {
   status: number;
   createdAt: Date;
   updatedAt: Date;
+  /** Present on approved-volunteer list when in-person check-in was recorded. */
+  checkedInAt?: Date | null;
 }
 
 export interface CampaignJoinRequestDetailResponse

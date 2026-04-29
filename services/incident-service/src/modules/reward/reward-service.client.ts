@@ -152,6 +152,10 @@ export class RewardServiceClient {
   private static readonly GREEN_POINT_JOB_CAMPAIGN_COMPLETION =
     "CAMPAIGN_COMPLETION_GREEN_POINTS" as const;
 
+  /** Same as reward-service known `jobType` for report completion credits. */
+  private static readonly GREEN_POINT_JOB_REPORT_COMPLETION =
+    "REPORT_COMPLETION_GREEN_POINTS" as const;
+
   /**
    * Queue green-point credits for approved campaign volunteers (reward worker applies
    * with Serializable transactions).
@@ -169,6 +173,36 @@ export class RewardServiceClient {
         }>
       >("/internal/v1/green-points/enqueue", {
         type: RewardServiceClient.GREEN_POINT_JOB_CAMPAIGN_COMPLETION,
+        payload: body,
+      });
+      if (!data?.success || !data.data?.queued) {
+        throw new Error("Invalid reward service enqueue green points response");
+      }
+    } catch (e) {
+      if (axios.isAxiosError(e)) {
+        const apiMsg =
+          (e.response?.data as { message?: string } | undefined)?.message ??
+          e.message;
+        throw new Error(`Reward service enqueue failed: ${apiMsg}`);
+      }
+      throw e;
+    }
+  }
+
+  async enqueueReportCompletionGreenPoints(body: {
+    reportId: string;
+    userId: string;
+    points: number;
+  }): Promise<void> {
+    const client = this.getClient();
+    try {
+      const { data } = await client.post<
+        SuccessEnvelope<{
+          queued: boolean;
+          type: string;
+        }>
+      >("/internal/v1/green-points/enqueue", {
+        type: RewardServiceClient.GREEN_POINT_JOB_REPORT_COMPLETION,
         payload: body,
       });
       if (!data?.success || !data.data?.queued) {

@@ -8,6 +8,7 @@ import { mountOpenApi, routeModulesFrom } from "@da2/express-swagger";
 import { OPENAPI_ROUTE_MODELS } from "./openapi/route-models";
 import notificationRoutes from "./modules/notification/notification.routes";
 import { errorHandler } from "./middleware/error.middleware";
+import "./worker";
 
 dotenv.config();
 
