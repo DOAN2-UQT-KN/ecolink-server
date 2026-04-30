@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import AuthContext, get_auth_context, get_current_user_id
-from app.chat.service import stream_chat_turn
+from app.chat.service import stream_chat_turn, translate_text
 from app.db.models import ChatMessageRole
 from app.db.session import SessionLocal, get_session
 from app.repositories.chat import ChatRepository
@@ -81,6 +81,10 @@ class StreamBody(BaseModel):
                 seen.add(s)
                 out.append(s)
         return out
+
+
+class TranslateBody(BaseModel):
+    content: str
 
 
 @router.get("/agents")
@@ -199,3 +203,16 @@ async def stream_message(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.post("/translate")
+async def translate_message(
+    body: TranslateBody,
+    _auth: Annotated[AuthContext, Depends(get_auth_context)],
+) -> dict:
+    if body.content == "":
+        raise HTTPException(status_code=400, detail="content is required")
+    try:
+        return await translate_text(body.content)
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e

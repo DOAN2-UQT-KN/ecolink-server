@@ -96,11 +96,20 @@ app.get("/api-docs/specs/reward.json", async (req, res, next) => {
   }
 });
 
+app.get("/api-docs/specs/ai.json", async (req, res, next) => {
+  try {
+    await serveRewrittenOpenApi(res, AI_SERVICE_URL);
+  } catch (e) {
+    next(e);
+  }
+});
+
 mountGatewaySwaggerUi(app, {
   specs: [
     { name: "Identity", url: "/api-docs/specs/identity.json" },
     { name: "Incident", url: "/api-docs/specs/incident.json" },
     { name: "Reward", url: "/api-docs/specs/reward.json" },
+    { name: "AI", url: "/api-docs/specs/ai.json" },
   ],
 });
 
@@ -224,6 +233,14 @@ app.use(
   proxy(AI_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/chat${req.url}`,
     parseReqBody: false,
+  }),
+);
+
+// Translation shortcut route -> ai-service translation assistant
+app.use(
+  "/api/v1/translate",
+  proxy(AI_SERVICE_URL, {
+    proxyReqPathResolver: (req) => `/api/v1/chat/translate${req.url}`,
   }),
 );
 

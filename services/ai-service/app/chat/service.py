@@ -267,3 +267,48 @@ async def stream_chat_turn(
         return
 
     yield format_sse("error", {"message": "Too many tool rounds; aborting."})
+
+
+async def translate_text(user_text: str) -> dict[str, str]:
+    if not settings.openai_api_key:
+        raise RuntimeError("OPENAI_API_KEY is not configured")
+
+    client = build_client()
+    model = settings.openai_chat_model
+    system_text = system_prompt_for_agent("translation_assistant")
+
+    resp = await client.chat.completions.create(
+        model=model,
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": system_text},
+            {"role": "user", "content": user_text},
+        ],
+    )
+    raw = (resp.choices[0].message.content or "").strip()
+
+    try:
+        data = json.loads(raw) if raw else {}
+    except json.JSONDecodeError as e:
+        raise RuntimeError("Translation assistant returned invalid JSON") from e
+
+    detected = data.get("detected_language")
+    if detected not in ("vi", "en"):
+        raise RuntimeError("Translation assistant returned invalid detected_language")
+
+    vn_value = data.get("vn")
+    en_value = data.get("en")
+    if not isinstance(vn_value, str) or not isinstance(en_value, str):
+        raise RuntimeError("Translation assistant returned invalid payload")
+
+    # Enforce exact preservation of original text in its source-language field.
+    if detected == "vi":
+        vn_value = user_text
+    else:
+        en_value = user_text
+
+    return {
+        "detected_language": detected,
+        "vn": vn_value,
+        "en": en_value,
+    }
