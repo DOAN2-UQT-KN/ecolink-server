@@ -8,6 +8,7 @@ export interface CreateSosRequest {
 export interface SosResponse {
   id: number;
   campaignId: string;
+  campaign?: SosCampaignResponse | null;
   content: string;
   phone: string;
   address: string;
@@ -15,6 +16,26 @@ export interface SosResponse {
   latitude: number;
   longitude: number;
   status: number;
+  createdBy: string | null;
+  updatedBy: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface SosCampaignResponse {
+  id: string;
+  title: string;
+  banner: string | null;
+  description: string | null;
+  status: number;
+  startDate: Date | null;
+  endDate: Date | null;
+  detailAddress: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  radiusKm: number | null;
+  difficulty: number;
+  organizationId: string;
   createdBy: string | null;
   updatedBy: string | null;
   createdAt: Date;

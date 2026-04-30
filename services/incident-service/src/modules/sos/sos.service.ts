@@ -3,7 +3,7 @@ import { HttpError } from "../../constants/http-status";
 import { HTTP_STATUS } from "../../constants/http-status";
 import { campaignRepository } from "../campaign/campaign.repository";
 import { sosRepository } from "./sos.repository";
-import { toSosResponse } from "./sos.entity";
+import { toSosCampaignResponse, toSosResponse } from "./sos.entity";
 import type {
   CreateSosRequest,
   PaginatedSosEnvelopeData,
@@ -16,6 +16,21 @@ import type {
 const PHONE_REGEX = /^\+?\d{7,15}$/;
 
 export class SosService {
+  private async withCampaignDetails<T extends { campaignId: string }>(
+    sosRows: T[],
+  ): Promise<(T & { campaign: ReturnType<typeof toSosCampaignResponse> | null })[]> {
+    const campaignIds = [...new Set(sosRows.map((row) => row.campaignId))];
+    const campaigns = await campaignRepository.findManyByIds(campaignIds);
+    const campaignMap = new Map(
+      campaigns.map((campaign) => [campaign.id, toSosCampaignResponse(campaign)]),
+    );
+
+    return sosRows.map((row) => ({
+      ...row,
+      campaign: campaignMap.get(row.campaignId) ?? null,
+    }));
+  }
+
   async create(
     body: CreateSosRequest,
     createdBy?: string,
@@ -88,7 +103,10 @@ export class SosService {
       });
 
       return {
-        sos: rows.map(toSosResponse),
+        sos: (await this.withCampaignDetails(rows)).map((row) => ({
+          ...toSosResponse(row),
+          campaign: row.campaign,
+        })),
         total,
         page,
         limit,
@@ -104,7 +122,10 @@ export class SosService {
     });
 
     return {
-      sos: rows.map(toSosResponse),
+      sos: (await this.withCampaignDetails(rows)).map((row) => ({
+        ...toSosResponse(row),
+        campaign: row.campaign,
+      })),
       total,
       page,
       limit,
@@ -129,7 +150,11 @@ export class SosService {
       skip: (page - 1) * limit,
       take: limit,
     });
-    return rows.map((r) => ({ ...toSosResponse(r), distanceMetres: r.distanceMetres }));
+    return (await this.withCampaignDetails(rows)).map((r) => ({
+      ...toSosResponse(r),
+      campaign: r.campaign,
+      distanceMetres: r.distanceMetres,
+    }));
   }
 
   async solveSos(id: number, updatedBy?: string): Promise<SosResponse> {
