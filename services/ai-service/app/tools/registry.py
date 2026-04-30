@@ -1,4 +1,4 @@
-"""Single assistant + per-agent tool lists (only `ecolink_assistant` today)."""
+"""Single assistant + per-agent tool lists."""
 
 from typing import Final, Optional
 
@@ -7,7 +7,10 @@ from app.tools.organization_api import create_organization_tool, list_organizati
 from app.tools.chat_media_api import list_chat_media_by_ids_tool
 from app.tools.report_media_api import list_report_media_files_by_ids_tool
 
-REGISTERED_AGENT_IDS: Final[tuple[str, ...]] = ("ecolink_assistant",)
+REGISTERED_AGENT_IDS: Final[tuple[str, ...]] = (
+    "ecolink_assistant",
+    "translation_assistant",
+)
 
 # Older conversations may still store these ids in the database.
 _LEGACY_AGENT_IDS: Final[dict[str, str]] = {
@@ -29,6 +32,7 @@ AGENT_TOOLS: dict[str, list[RegisteredTool]] = {
         list_chat_media_by_ids_tool,
         echo_tool,
     ],
+    "translation_assistant": [],
 }
 
 
