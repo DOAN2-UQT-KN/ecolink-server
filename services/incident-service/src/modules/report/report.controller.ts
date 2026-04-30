@@ -107,7 +107,11 @@ export class ReportController {
           return sendError(res, HTTP_STATUS.UNAUTHORIZED);
         }
 
-        const report = await reportService.createReport(userId, req.body);
+        const report = await reportService.createReport(
+          userId,
+          req.body,
+          req.headers.authorization,
+        );
         sendSuccess(res, HTTP_STATUS.CREATED, { report });
       } catch (error) {
         console.error("Create report error:", error);
@@ -310,7 +314,12 @@ export class ReportController {
    */
   updateReport = [
     body("title").optional().trim(),
+    body("titleVi").optional().trim(),
+    body("titleEn").optional().trim(),
     body("description").optional().trim(),
+    body("descriptionVi").optional().trim(),
+    body("descriptionEn").optional().trim(),
+    body("lang").optional().isIn(["vi", "en"]),
     body("wasteType").optional().trim(),
     body("severityLevel")
       .optional()
@@ -345,6 +354,8 @@ export class ReportController {
           req.body,
           userId,
           req.user?.role,
+          undefined,
+          req.headers.authorization,
         );
         sendSuccess(res, HTTP_STATUS.OK, { report });
       } catch (error) {

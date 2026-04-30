@@ -4,7 +4,12 @@ import type { ResourceVoteSummary } from "../vote/vote.dto";
 // Request DTOs
 export interface CreateReportRequest {
   title: string;
+  titleVi?: string;
+  titleEn?: string;
   description?: string;
+  descriptionVi?: string;
+  descriptionEn?: string;
+  lang?: "vi" | "en";
   wasteType?: string;
   severityLevel?: number;
   latitude: number;
@@ -16,7 +21,12 @@ export interface CreateReportRequest {
 
 export interface UpdateReportRequest {
   title?: string;
+  titleVi?: string;
+  titleEn?: string;
   description?: string;
+  descriptionVi?: string;
+  descriptionEn?: string;
+  lang?: "vi" | "en";
   wasteType?: string;
   severityLevel?: number;
   latitude?: number;
@@ -67,7 +77,11 @@ export interface ReportResponse {
    */
   user: OrganizationOwnerResponse | null;
   title: string | null;
+  titleVi?: string | null;
+  titleEn?: string | null;
   description: string | null;
+  descriptionVi?: string | null;
+  descriptionEn?: string | null;
   wasteType: string | null;
   severityLevel: number | null;
   latitude: number | null;

@@ -25,6 +25,8 @@ import { buildVerifyContactEmailRequestUrl } from "./organization-contact-email-
 import { organizationJoiningRequestRepository } from "./organization_joining_request.repository";
 import { organizationMemberRepository } from "./organization_member.repository";
 import { organizationRepository } from "./organization.repository";
+import { pickLocalizedText, SupportedLanguage } from "../../utils/i18n";
+import { translateText } from "../translation/translation.client";
 
 type OrganizationCore = Omit<OrganizationResponse, "owner">;
 
@@ -33,6 +35,8 @@ export class OrganizationService {
     id: string;
     name: string;
     description: string | null;
+    descriptionVi?: string | null;
+    descriptionEn?: string | null;
     logoUrl: string;
     backgroundUrl: string | null;
     contactEmail: string | null;
@@ -41,11 +45,17 @@ export class OrganizationService {
     ownerId: string;
     createdAt: Date;
     updatedAt: Date;
-  }): OrganizationCore {
+  }, lang: SupportedLanguage = "vi"): OrganizationCore {
     return {
       id: row.id,
       name: row.name,
-      description: row.description,
+      description: pickLocalizedText(
+        lang,
+        row.descriptionVi ?? row.description,
+        row.descriptionEn,
+      ),
+      descriptionVi: row.descriptionVi ?? row.description ?? null,
+      descriptionEn: row.descriptionEn ?? null,
       logoUrl: row.logoUrl,
       backgroundUrl: row.backgroundUrl,
       contactEmail: row.contactEmail,
@@ -131,10 +141,26 @@ export class OrganizationService {
   async createOrganization(
     ownerId: string,
     body: CreateOrganizationBody,
+    authorization?: string,
+    lang: SupportedLanguage = "vi",
   ): Promise<OrganizationResponse> {
+    const providedVi = body.descriptionVi?.trim();
+    const providedEn = body.descriptionEn?.trim();
+    const legacy = body.description?.trim();
+    const sourceText = providedVi || providedEn || legacy || "";
+    let descriptionVi: string | null = providedVi ?? null;
+    let descriptionEn: string | null = providedEn ?? null;
+    if (sourceText && (!descriptionVi || !descriptionEn)) {
+      const tr = await translateText(sourceText, authorization);
+      descriptionVi = descriptionVi ?? tr.vi;
+      descriptionEn = descriptionEn ?? tr.en;
+    }
+
     const created = await organizationRepository.create({
       name: body.name.trim(),
-      description: body.description?.trim() || null,
+      description: descriptionVi ?? legacy ?? null,
+      descriptionVi,
+      descriptionEn,
       logoUrl: body.logoUrl.trim(),
       backgroundUrl: body.backgroundUrl?.trim() || null,
       contactEmail: body.contactEmail.trim().toLowerCase(),
@@ -156,7 +182,7 @@ export class OrganizationService {
       });
     }
 
-    return this.withOwner(this.organizationCoreFromRow(created));
+    return this.withOwner(this.organizationCoreFromRow(created, lang));
   }
 
   private async queueOrganizationContactVerificationEmail(
@@ -280,6 +306,8 @@ export class OrganizationService {
     organizationId: string,
     ownerId: string,
     body: UpdateOrganizationBody,
+    authorization?: string,
+    lang: SupportedLanguage = "vi",
   ): Promise<OrganizationResponse> {
     const org = await organizationRepository.findById(organizationId);
     if (!org) {
@@ -305,6 +333,23 @@ export class OrganizationService {
     }
     if (body.description !== undefined) {
       patch.description = body.description?.trim() || null;
+    }
+    if (body.descriptionVi !== undefined) {
+      patch.descriptionVi = body.descriptionVi?.trim() || null;
+    }
+    if (body.descriptionEn !== undefined) {
+      patch.descriptionEn = body.descriptionEn?.trim() || null;
+    }
+    const sourceText =
+      body.descriptionVi?.trim() ||
+      body.descriptionEn?.trim() ||
+      body.description?.trim() ||
+      "";
+    if (sourceText) {
+      const tr = await translateText(sourceText, authorization);
+      if (patch.descriptionVi === undefined) patch.descriptionVi = tr.vi;
+      if (patch.descriptionEn === undefined) patch.descriptionEn = tr.en;
+      if (patch.description === undefined) patch.description = tr.vi;
     }
     if (body.logoUrl !== undefined) {
       patch.logoUrl = body.logoUrl.trim();
@@ -340,7 +385,7 @@ export class OrganizationService {
       });
     }
 
-    return this.withOwner(this.organizationCoreFromRow(updated));
+    return this.withOwner(this.organizationCoreFromRow(updated, lang));
   }
 
   /** Owner-only: resend contact verification when email is not yet verified. */
@@ -432,11 +477,12 @@ export class OrganizationService {
   async getById(
     organizationId: string,
     viewerUserId?: string,
+    lang: SupportedLanguage = "vi",
   ): Promise<OrganizationResponse | null> {
     const row = await organizationRepository.findById(organizationId);
     if (!row) return null;
     const organization = await this.withOwner(
-      this.organizationCoreFromRow(row),
+      this.organizationCoreFromRow(row, lang),
     );
     if (!viewerUserId) {
       return organization;
@@ -506,6 +552,7 @@ export class OrganizationService {
   async listMyOrganizations(
     userId: string,
     query: MyOrganizationsListQuery,
+    lang: SupportedLanguage = "vi",
   ): Promise<{
     organizations: OrganizationResponse[];
     total: number;
@@ -548,7 +595,7 @@ export class OrganizationService {
       );
 
     const organizations = await this.withOwners(
-      rows.map((r) => this.organizationCoreFromRow(r)),
+      rows.map((r) => this.organizationCoreFromRow(r, lang)),
     );
     return {
       organizations: await this.withOrganizationListRequestStatus(
@@ -565,6 +612,7 @@ export class OrganizationService {
   async listOrganizations(
     query: OrganizationListQuery,
     viewerUserId: string,
+    lang: SupportedLanguage = "vi",
   ): Promise<{
     organizations: OrganizationResponse[];
     total: number;
@@ -604,7 +652,7 @@ export class OrganizationService {
     );
 
     const organizations = await this.withOwners(
-      rows.map((r) => this.organizationCoreFromRow(r)),
+      rows.map((r) => this.organizationCoreFromRow(r, lang)),
     );
     return {
       organizations: await this.withOrganizationListRequestStatus(

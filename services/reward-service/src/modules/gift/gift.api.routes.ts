@@ -12,6 +12,7 @@ import {
 } from "../../middleware/auth.middleware";
 import { requireAdmin } from "../../middleware/require-admin.middleware";
 import { giftService } from "./gift.service";
+import { normalizeLanguage } from "../../utils/i18n";
 
 const router = Router();
 
@@ -38,6 +39,7 @@ router.get(
   query("greenPointsMax").optional().isInt({ min: 0 }).toInt(),
   query("sortBy").optional().isIn(["createdAt", "name", "greenPoints"]),
   query("sortOrder").optional().isIn(["asc", "desc"]),
+  query("lang").optional().isIn(["vi", "en"]),
 
   async (req, res): Promise<void> => {
     const errors = validationResult(req);
@@ -62,6 +64,10 @@ router.get(
       | "greenPoints"
       | undefined;
     const sortOrder = req.query.sortOrder as "asc" | "desc" | undefined;
+    const lang = normalizeLanguage(
+      (req.query.lang as string | undefined) ??
+        (req.headers["accept-language"] as string | undefined),
+    );
 
     const role = req.user?.role?.toLowerCase();
     const isAdmin = role === "admin";
@@ -97,6 +103,7 @@ router.get(
         isAdmin,
         sortBy,
         sortOrder,
+        lang,
       });
 
       const totalPages = total === 0 ? 0 : Math.ceil(total / limit);
@@ -123,6 +130,7 @@ router.get(
 router.get(
   "/gifts/:id",
   param("id").isUUID().withMessage("id must be a valid UUID"),
+  query("lang").optional().isIn(["vi", "en"]),
   async (req, res): Promise<void> => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -134,7 +142,11 @@ router.get(
 
     try {
       const id = req.params?.id;
-      const gift = await giftService.getGiftById(id);
+      const lang = normalizeLanguage(
+        (req.query?.lang as string | undefined) ??
+          (req.headers["accept-language"] as string | undefined),
+      );
+      const gift = await giftService.getGiftById(id, lang);
       if (!gift) {
         sendError(res, HTTP_STATUS.NOT_FOUND.withMessage("Gift not found"));
         return;
@@ -157,8 +169,13 @@ router.post(
   authenticate,
   requireAdmin,
   body("name").trim().isLength({ min: 1, max: 255 }),
+  body("nameVi").optional().trim().isLength({ min: 1, max: 255 }),
+  body("nameEn").optional().trim().isLength({ min: 1, max: 255 }),
   body("imageUrl").optional().isURL().withMessage("imageUrl must be a valid URL"),
   body("description").isString().trim(),
+  body("descriptionVi").optional().isString().trim(),
+  body("descriptionEn").optional().isString().trim(),
+  body("lang").optional().isIn(["vi", "en"]),
   body("greenPoints")
     .isInt({ min: 0 })
     .withMessage("greenPoints must be an integer >= 0"),
@@ -180,8 +197,13 @@ router.post(
     try {
       const gift = await giftService.create({
         name: req.body.name,
+        nameVi: req.body.nameVi,
+        nameEn: req.body.nameEn,
         imageUrl: req.body.imageUrl,
         description: req.body.description,
+        descriptionVi: req.body.descriptionVi,
+        descriptionEn: req.body.descriptionEn,
+        lang: req.body.lang,
         greenPoints: req.body.greenPoints,
         stockRemaining: req.body.stockRemaining,
         isActive: req.body.isActive,
@@ -205,8 +227,13 @@ router.put(
   requireAdmin,
   param("id").isUUID().withMessage("id must be a UUID"),
   body("name").optional().trim().isLength({ min: 1, max: 255 }),
+  body("nameVi").optional().trim().isLength({ min: 1, max: 255 }),
+  body("nameEn").optional().trim().isLength({ min: 1, max: 255 }),
   body("imageUrl").optional().isURL().withMessage("imageUrl must be a valid URL"),
   body("description").optional().isString().trim(),
+  body("descriptionVi").optional().isString().trim(),
+  body("descriptionEn").optional().isString().trim(),
+  body("lang").optional().isIn(["vi", "en"]),
   body("greenPoints")
     .optional()
     .isInt({ min: 0 })
@@ -234,12 +261,20 @@ router.put(
       }
       const updated = await giftService.updateById(id, {
         name: req.body.name,
+        nameVi: req.body.nameVi,
+        nameEn: req.body.nameEn,
         imageUrl: req.body.imageUrl,
         description: req.body.description,
+        descriptionVi: req.body.descriptionVi,
+        descriptionEn: req.body.descriptionEn,
+        lang: req.body.lang,
         greenPoints: req.body.greenPoints,
         stockRemaining: req.body.stockRemaining,
         isActive: req.body.isActive,
-      });
+      }, req.headers.authorization, normalizeLanguage(
+        (req.query?.lang as string | undefined) ??
+          (req.headers["accept-language"] as string | undefined),
+      ));
       if (!updated) {
         sendError(res, HTTP_STATUS.NOT_FOUND);
         return;

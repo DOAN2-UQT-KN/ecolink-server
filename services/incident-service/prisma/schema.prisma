@@ -17,7 +17,11 @@ model Report {
   campaignId String? @map("campaign_id") @db.Uuid
   userId     String? @map("user_id") @db.Uuid
   title      String? @db.VarChar(200)
+  titleVi    String? @map("title_vi") @db.VarChar(200)
+  titleEn    String? @map("title_en") @db.VarChar(200)
   description String?
+  descriptionVi String? @map("description_vi")
+  descriptionEn String? @map("description_en")
 
   wasteType     String? @map("waste_type") @db.VarChar(100)
   severityLevel Int?    @map("severity_level")
@@ -62,8 +66,12 @@ model Report {
 model Campaign {
   id          String  @id @default(uuid()) @db.Uuid
   title       String  @db.VarChar(200)
+  titleVi     String? @map("title_vi") @db.VarChar(200)
+  titleEn     String? @map("title_en") @db.VarChar(200)
   banner      String? @db.VarChar(2048)
   description String?
+  descriptionVi String? @map("description_vi")
+  descriptionEn String? @map("description_en")
   status      Int     @default(12)
   startDate   DateTime? @map("start_date")
   endDate     DateTime? @map("end_date")
@@ -148,7 +156,11 @@ model CampaignTask {
   campaignId String? @map("campaign_id") @db.Uuid
 
   title       String? @db.VarChar(200)
+  titleVi     String? @map("title_vi") @db.VarChar(200)
+  titleEn     String? @map("title_en") @db.VarChar(200)
   description String?
+  descriptionVi String? @map("description_vi")
+  descriptionEn String? @map("description_en")
   priority    Int     @default(2)
 
   status Int @default(12)
@@ -178,6 +190,8 @@ model CampaignTaskResult {
   id             String  @id @default(uuid()) @db.Uuid
   campaignTaskId String  @unique @map("campaign_task_id") @db.Uuid
   description    String?
+  descriptionVi  String? @map("description_vi")
+  descriptionEn  String? @map("description_en")
 
   createdBy String? @map("created_by") @db.Uuid
   updatedBy String? @map("updated_by") @db.Uuid
@@ -279,7 +293,11 @@ model CampaignSubmission {
   submittedBy String  @map("submitted_by") @db.Uuid // manager who submitted
 
   title       String? @db.VarChar(200)
+  titleVi     String? @map("title_vi") @db.VarChar(200)
+  titleEn     String? @map("title_en") @db.VarChar(200)
   description String?
+  descriptionVi String? @map("description_vi")
+  descriptionEn String? @map("description_en")
 
   status Int @default(12) // PENDING → in review / approved / rejected after process
 
@@ -308,7 +326,11 @@ model CampaignResult {
   campaignSubmissionId String? @map("campaign_submission_id") @db.Uuid
 
   title       String  @db.VarChar(200)
+  titleVi     String? @map("title_vi") @db.VarChar(200)
+  titleEn     String? @map("title_en") @db.VarChar(200)
   description String?
+  descriptionVi String? @map("description_vi")
+  descriptionEn String? @map("description_en")
 
   createdBy String? @map("created_by") @db.Uuid
   updatedBy String? @map("updated_by") @db.Uuid
@@ -355,6 +377,8 @@ model ReportIssue {
 
   issueType    String? @map("issue_type") @db.VarChar(50)
   description  String?
+  descriptionVi String? @map("description_vi")
+  descriptionEn String? @map("description_en")
   mediaFileUrl String? @map("media_file_url")
 
   createdBy String? @map("created_by") @db.Uuid
@@ -477,6 +501,8 @@ model Organization {
   id          String  @id @default(uuid()) @db.Uuid
   name        String  @db.VarChar(200)
   description String?
+  descriptionVi String? @map("description_vi")
+  descriptionEn String? @map("description_en")
 
   /** Public logo image URL (required on create). */
   logoUrl String @map("logo_url") @db.VarChar(2048)
@@ -532,6 +558,8 @@ model Sos {
   campaignId String @map("campaign_id") @db.Uuid
 
   content       String
+  contentVi     String? @map("content_vi")
+  contentEn     String? @map("content_en")
   phone         String  @db.VarChar(20)
   address       String  @db.VarChar(500)
   detailAddress String? @map("detail_address") @db.VarChar(255)

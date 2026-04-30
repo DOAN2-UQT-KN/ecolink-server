@@ -4,6 +4,7 @@ import { HTTP_STATUS, sendError, sendSuccess } from "../../constants/http-status
 import { authenticate } from "../../middleware/auth.middleware";
 import { requireAdmin } from "../../middleware/require-admin.middleware";
 import { difficultyService } from "./difficulty.service";
+import { normalizeLanguage } from "../../utils/i18n";
 
 const router = Router();
 
@@ -16,6 +17,7 @@ router.get(
   "/difficulties",
   query("page").optional().isInt({ min: 1 }).toInt(),
   query("limit").optional().isInt({ min: 1, max: 100 }).toInt(),
+  query("lang").optional().isIn(["vi", "en"]),
   async (req, res): Promise<void> => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -29,7 +31,15 @@ router.get(
     const limit = (req.query?.limit as number | undefined) ?? 20;
 
     try {
-      const { difficulties, total } = await difficultyService.listActive(page, limit);
+      const lang = normalizeLanguage(
+        (req.query.lang as string | undefined) ??
+          (req.headers["accept-language"] as string | undefined),
+      );
+      const { difficulties, total } = await difficultyService.listActive(
+        page,
+        limit,
+        lang,
+      );
       const totalPages = total === 0 ? 0 : Math.ceil(total / limit);
 
       sendSuccess(res, HTTP_STATUS.OK, {
@@ -57,6 +67,9 @@ router.put(
   requireAdmin,
   param("id").isUUID().withMessage("id must be a UUID"),
   body("name").optional().trim().isLength({ min: 1, max: 64 }),
+  body("nameVi").optional().trim().isLength({ min: 1, max: 64 }),
+  body("nameEn").optional().trim().isLength({ min: 1, max: 64 }),
+  body("lang").optional().isIn(["vi", "en"]),
   body("maxVolunteers")
     .optional({ values: "null" })
     .custom((v) => v === null || (Number.isInteger(v) && v >= 1))
@@ -83,12 +96,18 @@ router.put(
       }
       const updated = await difficultyService.updateById(id, {
         name: req.body.name,
+        nameVi: req.body.nameVi,
+        nameEn: req.body.nameEn,
+        lang: req.body.lang,
         maxVolunteers:
           req.body.maxVolunteers === undefined
             ? undefined
             : req.body.maxVolunteers,
         greenPoints: req.body.greenPoints,
-      });
+      }, req.headers.authorization, normalizeLanguage(
+        (req.query.lang as string | undefined) ??
+          (req.headers["accept-language"] as string | undefined),
+      ));
       if (!updated) {
         sendError(res, HTTP_STATUS.NOT_FOUND);
         return;

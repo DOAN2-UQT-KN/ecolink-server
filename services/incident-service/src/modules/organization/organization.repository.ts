@@ -12,6 +12,8 @@ export class OrganizationRepository {
   async create(data: {
     name: string;
     description?: string | null;
+    descriptionVi?: string | null;
+    descriptionEn?: string | null;
     logoUrl: string;
     backgroundUrl?: string | null;
     contactEmail?: string | null;
@@ -22,6 +24,8 @@ export class OrganizationRepository {
       data: {
         name: data.name,
         description: data.description ?? null,
+        descriptionVi: data.descriptionVi ?? null,
+        descriptionEn: data.descriptionEn ?? null,
         logoUrl: data.logoUrl,
         backgroundUrl: data.backgroundUrl ?? null,
         contactEmail: data.contactEmail ?? null,
@@ -37,6 +41,8 @@ export class OrganizationRepository {
     data: {
       name?: string;
       description?: string | null;
+      descriptionVi?: string | null;
+      descriptionEn?: string | null;
       logoUrl?: string;
       backgroundUrl?: string | null;
       contactEmail?: string | null;
@@ -51,6 +57,12 @@ export class OrganizationRepository {
         ...(data.name !== undefined && { name: data.name }),
         ...(data.description !== undefined && {
           description: data.description,
+        }),
+        ...(data.descriptionVi !== undefined && {
+          descriptionVi: data.descriptionVi,
+        }),
+        ...(data.descriptionEn !== undefined && {
+          descriptionEn: data.descriptionEn,
         }),
         ...(data.logoUrl !== undefined && { logoUrl: data.logoUrl }),
         ...(data.backgroundUrl !== undefined && {

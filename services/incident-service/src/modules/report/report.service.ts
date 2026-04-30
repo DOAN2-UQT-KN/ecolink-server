@@ -35,6 +35,7 @@ import {
 import type { OrganizationOwnerResponse } from "../organization/organization.dto";
 import { rewardServiceClient } from "../reward/reward-service.client";
 import { enqueueReportStatusWebsiteNotification } from "./report-status-notify.client";
+import { translateText } from "../translation/translation.client";
 
 /** Admin moderation: report is banned / hidden (`GlobalStatus._STATUS_INACTIVE`). */
 const REPORT_STATUS_BANNED = ReportStatus._STATUS_INACTIVE;
@@ -151,17 +152,38 @@ export class ReportService {
   async createReport(
     userId: string,
     request: CreateReportRequest,
+    authorization?: string,
   ): Promise<ReportResponse> {
     const imageUrls = request.imageUrls
       .map((imageUrl) => imageUrl.trim())
       .filter((imageUrl) => imageUrl.length > 0);
+
+    const sourceTitle =
+      request.titleVi?.trim() || request.titleEn?.trim() || request.title.trim();
+    const sourceDescription =
+      request.descriptionVi?.trim() ||
+      request.descriptionEn?.trim() ||
+      request.description?.trim() ||
+      "";
+    const [titleTr, descTr] = await Promise.all([
+      translateText(sourceTitle, authorization),
+      sourceDescription
+        ? translateText(sourceDescription, authorization)
+        : Promise.resolve({ vi: "", en: "" }),
+    ]);
 
     const reportAndMedia = await prisma.$transaction(async (tx) => {
       const createdReport = await tx.report.create({
         data: {
           userId,
           title: request.title,
+          titleVi: request.titleVi?.trim() || titleTr.vi,
+          titleEn: request.titleEn?.trim() || titleTr.en,
           description: request.description,
+          descriptionVi:
+            request.descriptionVi?.trim() || (sourceDescription ? descTr.vi : null),
+          descriptionEn:
+            request.descriptionEn?.trim() || (sourceDescription ? descTr.en : null),
           wasteType: request.wasteType,
           severityLevel: request.severityLevel,
           latitude: request.latitude,
@@ -170,7 +192,7 @@ export class ReportService {
           status: ReportStatus._STATUS_PENDING,
           isVerify: false,
           aiVerified: false,
-        },
+        } as any,
       });
 
       let reportMediaFileIds: string[] = [];
@@ -434,6 +456,7 @@ export class ReportService {
     userId: string,
     role?: string,
     viewerUserId?: string | null,
+    authorization?: string,
   ): Promise<ReportResponse> {
     const existing = await reportRepository.findById(id);
     if (!existing) {
@@ -442,15 +465,37 @@ export class ReportService {
 
     this.assertReporterMayEditReport(existing, userId, role);
 
+    const sourceTitle =
+      request.titleVi?.trim() || request.titleEn?.trim() || request.title?.trim() || "";
+    const sourceDescription =
+      request.descriptionVi?.trim() ||
+      request.descriptionEn?.trim() ||
+      request.description?.trim() ||
+      "";
+    if (sourceTitle) {
+      const tr = await translateText(sourceTitle, authorization);
+      if (request.titleVi === undefined) request.titleVi = tr.vi;
+      if (request.titleEn === undefined) request.titleEn = tr.en;
+    }
+    if (sourceDescription) {
+      const tr = await translateText(sourceDescription, authorization);
+      if (request.descriptionVi === undefined) request.descriptionVi = tr.vi;
+      if (request.descriptionEn === undefined) request.descriptionEn = tr.en;
+    }
+
     const report = await reportRepository.update(id, {
       title: request.title,
+      titleVi: request.titleVi,
+      titleEn: request.titleEn,
       description: request.description,
+      descriptionVi: request.descriptionVi,
+      descriptionEn: request.descriptionEn,
       wasteType: request.wasteType,
       severityLevel: request.severityLevel,
       latitude: request.latitude,
       longitude: request.longitude,
       detailAddress: request.detailAddress,
-    });
+    } as any);
 
     return this.withReportVote(
       toReportResponse(report),

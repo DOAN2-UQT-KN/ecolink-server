@@ -2,6 +2,9 @@
 export interface CreateOrganizationBody {
   name: string;
   description?: string;
+  descriptionVi?: string;
+  descriptionEn?: string;
+  lang?: "vi" | "en";
   /** Required; clients send `logo_url`. */
   logoUrl: string;
   /** Optional; clients send `background_url`. */
@@ -31,6 +34,9 @@ export interface OrganizationOwnerResponse {
 export interface UpdateOrganizationBody {
   name?: string;
   description?: string;
+  descriptionVi?: string;
+  descriptionEn?: string;
+  lang?: "vi" | "en";
   logoUrl?: string;
   /** Omit to leave unchanged; send `null` to clear. */
   backgroundUrl?: string | null;
@@ -41,6 +47,8 @@ export interface OrganizationResponse {
   id: string;
   name: string;
   description: string | null;
+  descriptionVi?: string | null;
+  descriptionEn?: string | null;
   logoUrl: string;
   backgroundUrl: string | null;
   contactEmail: string | null;

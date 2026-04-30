@@ -17,6 +17,8 @@ model Difficulty {
   level Int @unique
 
   name String @db.VarChar(64)
+  nameVi String? @map("name_vi") @db.VarChar(64)
+  nameEn String? @map("name_en") @db.VarChar(64)
 
   /// Maximum approved volunteers; null means no limit (very hard).
   maxVolunteers Int? @map("max_volunteers")
@@ -95,10 +97,14 @@ model Gift {
   id String @id @default(uuid()) @db.Uuid
 
   name String @db.VarChar(255)
+  nameVi String? @map("name_vi") @db.VarChar(255)
+  nameEn String? @map("name_en") @db.VarChar(255)
 
   mediaId String? @map("media_id") @db.Uuid
 
   description String @db.Text
+  descriptionVi String? @map("description_vi") @db.Text
+  descriptionEn String? @map("description_en") @db.Text
 
   /// Green points required to redeem once.
   greenPoints Int @map("green_points")

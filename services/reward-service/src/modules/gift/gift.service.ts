@@ -15,6 +15,8 @@ import {
   toGiftResponse,
   UpdateGiftBody,
 } from "./gift.dto";
+import { pickLocalizedText, SupportedLanguage } from "../../utils/i18n";
+import { translateText } from "../translation/translation.client";
 
 export type ListGiftsParams = {
   page: number;
@@ -28,11 +30,13 @@ export type ListGiftsParams = {
   isAdmin: boolean;
   sortBy?: "createdAt" | "name" | "greenPoints";
   sortOrder?: "asc" | "desc";
+  lang?: SupportedLanguage;
 };
 
 export class GiftService {
   private async mapGiftsWithMediaByMediaId(
     rows: Gift[],
+    lang: SupportedLanguage = "vi",
   ): Promise<GiftResponse[]> {
     const mediaIds = rows
       .map((row) => row.mediaId)
@@ -52,12 +56,25 @@ export class GiftService {
       mediaRows.map((media) => [media.id, media]),
     );
 
-    return rows.map((row) =>
-      toGiftResponse({
+    return rows.map((row) => {
+      const base = toGiftResponse({
         ...row,
         media: row.mediaId ? (mediaById.get(row.mediaId) ?? null) : null,
-      }),
-    );
+      });
+      const rowAny = row as any;
+      return {
+        ...base,
+        name:
+          pickLocalizedText(lang, rowAny.nameVi ?? row.name, rowAny.nameEn) ??
+          row.name,
+        description:
+          pickLocalizedText(
+            lang,
+            rowAny.descriptionVi ?? row.description,
+            rowAny.descriptionEn,
+          ) ?? row.description,
+      };
+    });
   }
 
   async listGifts(params: ListGiftsParams): Promise<{
@@ -75,7 +92,11 @@ export class GiftService {
     const q = params.search?.trim();
     if (q) {
       andParts.push({
-        name: { contains: q, mode: "insensitive" },
+        OR: [
+          { name: { contains: q, mode: "insensitive" } },
+          { nameVi: { contains: q, mode: "insensitive" } } as any,
+          { nameEn: { contains: q, mode: "insensitive" } } as any,
+        ],
       });
     }
 
@@ -111,11 +132,14 @@ export class GiftService {
       prisma.gift.count({ where }),
     ]);
 
-    const gifts = await this.mapGiftsWithMediaByMediaId(rows);
+    const gifts = await this.mapGiftsWithMediaByMediaId(rows, params.lang ?? "vi");
     return { gifts, total };
   }
 
-  async getGiftById(id: string): Promise<GiftResponse | null> {
+  async getGiftById(
+    id: string,
+    lang: SupportedLanguage = "vi",
+  ): Promise<GiftResponse | null> {
     const row = await prisma.gift.findFirst({
       where: { id, deletedAt: null },
     });
@@ -123,7 +147,7 @@ export class GiftService {
       return null;
     }
 
-    const [gift] = await this.mapGiftsWithMediaByMediaId([row]);
+    const [gift] = await this.mapGiftsWithMediaByMediaId([row], lang);
     return gift ?? null;
   }
 
@@ -164,7 +188,11 @@ export class GiftService {
         ? {
             id: r.gift.id,
             name: r.gift.name,
+            nameVi: (r.gift as any).nameVi ?? r.gift.name,
+            nameEn: (r.gift as any).nameEn,
             description: r.gift.description,
+            descriptionVi: (r.gift as any).descriptionVi ?? r.gift.description,
+            descriptionEn: (r.gift as any).descriptionEn,
             mediaId: r.gift.mediaId,
             greenPoints: r.gift.greenPoints,
           }
@@ -175,6 +203,16 @@ export class GiftService {
   }
 
   async create(body: CreateGiftBody): Promise<GiftResponse> {
+    const sourceName =
+      body.nameVi?.trim() || body.nameEn?.trim() || body.name.trim();
+    const sourceDescription =
+      body.descriptionVi?.trim() ||
+      body.descriptionEn?.trim() ||
+      body.description.trim();
+    const [nameTr, descTr] = await Promise.all([
+      translateText(sourceName, undefined),
+      translateText(sourceDescription, undefined),
+    ]);
     const row = await prisma.$transaction(async (tx) => {
       let mediaId: string | null = null;
       if (body.imageUrl?.trim()) {
@@ -191,22 +229,28 @@ export class GiftService {
       return tx.gift.create({
         data: {
           name: body.name.trim(),
+          nameVi: body.nameVi?.trim() || nameTr.vi,
+          nameEn: body.nameEn?.trim() || nameTr.en,
           mediaId,
           description: body.description.trim(),
+          descriptionVi: body.descriptionVi?.trim() || descTr.vi,
+          descriptionEn: body.descriptionEn?.trim() || descTr.en,
           greenPoints: body.greenPoints,
           stockRemaining:
             body.stockRemaining === undefined ? null : body.stockRemaining,
           isActive: body.isActive ?? true,
-        },
+        } as any,
       });
     });
-    const [gift] = await this.mapGiftsWithMediaByMediaId([row]);
+    const [gift] = await this.mapGiftsWithMediaByMediaId([row], "vi");
     return gift;
   }
 
   async updateById(
     id: string,
     body: UpdateGiftBody,
+    authorization?: string,
+    lang: SupportedLanguage = "vi",
   ): Promise<GiftResponse | null> {
     const existing = await prisma.gift.findFirst({
       where: { id, deletedAt: null },
@@ -215,10 +259,36 @@ export class GiftService {
       return null;
     }
 
+    const sourceName =
+      body.nameVi?.trim() || body.nameEn?.trim() || body.name?.trim() || "";
+    const sourceDescription =
+      body.descriptionVi?.trim() ||
+      body.descriptionEn?.trim() ||
+      body.description?.trim() ||
+      "";
+    if (sourceName) {
+      const tr = await translateText(sourceName, authorization);
+      if (body.nameVi === undefined) body.nameVi = tr.vi;
+      if (body.nameEn === undefined) body.nameEn = tr.en;
+    }
+    if (sourceDescription) {
+      const tr = await translateText(sourceDescription, authorization);
+      if (body.descriptionVi === undefined) body.descriptionVi = tr.vi;
+      if (body.descriptionEn === undefined) body.descriptionEn = tr.en;
+    }
+
     const data: Prisma.GiftUpdateInput = {
       ...(body.name !== undefined ? { name: body.name.trim() } : {}),
+      ...(body.nameVi !== undefined ? ({ nameVi: body.nameVi.trim() } as any) : {}),
+      ...(body.nameEn !== undefined ? ({ nameEn: body.nameEn.trim() } as any) : {}),
       ...(body.description !== undefined
         ? { description: body.description.trim() }
+        : {}),
+      ...(body.descriptionVi !== undefined
+        ? ({ descriptionVi: body.descriptionVi.trim() } as any)
+        : {}),
+      ...(body.descriptionEn !== undefined
+        ? ({ descriptionEn: body.descriptionEn.trim() } as any)
         : {}),
       ...(body.greenPoints !== undefined
         ? { greenPoints: body.greenPoints }
@@ -236,7 +306,7 @@ export class GiftService {
       if (!unchanged) {
         return null;
       }
-      const [gift] = await this.mapGiftsWithMediaByMediaId([unchanged]);
+      const [gift] = await this.mapGiftsWithMediaByMediaId([unchanged], lang);
       return gift ?? null;
     }
 
@@ -261,7 +331,7 @@ export class GiftService {
         data,
       });
     });
-    const [gift] = await this.mapGiftsWithMediaByMediaId([updated]);
+    const [gift] = await this.mapGiftsWithMediaByMediaId([updated], lang);
     return gift;
   }
 

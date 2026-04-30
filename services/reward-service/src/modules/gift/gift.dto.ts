@@ -7,6 +7,8 @@ type GiftWithOptionalMedia = Gift & {
 export interface GiftResponse {
   id: string;
   name: string;
+  nameVi?: string | null;
+  nameEn?: string | null;
   mediaId: string | null;
   media: {
     id: string;
@@ -14,6 +16,8 @@ export interface GiftResponse {
     type: string;
   } | null;
   description: string;
+  descriptionVi?: string | null;
+  descriptionEn?: string | null;
   greenPoints: number;
   stockRemaining: number | null;
   isActive: boolean;
@@ -22,6 +26,8 @@ export interface GiftResponse {
 export const toGiftResponse = (row: GiftWithOptionalMedia): GiftResponse => ({
   id: row.id,
   name: row.name,
+  nameVi: row.nameVi ?? row.name,
+  nameEn: row.nameEn,
   mediaId: row.mediaId,
   media: row.media
     ? {
@@ -31,6 +37,8 @@ export const toGiftResponse = (row: GiftWithOptionalMedia): GiftResponse => ({
       }
     : null,
   description: row.description,
+  descriptionVi: row.descriptionVi ?? row.description,
+  descriptionEn: row.descriptionEn,
   greenPoints: row.greenPoints,
   stockRemaining: row.stockRemaining,
   isActive: row.isActive,
@@ -38,8 +46,13 @@ export const toGiftResponse = (row: GiftWithOptionalMedia): GiftResponse => ({
 
 export interface CreateGiftBody {
   name: string;
+  nameVi?: string;
+  nameEn?: string;
   imageUrl?: string;
   description: string;
+  descriptionVi?: string;
+  descriptionEn?: string;
+  lang?: "vi" | "en";
   greenPoints: number;
   stockRemaining?: number | null;
   isActive?: boolean;
@@ -47,8 +60,13 @@ export interface CreateGiftBody {
 
 export interface UpdateGiftBody {
   name?: string;
+  nameVi?: string;
+  nameEn?: string;
   imageUrl?: string;
   description?: string;
+  descriptionVi?: string;
+  descriptionEn?: string;
+  lang?: "vi" | "en";
   greenPoints?: number;
   stockRemaining?: number | null;
   isActive?: boolean;
@@ -114,7 +132,11 @@ export interface GiftRedemptionOneEnvelopeData {
 export interface GiftRedemptionGiftSnapshot {
   id: string;
   name: string;
+  nameVi?: string | null;
+  nameEn?: string | null;
   description: string;
+  descriptionVi?: string | null;
+  descriptionEn?: string | null;
   mediaId: string | null;
   greenPoints: number;
 }
