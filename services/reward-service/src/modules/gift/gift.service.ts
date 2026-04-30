@@ -125,9 +125,7 @@ export class GiftService {
     return { gifts, total };
   }
 
-  async getGiftById(
-    id: string,
-  ): Promise<GiftResponse | null> {
+  async getGiftById(id: string): Promise<GiftResponse | null> {
     const row = await prisma.gift.findFirst({
       where: { id, deletedAt: null },
     });
@@ -230,7 +228,7 @@ export class GiftService {
         } as any,
       });
     });
-    const [gift] = await this.mapGiftsWithMediaByMediaId([row], "vi");
+    const [gift] = await this.mapGiftsWithMediaByMediaId([row]);
     return gift;
   }
 
@@ -266,8 +264,12 @@ export class GiftService {
 
     const data: Prisma.GiftUpdateInput = {
       ...(body.name !== undefined ? { name: body.name.trim() } : {}),
-      ...(body.nameVi !== undefined ? ({ nameVi: body.nameVi.trim() } as any) : {}),
-      ...(body.nameEn !== undefined ? ({ nameEn: body.nameEn.trim() } as any) : {}),
+      ...(body.nameVi !== undefined
+        ? ({ nameVi: body.nameVi.trim() } as any)
+        : {}),
+      ...(body.nameEn !== undefined
+        ? ({ nameEn: body.nameEn.trim() } as any)
+        : {}),
       ...(body.description !== undefined
         ? { description: body.description.trim() }
         : {}),
