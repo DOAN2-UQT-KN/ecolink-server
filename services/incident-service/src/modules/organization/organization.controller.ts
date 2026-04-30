@@ -25,7 +25,6 @@ import {
 } from "./organization-contact-email-urls";
 import { verifyAndConsumeOrganizationContactEmailToken } from "./identity-organization-contact-email.client";
 import { organizationService } from "./organization.service";
-import { parseLanguageFromRequest } from "../../utils/i18n";
 
 const orgIdParam = param("id").isUUID().withMessage("id must be a valid UUID");
 
@@ -160,12 +159,10 @@ export class OrganizationController {
       try {
         const body = req.body as CreateOrganizationBody;
         const authz = req.headers.authorization;
-        const lang = parseLanguageFromRequest(req);
         const organization = await organizationService.createOrganization(
           userId,
           body,
           authz,
-          lang,
         );
         return sendSuccess(res, HTTP_STATUS.CREATED, { organization });
       } catch (error) {
@@ -230,11 +227,9 @@ export class OrganizationController {
       };
 
       try {
-        const lang = parseLanguageFromRequest(req);
         const result = await organizationService.listOrganizations(
           q,
           req.user.userId,
-          lang,
         );
         return sendSuccess(res, HTTP_STATUS.OK, result);
       } catch (error) {
@@ -368,12 +363,7 @@ export class OrganizationController {
       };
 
       try {
-        const lang = parseLanguageFromRequest(req);
-        const result = await organizationService.listMyOrganizations(
-          userId,
-          q,
-          lang,
-        );
+        const result = await organizationService.listMyOrganizations(userId, q);
         return sendSuccess(res, HTTP_STATUS.OK, result);
       } catch (error) {
         if (sendHttpErrorResponse(res, error)) {
@@ -530,13 +520,11 @@ export class OrganizationController {
       try {
         const body = req.body as UpdateOrganizationBody;
         const authz = req.headers.authorization;
-        const lang = parseLanguageFromRequest(req);
         const organization = await organizationService.updateOrganization(
           req.params.id,
           userId,
           body,
           authz,
-          lang,
         );
         return sendSuccess(res, HTTP_STATUS.OK, { organization });
       } catch (error) {
@@ -600,11 +588,9 @@ export class OrganizationController {
       }
 
       try {
-        const lang = parseLanguageFromRequest(req);
         const organization = await organizationService.getById(
           req.params.id,
           req.user.userId,
-          lang,
         );
         if (!organization) {
           return sendError(res, HTTP_STATUS.NOT_FOUND);

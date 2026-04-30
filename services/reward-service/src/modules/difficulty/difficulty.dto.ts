@@ -3,7 +3,7 @@ import { Difficulty } from "@prisma/client";
 export interface DifficultyResponse {
   id: string;
   level: number;
-  name: string;
+  name: string | null;
   nameVi?: string | null;
   nameEn?: string | null;
   maxVolunteers: number | null;
@@ -24,7 +24,6 @@ export interface UpdateDifficultyBody {
   name?: string;
   nameVi?: string;
   nameEn?: string;
-  lang?: "vi" | "en";
   maxVolunteers?: number | null;
   greenPoints?: number;
 }

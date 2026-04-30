@@ -25,7 +25,6 @@ import { buildVerifyContactEmailRequestUrl } from "./organization-contact-email-
 import { organizationJoiningRequestRepository } from "./organization_joining_request.repository";
 import { organizationMemberRepository } from "./organization_member.repository";
 import { organizationRepository } from "./organization.repository";
-import { pickLocalizedText, SupportedLanguage } from "../../utils/i18n";
 import { translateText } from "../translation/translation.client";
 
 type OrganizationCore = Omit<OrganizationResponse, "owner">;
@@ -45,15 +44,11 @@ export class OrganizationService {
     ownerId: string;
     createdAt: Date;
     updatedAt: Date;
-  }, lang: SupportedLanguage = "vi"): OrganizationCore {
+  }): OrganizationCore {
     return {
       id: row.id,
       name: row.name,
-      description: pickLocalizedText(
-        lang,
-        row.descriptionVi ?? row.description,
-        row.descriptionEn,
-      ),
+      description: null,
       descriptionVi: row.descriptionVi ?? row.description ?? null,
       descriptionEn: row.descriptionEn ?? null,
       logoUrl: row.logoUrl,
@@ -142,7 +137,6 @@ export class OrganizationService {
     ownerId: string,
     body: CreateOrganizationBody,
     authorization?: string,
-    lang: SupportedLanguage = "vi",
   ): Promise<OrganizationResponse> {
     const providedVi = body.descriptionVi?.trim();
     const providedEn = body.descriptionEn?.trim();
@@ -182,7 +176,7 @@ export class OrganizationService {
       });
     }
 
-    return this.withOwner(this.organizationCoreFromRow(created, lang));
+    return this.withOwner(this.organizationCoreFromRow(created));
   }
 
   private async queueOrganizationContactVerificationEmail(
@@ -307,7 +301,6 @@ export class OrganizationService {
     ownerId: string,
     body: UpdateOrganizationBody,
     authorization?: string,
-    lang: SupportedLanguage = "vi",
   ): Promise<OrganizationResponse> {
     const org = await organizationRepository.findById(organizationId);
     if (!org) {
@@ -385,7 +378,7 @@ export class OrganizationService {
       });
     }
 
-    return this.withOwner(this.organizationCoreFromRow(updated, lang));
+    return this.withOwner(this.organizationCoreFromRow(updated));
   }
 
   /** Owner-only: resend contact verification when email is not yet verified. */
@@ -477,12 +470,11 @@ export class OrganizationService {
   async getById(
     organizationId: string,
     viewerUserId?: string,
-    lang: SupportedLanguage = "vi",
   ): Promise<OrganizationResponse | null> {
     const row = await organizationRepository.findById(organizationId);
     if (!row) return null;
     const organization = await this.withOwner(
-      this.organizationCoreFromRow(row, lang),
+      this.organizationCoreFromRow(row),
     );
     if (!viewerUserId) {
       return organization;
@@ -552,7 +544,6 @@ export class OrganizationService {
   async listMyOrganizations(
     userId: string,
     query: MyOrganizationsListQuery,
-    lang: SupportedLanguage = "vi",
   ): Promise<{
     organizations: OrganizationResponse[];
     total: number;
@@ -595,7 +586,7 @@ export class OrganizationService {
       );
 
     const organizations = await this.withOwners(
-      rows.map((r) => this.organizationCoreFromRow(r, lang)),
+      rows.map((r) => this.organizationCoreFromRow(r)),
     );
     return {
       organizations: await this.withOrganizationListRequestStatus(
@@ -612,7 +603,6 @@ export class OrganizationService {
   async listOrganizations(
     query: OrganizationListQuery,
     viewerUserId: string,
-    lang: SupportedLanguage = "vi",
   ): Promise<{
     organizations: OrganizationResponse[];
     total: number;
@@ -652,7 +642,7 @@ export class OrganizationService {
     );
 
     const organizations = await this.withOwners(
-      rows.map((r) => this.organizationCoreFromRow(r, lang)),
+      rows.map((r) => this.organizationCoreFromRow(r)),
     );
     return {
       organizations: await this.withOrganizationListRequestStatus(

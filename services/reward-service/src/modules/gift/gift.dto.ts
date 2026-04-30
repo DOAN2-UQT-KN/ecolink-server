@@ -6,7 +6,7 @@ type GiftWithOptionalMedia = Gift & {
 
 export interface GiftResponse {
   id: string;
-  name: string;
+  name: string | null;
   nameVi?: string | null;
   nameEn?: string | null;
   mediaId: string | null;
@@ -15,7 +15,7 @@ export interface GiftResponse {
     url: string;
     type: string;
   } | null;
-  description: string;
+  description: string | null;
   descriptionVi?: string | null;
   descriptionEn?: string | null;
   greenPoints: number;
@@ -52,7 +52,6 @@ export interface CreateGiftBody {
   description: string;
   descriptionVi?: string;
   descriptionEn?: string;
-  lang?: "vi" | "en";
   greenPoints: number;
   stockRemaining?: number | null;
   isActive?: boolean;
@@ -66,7 +65,6 @@ export interface UpdateGiftBody {
   description?: string;
   descriptionVi?: string;
   descriptionEn?: string;
-  lang?: "vi" | "en";
   greenPoints?: number;
   stockRemaining?: number | null;
   isActive?: boolean;

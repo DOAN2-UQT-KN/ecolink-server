@@ -9,7 +9,6 @@ export interface CreateReportRequest {
   description?: string;
   descriptionVi?: string;
   descriptionEn?: string;
-  lang?: "vi" | "en";
   wasteType?: string;
   severityLevel?: number;
   latitude: number;
@@ -26,7 +25,6 @@ export interface UpdateReportRequest {
   description?: string;
   descriptionVi?: string;
   descriptionEn?: string;
-  lang?: "vi" | "en";
   wasteType?: string;
   severityLevel?: number;
   latitude?: number;

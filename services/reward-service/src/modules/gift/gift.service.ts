@@ -15,7 +15,6 @@ import {
   toGiftResponse,
   UpdateGiftBody,
 } from "./gift.dto";
-import { pickLocalizedText, SupportedLanguage } from "../../utils/i18n";
 import { translateText } from "../translation/translation.client";
 
 export type ListGiftsParams = {
@@ -30,13 +29,11 @@ export type ListGiftsParams = {
   isAdmin: boolean;
   sortBy?: "createdAt" | "name" | "greenPoints";
   sortOrder?: "asc" | "desc";
-  lang?: SupportedLanguage;
 };
 
 export class GiftService {
   private async mapGiftsWithMediaByMediaId(
     rows: Gift[],
-    lang: SupportedLanguage = "vi",
   ): Promise<GiftResponse[]> {
     const mediaIds = rows
       .map((row) => row.mediaId)
@@ -61,18 +58,10 @@ export class GiftService {
         ...row,
         media: row.mediaId ? (mediaById.get(row.mediaId) ?? null) : null,
       });
-      const rowAny = row as any;
       return {
         ...base,
-        name:
-          pickLocalizedText(lang, rowAny.nameVi ?? row.name, rowAny.nameEn) ??
-          row.name,
-        description:
-          pickLocalizedText(
-            lang,
-            rowAny.descriptionVi ?? row.description,
-            rowAny.descriptionEn,
-          ) ?? row.description,
+        name: null,
+        description: null,
       };
     });
   }
@@ -132,13 +121,12 @@ export class GiftService {
       prisma.gift.count({ where }),
     ]);
 
-    const gifts = await this.mapGiftsWithMediaByMediaId(rows, params.lang ?? "vi");
+    const gifts = await this.mapGiftsWithMediaByMediaId(rows);
     return { gifts, total };
   }
 
   async getGiftById(
     id: string,
-    lang: SupportedLanguage = "vi",
   ): Promise<GiftResponse | null> {
     const row = await prisma.gift.findFirst({
       where: { id, deletedAt: null },
@@ -147,7 +135,7 @@ export class GiftService {
       return null;
     }
 
-    const [gift] = await this.mapGiftsWithMediaByMediaId([row], lang);
+    const [gift] = await this.mapGiftsWithMediaByMediaId([row]);
     return gift ?? null;
   }
 
@@ -250,7 +238,6 @@ export class GiftService {
     id: string,
     body: UpdateGiftBody,
     authorization?: string,
-    lang: SupportedLanguage = "vi",
   ): Promise<GiftResponse | null> {
     const existing = await prisma.gift.findFirst({
       where: { id, deletedAt: null },
@@ -306,7 +293,7 @@ export class GiftService {
       if (!unchanged) {
         return null;
       }
-      const [gift] = await this.mapGiftsWithMediaByMediaId([unchanged], lang);
+      const [gift] = await this.mapGiftsWithMediaByMediaId([unchanged]);
       return gift ?? null;
     }
 
@@ -331,7 +318,7 @@ export class GiftService {
         data,
       });
     });
-    const [gift] = await this.mapGiftsWithMediaByMediaId([updated], lang);
+    const [gift] = await this.mapGiftsWithMediaByMediaId([updated]);
     return gift;
   }
 
