@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Request as ExpressRequest } from "express";
 import { param, query, validationResult } from "express-validator";
 import { HTTP_STATUS, sendError } from "../../constants/http-status";
 import {
@@ -9,12 +9,19 @@ import * as gc from "./gamification.controller";
 
 const router = Router();
 
+/** express-validator widens `req` generics; controllers expect standard Express.Request */
+function er(req: unknown): ExpressRequest {
+  return req as ExpressRequest;
+}
+
 /**
  * @route   GET /api/v1/seasons/current
  * @desc    Current (or latest) competitive season
  * @access  Public
  */
-router.get("/seasons/current", (req, res) => gc.getSeasonCurrent(req, res));
+router.get("/seasons/current", (req, res) =>
+  gc.getSeasonCurrent(er(req), res),
+);
 
 /**
  * @route   GET /api/v1/seasons/:id
@@ -30,7 +37,7 @@ router.get(
       sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
       return;
     }
-    void gc.getSeasonById(req, res);
+    void gc.getSeasonById(er(req), res);
   },
 );
 
@@ -40,7 +47,7 @@ router.get(
  * @access  Private
  */
 router.get("/me/gamification/summary", authenticate, (req, res) =>
-  gc.getGamificationSummary(req, res),
+  gc.getGamificationSummary(er(req), res),
 );
 
 /**
@@ -60,7 +67,7 @@ router.get(
       sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
       return;
     }
-    void gc.getMyPointTransactions(req, res);
+    void gc.getMyPointTransactions(er(req), res);
   },
 );
 
@@ -80,7 +87,7 @@ router.get(
       sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
       return;
     }
-    void gc.getPointsBySeason(req, res);
+    void gc.getPointsBySeason(er(req), res);
   },
 );
 
@@ -99,7 +106,7 @@ router.get(
       sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
       return;
     }
-    void gc.getMyBadges(req, res);
+    void gc.getMyBadges(er(req), res);
   },
 );
 
@@ -117,7 +124,7 @@ router.get(
       sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
       return;
     }
-    void gc.getCampaignRewardEstimate(req, res);
+    void gc.getCampaignRewardEstimate(er(req), res);
   },
 );
 
@@ -138,8 +145,9 @@ router.get(
       sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
       return;
     }
-    req.params.metric = req.params.metric.toLowerCase();
-    void gc.getGamificationLeaderboard(req, res);
+    const r = er(req);
+    r.params.metric = r.params.metric.toLowerCase();
+    void gc.getGamificationLeaderboard(r, res);
   },
 );
 
@@ -159,8 +167,9 @@ router.get(
       sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
       return;
     }
-    req.params.metric = req.params.metric.toLowerCase();
-    void gc.getGamificationLeaderboardMe(req, res);
+    const r = er(req);
+    r.params.metric = r.params.metric.toLowerCase();
+    void gc.getGamificationLeaderboardMe(r, res);
   },
 );
 
@@ -175,7 +184,7 @@ router.get(
   "/admin/gamification/point-rules",
   authenticate,
   requireAdmin,
-  (req, res) => gc.adminGetPointRules(req, res),
+  (req, res) => gc.adminGetPointRules(er(req), res),
 );
 
 /**
@@ -187,7 +196,7 @@ router.patch(
   "/admin/gamification/point-rules",
   authenticate,
   requireAdmin,
-  (req, res) => gc.adminPatchPointRules(req, res),
+  (req, res) => gc.adminPatchPointRules(er(req), res),
 );
 
 /**
@@ -199,7 +208,7 @@ router.get(
   "/admin/gamification/sp-rules",
   authenticate,
   requireAdmin,
-  (req, res) => gc.adminGetSpRules(req, res),
+  (req, res) => gc.adminGetSpRules(er(req), res),
 );
 
 /**
@@ -211,7 +220,7 @@ router.patch(
   "/admin/gamification/sp-rules",
   authenticate,
   requireAdmin,
-  (req, res) => gc.adminPatchSpRules(req, res),
+  (req, res) => gc.adminPatchSpRules(er(req), res),
 );
 
 /**
@@ -223,7 +232,7 @@ router.get(
   "/admin/gamification/multipliers",
   authenticate,
   requireAdmin,
-  (req, res) => gc.adminListMultipliers(req, res),
+  (req, res) => gc.adminListMultipliers(er(req), res),
 );
 
 /**
@@ -235,7 +244,7 @@ router.put(
   "/admin/gamification/multipliers",
   authenticate,
   requireAdmin,
-  (req, res) => gc.adminPutMultiplier(req, res),
+  (req, res) => gc.adminPutMultiplier(er(req), res),
 );
 
 /**
@@ -247,7 +256,7 @@ router.get(
   "/admin/gamification/season-schedules",
   authenticate,
   requireAdmin,
-  (req, res) => gc.adminListSeasonSchedules(req, res),
+  (req, res) => gc.adminListSeasonSchedules(er(req), res),
 );
 
 /**
@@ -259,7 +268,7 @@ router.put(
   "/admin/gamification/season-schedules",
   authenticate,
   requireAdmin,
-  (req, res) => gc.adminPutSeasonSchedule(req, res),
+  (req, res) => gc.adminPutSeasonSchedule(er(req), res),
 );
 
 /**
@@ -278,7 +287,7 @@ router.get(
       sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
       return;
     }
-    void gc.adminListPayoutTiers(req, res);
+    void gc.adminListPayoutTiers(er(req), res);
   },
 );
 
@@ -291,7 +300,7 @@ router.post(
   "/admin/gamification/payout-tiers",
   authenticate,
   requireAdmin,
-  (req, res) => gc.adminCreatePayoutTier(req, res),
+  (req, res) => gc.adminCreatePayoutTier(er(req), res),
 );
 
 /**
@@ -310,7 +319,7 @@ router.patch(
       sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
       return;
     }
-    void gc.adminPatchPayoutTier(req, res);
+    void gc.adminPatchPayoutTier(er(req), res);
   },
 );
 
@@ -330,7 +339,7 @@ router.delete(
       sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
       return;
     }
-    void gc.adminDeletePayoutTier(req, res);
+    void gc.adminDeletePayoutTier(er(req), res);
   },
 );
 
@@ -350,7 +359,7 @@ router.get(
       sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
       return;
     }
-    void gc.adminListBadges(req, res);
+    void gc.adminListBadges(er(req), res);
   },
 );
 
@@ -363,7 +372,7 @@ router.post(
   "/admin/gamification/badges",
   authenticate,
   requireAdmin,
-  (req, res) => gc.adminCreateBadge(req, res),
+  (req, res) => gc.adminCreateBadge(er(req), res),
 );
 
 /**
@@ -382,7 +391,7 @@ router.patch(
       sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
       return;
     }
-    void gc.adminPatchBadge(req, res);
+    void gc.adminPatchBadge(er(req), res);
   },
 );
 
@@ -405,7 +414,7 @@ router.get(
       sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
       return;
     }
-    void gc.adminListSeasons(req, res);
+    void gc.adminListSeasons(er(req), res);
   },
 );
 
@@ -418,7 +427,7 @@ router.post(
   "/admin/seasons",
   authenticate,
   requireAdmin,
-  (req, res) => gc.adminCreateSeason(req, res),
+  (req, res) => gc.adminCreateSeason(er(req), res),
 );
 
 /**
@@ -437,7 +446,7 @@ router.patch(
       sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
       return;
     }
-    void gc.adminPatchSeason(req, res);
+    void gc.adminPatchSeason(er(req), res);
   },
 );
 
@@ -457,7 +466,7 @@ router.post(
       sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
       return;
     }
-    void gc.adminFreezeSeason(req, res);
+    void gc.adminFreezeSeason(er(req), res);
   },
 );
 
@@ -477,7 +486,7 @@ router.post(
       sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
       return;
     }
-    void gc.adminCloseSeasonAndOpenNext(req, res);
+    void gc.adminCloseSeasonAndOpenNext(er(req), res);
   },
 );
 
