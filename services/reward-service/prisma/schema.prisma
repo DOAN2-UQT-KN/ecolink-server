@@ -463,6 +463,9 @@ model BadgeDefinition {
   slug String @unique @db.VarChar(128)
   name String @db.VarChar(255)
 
+  /// Display symbol or icon key (e.g. emoji, URL slug for asset).
+  symbol String? @db.VarChar(128)
+
   ruleType BadgeRuleType @map("rule_type")
 
   /// Minimum RP for threshold badges; null for pure rank badges.

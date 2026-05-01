@@ -81,6 +81,7 @@ export class BadgeService {
         id: g.badge!.id,
         slug: g.badge!.slug,
         name: g.badge!.name,
+        symbol: g.badge!.symbol,
         ruleType: g.badge!.ruleType,
         threshold: g.badge!.threshold,
         rankTopN: g.badge!.rankTopN,
@@ -100,6 +101,7 @@ export class BadgeService {
   async createDefinition(body: {
     slug: string;
     name: string;
+    symbol?: string | null;
     ruleType: BadgeRuleType;
     threshold?: number | null;
     rankTopN?: number | null;
@@ -112,6 +114,12 @@ export class BadgeService {
         id: randomUUID(),
         slug: body.slug.trim(),
         name: body.name.trim(),
+        symbol:
+          body.symbol === undefined
+            ? undefined
+            : body.symbol === null
+              ? null
+              : body.symbol.trim() || null,
         ruleType: body.ruleType,
         threshold: body.threshold ?? null,
         rankTopN: body.rankTopN ?? null,
@@ -126,6 +134,7 @@ export class BadgeService {
     id: string,
     body: Partial<{
       name: string;
+      symbol: string | null;
       ruleType: BadgeRuleType;
       threshold: number | null;
       rankTopN: number | null;
@@ -138,6 +147,10 @@ export class BadgeService {
     const data: Prisma.BadgeDefinitionUpdateInput = {};
     if (body.name !== undefined) {
       data.name = body.name;
+    }
+    if (body.symbol !== undefined) {
+      data.symbol =
+        body.symbol === null ? null : body.symbol.trim() || null;
     }
     if (body.ruleType !== undefined) {
       data.ruleType = body.ruleType;

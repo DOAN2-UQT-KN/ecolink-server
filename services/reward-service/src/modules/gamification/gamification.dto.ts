@@ -114,6 +114,7 @@ export interface BadgeGrantItemDto {
     id: string;
     slug: string;
     name: string;
+    symbol?: string | null;
     ruleType: string;
     threshold: number | null;
     rankTopN: number | null;
@@ -281,6 +282,7 @@ export interface AdminBadgeDefinitionsQuery {
 export interface CreateBadgeDefinitionBody {
   slug: string;
   name: string;
+  symbol?: string | null;
   ruleType: string;
   threshold?: number | null;
   rankTopN?: number | null;
@@ -291,6 +293,7 @@ export interface CreateBadgeDefinitionBody {
 
 export interface PatchBadgeDefinitionBody {
   name?: string;
+  symbol?: string | null;
   ruleType?: string;
   threshold?: number | null;
   rankTopN?: number | null;

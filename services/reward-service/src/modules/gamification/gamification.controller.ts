@@ -508,9 +508,18 @@ export async function adminCreateBadge(req: Request, res: Response): Promise<voi
       sendError(res, HTTP_STATUS.VALIDATION_ERROR);
       return;
     }
+    let symbol: string | null | undefined = undefined;
+    if (req.body.symbol !== undefined) {
+      symbol =
+        req.body.symbol === null
+          ? null
+          : String(req.body.symbol).trim() || null;
+    }
+
     const badge = await badgeService.createDefinition({
       slug,
       name,
+      symbol,
       ruleType,
       threshold:
         req.body.threshold !== undefined && req.body.threshold !== null
@@ -546,6 +555,12 @@ export async function adminPatchBadge(req: Request, res: Response): Promise<void
     const patch: Parameters<typeof badgeService.patchDefinition>[1] = {};
     if (body.name !== undefined) {
       patch.name = String(body.name).trim();
+    }
+    if (body.symbol !== undefined) {
+      patch.symbol =
+        body.symbol === null
+          ? null
+          : String(body.symbol).trim() || null;
     }
     if (body.ruleType !== undefined) {
       patch.ruleType = String(body.ruleType).toUpperCase() as BadgeRuleType;
