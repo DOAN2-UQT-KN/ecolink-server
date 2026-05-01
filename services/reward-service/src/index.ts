@@ -10,6 +10,7 @@ import internalRoutes from "./internal/internal.routes";
 import difficultyApiRoutes from "./modules/difficulty/difficulty.api.routes";
 import giftApiRoutes from "./modules/gift/gift.api.routes";
 import userPointsApiRoutes from "./modules/user-points/user-points.api.routes";
+import gamificationApiRoutes from "./modules/gamification/gamification.api.routes";
 import { errorHandler } from "./middleware/error.middleware";
 import "./worker";
 
@@ -20,12 +21,14 @@ const PORT = Number(process.env.PORT) || 3002;
 
 mountOpenApi(app, {
   title: "Reward service",
-  description: "Campaign difficulties, green points, and gift redemptions",
+  description:
+    "Campaign difficulties, gift redemptions, green points, seasonal RP (CRP/VRP), SP wallet, leaderboards, badges, admin gamification config",
   serverUrl: process.env.SWAGGER_SERVER_URL || `http://localhost:${PORT}`,
   routeFiles: routeModulesFrom(__dirname, [
     "modules/difficulty/difficulty.api.routes",
     "modules/gift/gift.api.routes",
     "modules/user-points/user-points.api.routes",
+    "modules/gamification/gamification.api.routes",
   ]),
   typescript: {
     projectRoot: path.join(__dirname, ".."),
@@ -56,6 +59,7 @@ app.get("/health", (_req, res) => {
 app.use("/api/v1", difficultyApiRoutes);
 app.use("/api/v1", giftApiRoutes);
 app.use("/api/v1", userPointsApiRoutes);
+app.use("/api/v1", gamificationApiRoutes);
 app.use("/internal/v1", internalRoutes);
 
 app.use(errorHandler);

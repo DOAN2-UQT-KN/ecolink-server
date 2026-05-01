@@ -2,6 +2,11 @@ import { Gift, Media, Prisma } from "@prisma/client";
 import { randomUUID } from "crypto";
 import prisma from "../../config/prisma.client";
 import { HTTP_STATUS, HttpError } from "../../constants/http-status";
+import { badgeService } from "../gamification/badge.service";
+import {
+  getSpendableSpBalance,
+  spendSpFifo,
+} from "../gamification/sp-wallet.util";
 import {
   GreenPointResourceType,
   GreenPointTransactionType,
@@ -328,6 +333,8 @@ export class GiftService {
     userId: string,
     giftId: string,
   ): Promise<GiftRedemptionResponse> {
+    const discountBps = await badgeService.getBestStoreDiscountBps(userId);
+
     return prisma.$transaction(
       async (tx) => {
         const gift = await tx.gift.findFirst({
@@ -353,15 +360,18 @@ export class GiftService {
           }
         }
 
-        if (gift.greenPoints > 0) {
-          const bal = await tx.userGreenPointBalance.updateMany({
-            where: { userId, balance: { gte: gift.greenPoints } },
-            data: { balance: { decrement: gift.greenPoints } },
-          });
-          if (bal.count === 0) {
+        const listPrice = gift.greenPoints;
+        const effectiveSp = Math.ceil(
+          (listPrice * Math.max(0, 10_000 - discountBps)) / 10_000,
+        );
+
+        const now = new Date();
+        if (effectiveSp > 0) {
+          const spBal = await getSpendableSpBalance(tx, userId, now);
+          if (spBal < effectiveSp) {
             throw new HttpError(
               HTTP_STATUS.UNPROCESSABLE_ENTITY.withMessage(
-                "Insufficient green points balance",
+                "Insufficient spendable points (SP)",
               ),
             );
           }
@@ -371,18 +381,41 @@ export class GiftService {
           data: {
             userId,
             giftId: gift.id,
-            greenPointsSpent: gift.greenPoints,
+            greenPointsSpent: effectiveSp,
           },
         });
 
-        if (gift.greenPoints >= 0) {
+        if (effectiveSp > 0) {
+          await spendSpFifo(tx, userId, effectiveSp, now);
+          await tx.userPointTransaction.create({
+            data: {
+              id: randomUUID(),
+              userId,
+              kind: "SP",
+              amount: -effectiveSp,
+              sourceType: "STORE",
+              sourceId: redemption.id,
+              seasonId: null,
+              metadata: {
+                giftId: gift.id,
+                redemptionId: redemption.id,
+                listPrice,
+                discountBps,
+                effectiveSp,
+              } as Prisma.InputJsonValue,
+              idempotencyKey: `gift_redeem_sp:${redemption.id}`,
+            },
+          });
+        }
+
+        if (effectiveSp > 0) {
           await tx.greenPointTransaction.create({
             data: {
               userId,
               type: GreenPointTransactionType.GIFT_REDEEM,
               resourceId: redemption.id,
               resourceType: GreenPointResourceType.GIFT_REDEMPTION,
-              points: -gift.greenPoints,
+              points: -effectiveSp,
             },
           });
         }

@@ -161,3 +161,373 @@ model RewardBackgroundJob {
   @@index([status])
   @@map("reward_background_jobs")
 }
+
+// --- Gamification v2: seasonal RP (CRP/VRP), persistent SP wallet batches, badges, snapshots ---
+
+enum SeasonStatus {
+  ACTIVE
+  FROZEN
+  CLOSED
+}
+
+enum SeasonKind {
+  MONTHLY
+  QUARTERLY
+}
+
+/// Ranking / spendable kinds stored on the unified ledger.
+enum PointKind {
+  CRP
+  VRP
+  SP
+}
+
+enum PointSourceType {
+  REPORT
+  CAMPAIGN
+  SYSTEM
+  STORE
+  SEASON_END
+}
+
+enum LeaderboardSubjectKind {
+  USER
+  ORGANIZATION
+}
+
+enum LeaderboardMetric {
+  CRP
+  VRP
+  ORG_AGGREGATE
+}
+
+enum BadgeRuleType {
+  CRP
+  VRP
+  RANK
+}
+
+/// Time-bounded competitive window for RP, badges, and leaderboard snapshots.
+model Season {
+  id     String       @id @default(uuid()) @db.Uuid
+  label  String?      @db.VarChar(128)
+  kind   SeasonKind   @map("season_kind")
+  status SeasonStatus @default(ACTIVE)
+
+  startsAt DateTime @map("starts_at")
+  endsAt   DateTime @map("ends_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  userRpTotals           UserSeasonRpTotal[]
+  organizationScores     OrganizationSeasonScore[]
+  leaderboardRows        LeaderboardSnapshot[]
+  badgeGrants            UserBadgeGrant[]
+  reportMilestones       ReportMilestoneAward[]
+  campaignRewardAwards   CampaignRewardAward[]
+  payoutTiers            SeasonLeaderboardPayoutTier[]
+  userPointTxSeason      UserPointTransaction[] @relation("SeasonUserPointTransactions")
+
+  @@index([status])
+  @@index([startsAt, endsAt])
+  @@map("seasons")
+}
+
+/// FIFO SP buckets; `remaining` decreases on redemption. Expired batches are skipped by spend logic.
+model UserSpWalletEntry {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+
+  amount    Int
+  remaining Int
+
+  sourceType PointSourceType @map("source_type")
+
+  /// Nullable when credit originates outside a concrete domain row (e.g. manual admin grant).
+  sourceId String? @map("source_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at")
+  expiresAt DateTime @map("expires_at")
+
+  @@index([userId, expiresAt])
+  @@index([expiresAt])
+  @@map("user_sp_wallet")
+}
+
+/// Unified ledger: all CRP/VRP/SP movements (credits and debits). RP rows MUST set `seasonId`.
+model UserPointTransaction {
+  id String @id @default(uuid()) @db.Uuid
+
+  userId String @map("user_id") @db.Uuid
+
+  kind   PointKind
+  amount Int
+
+  sourceType PointSourceType @map("source_type")
+  sourceId   String?         @map("source_id") @db.Uuid
+
+  seasonId String? @map("season_id") @db.Uuid
+
+  metadata Json?
+
+  /// Worker-generated stable key for exactly-once credits/debits (partial unique index in SQL migration).
+  idempotencyKey String? @map("idempotency_key") @db.VarChar(256)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  season Season? @relation("SeasonUserPointTransactions", fields: [seasonId], references: [id], onDelete: Restrict)
+
+  @@index([userId, createdAt])
+  @@index([userId, kind])
+  @@index([seasonId])
+  @@index([sourceType, sourceId])
+  @@map("user_point_transactions")
+}
+
+/// Materialized seasonal RP totals for fast leaderboard reads (updated after each RP ledger append).
+model UserSeasonRpTotal {
+  userId String @map("user_id") @db.Uuid
+  seasonId String @map("season_id") @db.Uuid
+
+  citizenRp    Int @default(0) @map("citizen_rp")
+  volunteerRp  Int @default(0) @map("volunteer_rp")
+
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  season Season @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+
+  @@id([userId, seasonId])
+  @@index([seasonId, citizenRp(sort: Desc)])
+  @@index([seasonId, volunteerRp(sort: Desc)])
+  @@map("user_season_rp_totals")
+}
+
+/// Org aggregate for seasonal volunteer footprint (ingested from domain events; computation owned by workers).
+model OrganizationSeasonScore {
+  organizationId String @map("organization_id") @db.Uuid
+  seasonId       String @map("season_id") @db.Uuid
+
+  aggregateScore Int @default(0) @map("aggregate_score")
+
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  season Season @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+
+  @@id([organizationId, seasonId])
+  @@index([seasonId, aggregateScore(sort: Desc)])
+  @@map("organization_season_scores")
+}
+
+/// Idempotency: one CRP milestone payout per report/user/season/threshold.
+model ReportMilestoneAward {
+  id String @id @default(uuid()) @db.Uuid
+
+  reportId String @map("report_id") @db.Uuid
+  userId   String @map("user_id") @db.Uuid
+  seasonId String @map("season_id") @db.Uuid
+
+  milestoneThreshold Int @map("milestone_threshold")
+
+  ledgerTxId String? @map("ledger_tx_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  season Season @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+
+  @@unique([reportId, userId, seasonId, milestoneThreshold])
+  @@index([userId])
+  @@map("report_milestone_awards")
+}
+
+/// Idempotency for volunteer completion + optional campaign upvote milestone payouts.
+model CampaignRewardAward {
+  id String @id @default(uuid()) @db.Uuid
+
+  campaignId String @map("campaign_id") @db.Uuid
+  userId     String @map("user_id") @db.Uuid
+  seasonId   String @map("season_id") @db.Uuid
+
+  /// COMPLETION_BASE | UPVOTE_MILESTONE:<n> — encoded string for uniqueness.
+  awardKey String @map("award_key") @db.VarChar(128)
+
+  ledgerTxId String? @map("ledger_tx_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  season Season @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, userId, seasonId, awardKey])
+  @@index([userId])
+  @@map("campaign_reward_awards")
+}
+
+/// Singleton-style rows (fixed ids) or versioned via `effective_from` — workers read latest active.
+model GamificationPointRules {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Per-milestone citizen multiplier index (1 for first threshold crossed, 2 for second, …).
+  baseReportPoint Int @map("base_report_point")
+
+  /// Sorted ascending in application layer (e.g. [10, 20, 50, 100]).
+  reportMilestoneThresholds Int[] @default([]) @map("report_milestone_thresholds")
+
+  /// Campaign public UI: max estimated bonus before multiplier (slug-based caps keyed by difficulty level).
+  volunteerBonusCapByDifficulty Json? @map("volunteer_bonus_cap_by_difficulty")
+
+  isActive Boolean @default(true) @map("is_active")
+
+  effectiveFrom DateTime  @default(now()) @map("effective_from")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@index([isActive, effectiveFrom(sort: Desc)])
+  @@map("gamification_point_rules")
+}
+
+/// Org relationship multipliers for VRP (no stacking — worker picks highest applicable).
+model VolunteerOrgMultiplierRule {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Stable code: MEMBER_OF_OWNER_ORG | PARTICIPANT_OTHER_ORG_CAMPAIGN | DEFAULT
+  code       String  @unique @db.VarChar(64)
+  multiplier Decimal @db.Decimal(4, 2)
+
+  priority Int @default(0)
+
+  isActive Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([isActive, priority(sort: Desc)])
+  @@map("volunteer_org_multiplier_rules")
+}
+
+model SpendablePointRules {
+  id String @id @default(uuid()) @db.Uuid
+
+  expirationDays Int @default(90) @map("expiration_days")
+
+  isActive Boolean @default(true) @map("is_active")
+
+  effectiveFrom DateTime @default(now()) @map("effective_from")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@index([isActive, effectiveFrom(sort: Desc)])
+  @@map("spendable_point_rules")
+}
+
+model SeasonScheduleRules {
+  id String @id @default(uuid()) @db.Uuid
+
+  kind SeasonKind @unique @map("season_kind")
+
+  /// Cron or preset handled in worker; store human hint only if needed.
+  autoRotate Boolean @default(true) @map("auto_rotate")
+
+  metadata Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("season_schedule_rules")
+}
+
+/// SP payouts to leaderboard winners (applied at season freeze).
+model SeasonLeaderboardPayoutTier {
+  id String @id @default(uuid()) @db.Uuid
+
+  seasonId String? @map("season_id") @db.Uuid
+
+  metric LeaderboardMetric
+
+  rankMin Int @map("rank_min")
+  rankMax Int @map("rank_max")
+
+  spAmount Int @map("sp_amount")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  season Season? @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+
+  @@index([seasonId, metric])
+  @@map("season_leaderboard_payout_tiers")
+}
+
+model BadgeDefinition {
+  id String @id @default(uuid()) @db.Uuid
+
+  slug String @unique @db.VarChar(128)
+  name String @db.VarChar(255)
+
+  ruleType BadgeRuleType @map("rule_type")
+
+  /// Minimum RP for threshold badges; null for pure rank badges.
+  threshold Int?
+
+  /// Top-N snapshot rank required (e.g. 10 => must finish season in top 10).
+  rankTopN Int? @map("rank_top_n")
+
+  /// Which leaderboard metric the rank rule applies to.
+  rankMetric LeaderboardMetric? @map("rank_metric")
+
+  /// Benefits: discount bps, partner tier codes, etc.
+  reward Json?
+
+  isActive Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  grants UserBadgeGrant[]
+
+  @@index([ruleType, isActive])
+  @@map("badge_definitions")
+}
+
+model UserBadgeGrant {
+  id String @id @default(uuid()) @db.Uuid
+
+  userId String @map("user_id") @db.Uuid
+
+  badgeId String @map("badge_id") @db.Uuid
+
+  seasonId String @map("season_id") @db.Uuid
+
+  grantedAt DateTime @default(now()) @map("granted_at")
+
+  metadata Json?
+
+  badge  BadgeDefinition @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+  season Season          @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, badgeId, seasonId])
+  @@index([userId])
+  @@map("user_badge_grants")
+}
+
+model LeaderboardSnapshot {
+  id String @id @default(uuid()) @db.Uuid
+
+  seasonId String @map("season_id") @db.Uuid
+
+  subjectKind LeaderboardSubjectKind @map("subject_kind")
+  subjectId   String                 @map("subject_id") @db.Uuid
+
+  metric LeaderboardMetric
+
+  score Int
+  rank  Int
+
+  capturedAt DateTime @default(now()) @map("captured_at")
+
+  season Season @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+
+  @@unique([seasonId, subjectKind, subjectId, metric])
+  @@index([seasonId, metric, rank])
+  @@map("leaderboard_snapshots")
+}

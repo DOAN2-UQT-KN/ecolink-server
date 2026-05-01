@@ -191,7 +191,7 @@ app.use(
   }),
 );
 
-// Proxy routes — Reward (gifts, difficulties, points, redemptions, leaderboard)
+// Proxy routes — Reward (gifts, difficulties, points, redemptions, leaderboard, seasons, gamification)
 app.use(
   "/api/v1/gifts",
   proxy(REWARD_SERVICE_URL, {
@@ -224,6 +224,49 @@ app.use(
   "/api/v1/leaderboard",
   proxy(REWARD_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/leaderboard${req.url}`,
+  }),
+);
+
+// Seasons & gamification (reward-service)
+app.use(
+  "/api/v1/seasons",
+  proxy(REWARD_SERVICE_URL, {
+    proxyReqPathResolver: (req) => `/api/v1/seasons${req.url}`,
+  }),
+);
+
+app.use(
+  "/api/v1/me/gamification",
+  proxy(REWARD_SERVICE_URL, {
+    proxyReqPathResolver: (req) => `/api/v1/me/gamification${req.url}`,
+  }),
+);
+
+app.use(
+  "/api/v1/me/badges",
+  proxy(REWARD_SERVICE_URL, {
+    proxyReqPathResolver: (req) => `/api/v1/me/badges${req.url}`,
+  }),
+);
+
+app.use(
+  "/api/v1/gamification",
+  proxy(REWARD_SERVICE_URL, {
+    proxyReqPathResolver: (req) => `/api/v1/gamification${req.url}`,
+  }),
+);
+
+app.use(
+  "/api/v1/admin/gamification",
+  proxy(REWARD_SERVICE_URL, {
+    proxyReqPathResolver: (req) => `/api/v1/admin/gamification${req.url}`,
+  }),
+);
+
+app.use(
+  "/api/v1/admin/seasons",
+  proxy(REWARD_SERVICE_URL, {
+    proxyReqPathResolver: (req) => `/api/v1/admin/seasons${req.url}`,
   }),
 );
 

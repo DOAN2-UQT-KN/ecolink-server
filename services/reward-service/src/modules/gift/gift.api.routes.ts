@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import { body, param, query, validationResult } from "express-validator";
 import {
   HTTP_STATUS,
@@ -268,43 +268,59 @@ router.put(
   },
 );
 
+async function handleGiftRedeemOrExchange(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+      errors: errors.array(),
+    });
+    return;
+  }
+
+  const id = req.params?.id;
+  const userId = req.user?.userId;
+  if (!id || !userId) {
+    sendError(res, HTTP_STATUS.BAD_REQUEST.withMessage("Missing id or user"));
+    return;
+  }
+
+  try {
+    const redemption = await giftService.redeem(userId, id);
+    sendSuccess(res, HTTP_STATUS.OK, { redemption });
+  } catch (error) {
+    if (sendHttpErrorResponse(res, error)) {
+      return;
+    }
+    console.error("Gift redeem/exchange error:", error);
+    sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+  }
+}
+
 /**
  * @route   POST /api/v1/gifts/:id/redeem
- * @desc    Redeem a gift for the authenticated user (deducts green points when cost > 0)
+ * @desc    Redeem a gift (SP wallet FIFO after badge discount; mirrors legacy green-point ledger)
  * @access  Private
  */
 router.post(
   "/gifts/:id/redeem",
   authenticate,
   param("id").isUUID().withMessage("id must be a UUID"),
+  handleGiftRedeemOrExchange,
+);
 
-  async (req, res): Promise<void> => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
-        errors: errors.array(),
-      });
-      return;
-    }
-
-    const id = req.params?.id;
-    const userId = req.user?.userId;
-    if (!id || !userId) {
-      sendError(res, HTTP_STATUS.BAD_REQUEST.withMessage("Missing id or user"));
-      return;
-    }
-
-    try {
-      const redemption = await giftService.redeem(userId, id);
-      sendSuccess(res, HTTP_STATUS.OK, { redemption });
-    } catch (error) {
-      if (sendHttpErrorResponse(res, error)) {
-        return;
-      }
-      console.error("Redeem gift error:", error);
-      sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
-    }
-  },
+/**
+ * @route   POST /api/v1/gifts/:id/exchange
+ * @desc    Exchange (redeem) a gift — same behavior as POST .../redeem
+ * @access  Private
+ */
+router.post(
+  "/gifts/:id/exchange",
+  authenticate,
+  param("id").isUUID().withMessage("id must be a UUID"),
+  handleGiftRedeemOrExchange,
 );
 
 export default router;
