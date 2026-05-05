@@ -1,14 +1,24 @@
 import type {
+  BadgeCategory,
   BadgeRuleType,
   LeaderboardMetric,
   Prisma,
 } from "@prisma/client";
 
+export const BADGE_CATEGORIES: BadgeCategory[] = [
+  "REPORT",
+  "CAMPAIGN",
+  "CONTRIBUTION",
+  "RANK",
+];
 export const BADGE_RULE_TYPES: BadgeRuleType[] = ["THRESHOLD", "RANK"];
 
 export const LEADERBOARD_METRICS: LeaderboardMetric[] = [
   "CRP",
   "VRP",
+  "REPORT_UPVOTES",
+  "REPORT_COUNT",
+  "CAMPAIGN_COMPLETED",
   "ORG_AGGREGATE",
 ];
 
@@ -16,6 +26,13 @@ export function parseBadgeRuleType(raw: string): BadgeRuleType | null {
   const v = raw.trim().toUpperCase();
   return BADGE_RULE_TYPES.includes(v as BadgeRuleType)
     ? (v as BadgeRuleType)
+    : null;
+}
+
+export function parseBadgeCategory(raw: string): BadgeCategory | null {
+  const v = raw.trim().toUpperCase();
+  return BADGE_CATEGORIES.includes(v as BadgeCategory)
+    ? (v as BadgeCategory)
     : null;
 }
 
@@ -45,17 +62,33 @@ export function slugifyFromName(name: string): string {
 }
 
 export function validateBadgeDefinitionShape(input: {
+  category: BadgeCategory;
   ruleType: BadgeRuleType;
   metric: LeaderboardMetric;
   threshold: number | null | undefined;
   rankTopN: number | null | undefined;
 }): string | null {
-  const { ruleType, metric, threshold, rankTopN } = input;
+  const { category, ruleType, metric, threshold, rankTopN } = input;
   if (!LEADERBOARD_METRICS.includes(metric)) {
     return "invalid_metric";
   }
+  if (!BADGE_CATEGORIES.includes(category)) {
+    return "invalid_category";
+  }
   if (!BADGE_RULE_TYPES.includes(ruleType)) {
     return "invalid_rule_type";
+  }
+  if (category === "REPORT" && !metric.startsWith("REPORT_")) {
+    return "metric_category_mismatch";
+  }
+  if (category === "CAMPAIGN" && !metric.startsWith("CAMPAIGN_")) {
+    return "metric_category_mismatch";
+  }
+  if (category === "CONTRIBUTION" && !["CRP", "VRP"].includes(metric)) {
+    return "metric_category_mismatch";
+  }
+  if (category === "RANK" && ruleType !== "RANK") {
+    return "rank_category_requires_rank_rule";
   }
 
   if (ruleType === "THRESHOLD") {

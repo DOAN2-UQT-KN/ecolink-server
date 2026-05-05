@@ -7,6 +7,7 @@ import {
   sendSuccess,
 } from "../../constants/http-status";
 import {
+  parseBadgeCategory,
   parseBadgeRuleType,
   parseLeaderboardMetric,
 } from "./badge-definition.validation";
@@ -510,9 +511,10 @@ export async function adminCreateBadge(req: Request, res: Response): Promise<voi
         ? String(req.body.slug).trim()
         : "";
     const name = String(req.body.name ?? "").trim();
+    const category = parseBadgeCategory(String(req.body.category ?? ""));
     const ruleType = parseBadgeRuleType(String(req.body.ruleType ?? ""));
     const metric = parseLeaderboardMetric(String(req.body.metric ?? ""));
-    if (!name || !ruleType || !metric) {
+    if (!name || !category || !ruleType || !metric) {
       sendError(res, HTTP_STATUS.VALIDATION_ERROR);
       return;
     }
@@ -542,6 +544,7 @@ export async function adminCreateBadge(req: Request, res: Response): Promise<voi
       slug: slugRaw.length > 0 ? slugRaw : null,
       name,
       symbol,
+      category,
       ruleType,
       metric,
       threshold:
@@ -598,6 +601,14 @@ export async function adminPatchBadge(req: Request, res: Response): Promise<void
         return;
       }
       patch.ruleType = rt;
+    }
+    if (body.category !== undefined) {
+      const category = parseBadgeCategory(String(body.category));
+      if (!category) {
+        sendError(res, HTTP_STATUS.VALIDATION_ERROR);
+        return;
+      }
+      patch.category = category;
     }
     if (body.metric !== undefined) {
       const m = parseLeaderboardMetric(String(body.metric));

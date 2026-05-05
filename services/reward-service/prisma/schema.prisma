@@ -198,12 +198,24 @@ enum LeaderboardSubjectKind {
 enum LeaderboardMetric {
   CRP
   VRP
+  REPORT_UPVOTES
+  REPORT_COUNT
+  CAMPAIGN_COMPLETED
+  /// Legacy org leaderboard metric (kept for backward compatibility).
   ORG_AGGREGATE
 }
 
 /// How a badge is evaluated (distinct from LeaderboardMetric).
 enum BadgeRuleType {
   THRESHOLD
+  RANK
+}
+
+/// Badge grouping for deterministic metric compatibility.
+enum BadgeCategory {
+  REPORT
+  CAMPAIGN
+  CONTRIBUTION
   RANK
 }
 
@@ -466,6 +478,8 @@ model BadgeDefinition {
   /// Display symbol or icon key (e.g. emoji, URL slug for asset).
   symbol String? @db.VarChar(128)
 
+  category BadgeCategory
+
   ruleType BadgeRuleType @map("rule_type")
 
   /// Leaderboard / score signal (CRP, VRP, org aggregate).
@@ -494,6 +508,7 @@ model BadgeDefinition {
 
   grants UserBadgeGrant[]
 
+  @@index([category, isActive])
   @@index([ruleType, isActive])
   @@index([metric, isActive])
   @@map("badge_definitions")
