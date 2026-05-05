@@ -85,6 +85,7 @@ export function validateBadgeDefinitionShape(input: {
 type RewardObj = {
   discountBps?: unknown;
   discount_bps?: unknown;
+  bonus_sp?: unknown;
   partner_tier_codes?: unknown;
   perks?: unknown;
 };
@@ -103,6 +104,7 @@ export function validateRewardJson(
   const allowed = new Set([
     "discountBps",
     "discount_bps",
+    "bonus_sp",
     "partner_tier_codes",
     "perks",
   ]);
@@ -118,6 +120,14 @@ export function validateRewardJson(
     }
     if (bpsRaw < 0 || bpsRaw > 10000) {
       return "reward_discount_bps_range";
+    }
+  }
+  if (o.bonus_sp !== undefined) {
+    if (typeof o.bonus_sp !== "number" || !Number.isInteger(o.bonus_sp)) {
+      return "reward_bonus_sp_invalid";
+    }
+    if (o.bonus_sp < 0) {
+      return "reward_bonus_sp_range";
     }
   }
   if (o.partner_tier_codes !== undefined) {
