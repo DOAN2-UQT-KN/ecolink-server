@@ -1,11 +1,15 @@
 import type { Request, Response } from "express";
-import type { BadgeRuleType, LeaderboardMetric, SeasonKind } from "@prisma/client";
+import type { LeaderboardMetric, SeasonKind } from "@prisma/client";
 import { Prisma } from "@prisma/client";
 import {
   HTTP_STATUS,
   sendError,
   sendSuccess,
 } from "../../constants/http-status";
+import {
+  parseBadgeRuleType,
+  parseLeaderboardMetric,
+} from "./badge-definition.validation";
 import { badgeService } from "./badge.service";
 import { campaignRewardDisplayService } from "./campaign-reward-display.service";
 import { gamificationConfigService } from "./gamification-config.service";
@@ -501,10 +505,14 @@ export async function adminListBadges(req: Request, res: Response): Promise<void
 
 export async function adminCreateBadge(req: Request, res: Response): Promise<void> {
   try {
-    const slug = String(req.body.slug ?? "").trim();
+    const slugRaw =
+      req.body.slug !== undefined && req.body.slug !== null
+        ? String(req.body.slug).trim()
+        : "";
     const name = String(req.body.name ?? "").trim();
-    const ruleType = String(req.body.ruleType ?? "").toUpperCase() as BadgeRuleType;
-    if (!slug || !name || !["CRP", "VRP", "RANK"].includes(ruleType)) {
+    const ruleType = parseBadgeRuleType(String(req.body.ruleType ?? ""));
+    const metric = parseLeaderboardMetric(String(req.body.metric ?? ""));
+    if (!name || !ruleType || !metric) {
       sendError(res, HTTP_STATUS.VALIDATION_ERROR);
       return;
     }
@@ -516,11 +524,26 @@ export async function adminCreateBadge(req: Request, res: Response): Promise<voi
           : String(req.body.symbol).trim() || null;
     }
 
+    let publishedAt: Date | null | undefined = undefined;
+    if (req.body.publishedAt !== undefined) {
+      if (req.body.publishedAt === null || req.body.publishedAt === "") {
+        publishedAt = null;
+      } else {
+        const d = new Date(String(req.body.publishedAt));
+        if (Number.isNaN(d.getTime())) {
+          sendError(res, HTTP_STATUS.VALIDATION_ERROR);
+          return;
+        }
+        publishedAt = d;
+      }
+    }
+
     const badge = await badgeService.createDefinition({
-      slug,
+      slug: slugRaw.length > 0 ? slugRaw : null,
       name,
       symbol,
       ruleType,
+      metric,
       threshold:
         req.body.threshold !== undefined && req.body.threshold !== null
           ? Number(req.body.threshold)
@@ -528,10 +551,6 @@ export async function adminCreateBadge(req: Request, res: Response): Promise<voi
       rankTopN:
         req.body.rankTopN !== undefined && req.body.rankTopN !== null
           ? Number(req.body.rankTopN)
-          : null,
-      rankMetric:
-        req.body.rankMetric !== undefined && req.body.rankMetric !== null
-          ? (String(req.body.rankMetric).toUpperCase() as LeaderboardMetric)
           : null,
       reward:
         req.body.reward === undefined
@@ -541,9 +560,19 @@ export async function adminCreateBadge(req: Request, res: Response): Promise<voi
             : (req.body.reward as Prisma.InputJsonValue),
       isActive:
         req.body.isActive !== undefined ? Boolean(req.body.isActive) : undefined,
+      publishedAt,
     });
     sendSuccess(res, HTTP_STATUS.CREATED, { badge });
   } catch (e) {
+    if (
+      e instanceof Error &&
+      (e.message.startsWith("badge_validation:") ||
+        e.message === "badge_slug_empty" ||
+        e.message === "badge_slug_exhausted")
+    ) {
+      sendError(res, HTTP_STATUS.VALIDATION_ERROR);
+      return;
+    }
     console.error("adminCreateBadge", e);
     sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
   }
@@ -563,7 +592,20 @@ export async function adminPatchBadge(req: Request, res: Response): Promise<void
           : String(body.symbol).trim() || null;
     }
     if (body.ruleType !== undefined) {
-      patch.ruleType = String(body.ruleType).toUpperCase() as BadgeRuleType;
+      const rt = parseBadgeRuleType(String(body.ruleType));
+      if (!rt) {
+        sendError(res, HTTP_STATUS.VALIDATION_ERROR);
+        return;
+      }
+      patch.ruleType = rt;
+    }
+    if (body.metric !== undefined) {
+      const m = parseLeaderboardMetric(String(body.metric));
+      if (!m) {
+        sendError(res, HTTP_STATUS.VALIDATION_ERROR);
+        return;
+      }
+      patch.metric = m;
     }
     if (body.threshold !== undefined) {
       patch.threshold =
@@ -572,12 +614,6 @@ export async function adminPatchBadge(req: Request, res: Response): Promise<void
     if (body.rankTopN !== undefined) {
       patch.rankTopN =
         body.rankTopN === null ? null : Number(body.rankTopN);
-    }
-    if (body.rankMetric !== undefined) {
-      patch.rankMetric =
-        body.rankMetric === null
-          ? null
-          : (String(body.rankMetric).toUpperCase() as LeaderboardMetric);
     }
     if (body.reward !== undefined) {
       patch.reward =
@@ -592,6 +628,19 @@ export async function adminPatchBadge(req: Request, res: Response): Promise<void
       patch.deletedAt =
         body.deletedAt === null ? null : new Date(String(body.deletedAt));
     }
+    if (body.publishedAt !== undefined && body.publishedAt !== null) {
+      const raw = String(body.publishedAt).trim();
+      if (!raw) {
+        sendError(res, HTTP_STATUS.VALIDATION_ERROR);
+        return;
+      }
+      const d = new Date(raw);
+      if (Number.isNaN(d.getTime())) {
+        sendError(res, HTTP_STATUS.VALIDATION_ERROR);
+        return;
+      }
+      patch.publishedAt = d;
+    }
 
     const badge = await badgeService.patchDefinition(req.params.id as string, patch);
     if (!badge) {
@@ -600,6 +649,13 @@ export async function adminPatchBadge(req: Request, res: Response): Promise<void
     }
     sendSuccess(res, HTTP_STATUS.OK, { badge });
   } catch (e) {
+    if (
+      e instanceof Error &&
+      e.message.startsWith("badge_validation:")
+    ) {
+      sendError(res, HTTP_STATUS.VALIDATION_ERROR);
+      return;
+    }
     console.error("adminPatchBadge", e);
     sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
   }

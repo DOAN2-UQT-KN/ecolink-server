@@ -116,9 +116,9 @@ export interface BadgeGrantItemDto {
     name: string;
     symbol?: string | null;
     ruleType: string;
+    metric: string;
     threshold: number | null;
     rankTopN: number | null;
-    rankMetric: string | null;
     reward?: Record<string, unknown> | null;
   };
 }
@@ -280,27 +280,31 @@ export interface AdminBadgeDefinitionsQuery {
 }
 
 export interface CreateBadgeDefinitionBody {
-  slug: string;
+  /** Omit or empty: derived from `name` (unique snake_case). */
+  slug?: string;
   name: string;
   symbol?: string | null;
   ruleType: string;
+  metric: string;
   threshold?: number | null;
   rankTopN?: number | null;
-  rankMetric?: string | null;
   reward?: Record<string, unknown> | null;
   isActive?: boolean;
+  /** ISO 8601 — sets publish time and locks slug. */
+  publishedAt?: string | null;
 }
 
 export interface PatchBadgeDefinitionBody {
   name?: string;
   symbol?: string | null;
   ruleType?: string;
+  metric?: string;
   threshold?: number | null;
   rankTopN?: number | null;
-  rankMetric?: string | null;
   reward?: Record<string, unknown> | null;
   isActive?: boolean;
   deletedAt?: string | null;
+  publishedAt?: string;
 }
 
 export interface BadgeDefinitionsListEnvelopeData {

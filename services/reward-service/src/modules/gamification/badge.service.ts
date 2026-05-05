@@ -1,17 +1,64 @@
 import { randomUUID } from "crypto";
-import type { BadgeRuleType, Prisma } from "@prisma/client";
+import type { BadgeRuleType, LeaderboardMetric, Prisma } from "@prisma/client";
 import { Prisma as PrismaClient } from "@prisma/client";
 import prisma from "../../config/prisma.client";
 import { seasonService } from "./season.service";
+import {
+  normalizeSlugInput,
+  slugifyFromName,
+  validateBadgeDefinitionShape,
+  validateRewardJson,
+} from "./badge-definition.validation";
 
-type RewardJson = { discountBps?: number; tier?: number | string };
+type RewardJson = {
+  discountBps?: number;
+  discount_bps?: number;
+};
 
 function readDiscountBps(reward: Prisma.JsonValue | null): number {
   if (!reward || typeof reward !== "object" || Array.isArray(reward)) {
     return 0;
   }
-  const bps = (reward as RewardJson).discountBps;
+  const o = reward as RewardJson;
+  const bps = o.discountBps ?? o.discount_bps;
   return typeof bps === "number" && bps >= 0 && bps <= 10000 ? bps : 0;
+}
+
+async function allocateUniqueSlug(
+  tx: Omit<
+    PrismaClient.TransactionClient,
+    "$connect" | "$disconnect" | "$on" | "$transaction" | "$extends"
+  >,
+  name: string,
+  slugInput: string | null | undefined,
+): Promise<string> {
+  const baseRaw = slugInput?.trim()
+    ? normalizeSlugInput(slugInput)
+    : slugifyFromName(name);
+  if (!baseRaw) {
+    throw new Error("badge_slug_empty");
+  }
+  const stem = baseRaw.slice(0, 128);
+  for (let attempt = 0; attempt < 64; attempt++) {
+    const suffix = attempt === 0 ? "" : `_${attempt + 1}`;
+    const maxStem = Math.max(1, 128 - suffix.length);
+    const candidate = `${stem.slice(0, maxStem)}${suffix}`;
+    const taken = await tx.badgeDefinition.findUnique({
+      where: { slug: candidate },
+      select: { id: true },
+    });
+    if (!taken) {
+      return candidate;
+    }
+  }
+  throw new Error("badge_slug_exhausted");
+}
+
+async function touchSlugLockedAt(badgeId: string): Promise<void> {
+  await prisma.badgeDefinition.updateMany({
+    where: { id: badgeId, slugLockedAt: null },
+    data: { slugLockedAt: new Date() },
+  });
 }
 
 export class BadgeService {
@@ -23,9 +70,7 @@ export class BadgeService {
     seasonId?: string,
   ): Promise<number> {
     const sid =
-      seasonId ??
-      (await seasonService.getCurrentSeason())?.id ??
-      null;
+      seasonId ?? (await seasonService.getCurrentSeason())?.id ?? null;
     if (!sid) {
       return 0;
     }
@@ -47,9 +92,7 @@ export class BadgeService {
 
   async listMyBadges(userId: string, seasonId?: string) {
     const sid =
-      seasonId ??
-      (await seasonService.getCurrentSeason())?.id ??
-      undefined;
+      seasonId ?? (await seasonService.getCurrentSeason())?.id ?? undefined;
 
     const where: PrismaClient.UserBadgeGrantWhereInput = { userId };
     if (sid) {
@@ -68,27 +111,27 @@ export class BadgeService {
     return grants
       .filter((g) => g.badge && !g.badge.deletedAt)
       .map((g) => ({
-      id: g.id,
-      grantedAt: g.grantedAt.toISOString(),
-      metadata: g.metadata,
-      season: {
-        id: g.season.id,
-        label: g.season.label,
-        kind: g.season.kind,
-        status: g.season.status,
-      },
-      badge: {
-        id: g.badge!.id,
-        slug: g.badge!.slug,
-        name: g.badge!.name,
-        symbol: g.badge!.symbol,
-        ruleType: g.badge!.ruleType,
-        threshold: g.badge!.threshold,
-        rankTopN: g.badge!.rankTopN,
-        rankMetric: g.badge!.rankMetric,
-        reward: g.badge!.reward,
-      },
-    }));
+        id: g.id,
+        grantedAt: g.grantedAt.toISOString(),
+        metadata: g.metadata,
+        season: {
+          id: g.season.id,
+          label: g.season.label,
+          kind: g.season.kind,
+          status: g.season.status,
+        },
+        badge: {
+          id: g.badge!.id,
+          slug: g.badge!.slug,
+          name: g.badge!.name,
+          symbol: g.badge!.symbol,
+          ruleType: g.badge!.ruleType,
+          metric: g.badge!.metric,
+          threshold: g.badge!.threshold,
+          rankTopN: g.badge!.rankTopN,
+          reward: g.badge!.reward,
+        },
+      }));
   }
 
   async listDefinitionsAdmin(includeInactive = false) {
@@ -99,20 +142,36 @@ export class BadgeService {
   }
 
   async createDefinition(body: {
-    slug: string;
+    slug?: string | null;
     name: string;
     symbol?: string | null;
     ruleType: BadgeRuleType;
+    metric: LeaderboardMetric;
     threshold?: number | null;
     rankTopN?: number | null;
-    rankMetric?: import("@prisma/client").LeaderboardMetric | null;
     reward?: Prisma.InputJsonValue | null;
     isActive?: boolean;
+    publishedAt?: Date | null;
   }) {
-    return prisma.badgeDefinition.create({
-      data: {
+    const shapeErr = validateBadgeDefinitionShape({
+      ruleType: body.ruleType,
+      metric: body.metric,
+      threshold: body.threshold,
+      rankTopN: body.rankTopN,
+    });
+    if (shapeErr) {
+      throw new Error(`badge_validation:${shapeErr}`);
+    }
+    const rewardErr = validateRewardJson(body.reward ?? undefined);
+    if (rewardErr) {
+      throw new Error(`badge_validation:${rewardErr}`);
+    }
+
+    return prisma.$transaction(async (tx) => {
+      const slug = await allocateUniqueSlug(tx, body.name, body.slug);
+      const data: Prisma.BadgeDefinitionCreateInput = {
         id: randomUUID(),
-        slug: body.slug.trim(),
+        slug,
         name: body.name.trim(),
         symbol:
           body.symbol === undefined
@@ -121,12 +180,18 @@ export class BadgeService {
               ? null
               : body.symbol.trim() || null,
         ruleType: body.ruleType,
+        metric: body.metric,
         threshold: body.threshold ?? null,
         rankTopN: body.rankTopN ?? null,
-        rankMetric: body.rankMetric ?? null,
         reward: body.reward ?? undefined,
         isActive: body.isActive ?? true,
-      },
+      };
+      if (body.publishedAt !== undefined) {
+        data.publishedAt = body.publishedAt;
+        data.slugLockedAt =
+          body.publishedAt != null ? new Date() : null;
+      }
+      return tx.badgeDefinition.create({ data });
     });
   }
 
@@ -136,14 +201,70 @@ export class BadgeService {
       name: string;
       symbol: string | null;
       ruleType: BadgeRuleType;
+      metric: LeaderboardMetric;
       threshold: number | null;
       rankTopN: number | null;
-      rankMetric: import("@prisma/client").LeaderboardMetric | null;
       reward: Prisma.InputJsonValue | null;
       isActive: boolean;
       deletedAt: Date | null;
+      publishedAt: Date | null;
     }>,
   ) {
+    const current = await prisma.badgeDefinition.findUnique({
+      where: { id },
+      include: { _count: { select: { grants: true } } },
+    });
+    if (!current) {
+      return null;
+    }
+
+    const grantCount = current._count.grants;
+    const lockedCore = grantCount > 0;
+
+    if (lockedCore) {
+      if (body.ruleType !== undefined && body.ruleType !== current.ruleType) {
+        throw new Error("badge_validation:rule_locked_after_grant");
+      }
+      if (body.metric !== undefined && body.metric !== current.metric) {
+        throw new Error("badge_validation:metric_locked_after_grant");
+      }
+      if (
+        body.threshold !== undefined &&
+        body.threshold !== current.threshold
+      ) {
+        throw new Error("badge_validation:threshold_locked_after_grant");
+      }
+      if (body.rankTopN !== undefined && body.rankTopN !== current.rankTopN) {
+        throw new Error("badge_validation:rank_top_n_locked_after_grant");
+      }
+    }
+
+    const ruleType = body.ruleType ?? current.ruleType;
+    const metric = body.metric ?? current.metric;
+    const threshold =
+      body.threshold !== undefined ? body.threshold : current.threshold;
+    const rankTopN =
+      body.rankTopN !== undefined ? body.rankTopN : current.rankTopN;
+
+    const shapeErr = validateBadgeDefinitionShape({
+      ruleType,
+      metric,
+      threshold,
+      rankTopN,
+    });
+    if (shapeErr) {
+      throw new Error(`badge_validation:${shapeErr}`);
+    }
+
+    if (body.reward !== undefined) {
+      const merged =
+        body.reward === null ? null : (body.reward as Prisma.InputJsonValue);
+      const rewardErr = validateRewardJson(merged ?? undefined);
+      if (rewardErr) {
+        throw new Error(`badge_validation:${rewardErr}`);
+      }
+    }
+
     const data: Prisma.BadgeDefinitionUpdateInput = {};
     if (body.name !== undefined) {
       data.name = body.name;
@@ -155,14 +276,14 @@ export class BadgeService {
     if (body.ruleType !== undefined) {
       data.ruleType = body.ruleType;
     }
+    if (body.metric !== undefined) {
+      data.metric = body.metric;
+    }
     if (body.threshold !== undefined) {
       data.threshold = body.threshold;
     }
     if (body.rankTopN !== undefined) {
       data.rankTopN = body.rankTopN;
-    }
-    if (body.rankMetric !== undefined) {
-      data.rankMetric = body.rankMetric;
     }
     if (body.reward !== undefined) {
       data.reward =
@@ -175,6 +296,12 @@ export class BadgeService {
     }
     if (body.deletedAt !== undefined) {
       data.deletedAt = body.deletedAt;
+    }
+    if (body.publishedAt !== undefined && body.publishedAt != null) {
+      data.publishedAt = body.publishedAt;
+      if (current.slugLockedAt == null) {
+        data.slugLockedAt = new Date();
+      }
     }
 
     try {
@@ -195,6 +322,7 @@ export class BadgeService {
 
   /**
    * Evaluate threshold badges for a user after RP totals change (called from workers).
+   * Only CRP / VRP user metrics; org aggregate thresholds are evaluated elsewhere.
    */
   async evaluateThresholdBadgesForUser(
     userId: string,
@@ -206,7 +334,8 @@ export class BadgeService {
       where: {
         deletedAt: null,
         isActive: true,
-        ruleType: { in: ["CRP", "VRP"] },
+        ruleType: "THRESHOLD",
+        metric: { in: ["CRP", "VRP"] },
       },
     });
 
@@ -215,8 +344,8 @@ export class BadgeService {
         continue;
       }
       const passes =
-        (def.ruleType === "CRP" && citizenRp >= def.threshold) ||
-        (def.ruleType === "VRP" && volunteerRp >= def.threshold);
+        (def.metric === "CRP" && citizenRp >= def.threshold) ||
+        (def.metric === "VRP" && volunteerRp >= def.threshold);
       if (!passes) {
         continue;
       }
@@ -237,6 +366,7 @@ export class BadgeService {
         },
         update: {},
       });
+      await touchSlugLockedAt(def.id);
     }
   }
 }

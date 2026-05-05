@@ -201,9 +201,9 @@ enum LeaderboardMetric {
   ORG_AGGREGATE
 }
 
+/// How a badge is evaluated (distinct from LeaderboardMetric).
 enum BadgeRuleType {
-  CRP
-  VRP
+  THRESHOLD
   RANK
 }
 
@@ -468,19 +468,25 @@ model BadgeDefinition {
 
   ruleType BadgeRuleType @map("rule_type")
 
-  /// Minimum RP for threshold badges; null for pure rank badges.
+  /// Leaderboard / score signal (CRP, VRP, org aggregate).
+  metric LeaderboardMetric @map("metric")
+
+  /// Minimum score for THRESHOLD badges (RP or org aggregate).
   threshold Int?
 
-  /// Top-N snapshot rank required (e.g. 10 => must finish season in top 10).
+  /// Top-N snapshot rank required for RANK badges (e.g. 10 => top 10).
   rankTopN Int? @map("rank_top_n")
-
-  /// Which leaderboard metric the rank rule applies to.
-  rankMetric LeaderboardMetric? @map("rank_metric")
 
   /// Benefits: discount bps, partner tier codes, etc.
   reward Json?
 
   isActive Boolean @default(true) @map("is_active")
+
+  /// When set, badge is published; slug cannot change.
+  publishedAt DateTime? @map("published_at")
+
+  /// Denormalized: set when slug becomes immutable (publish or first grant).
+  slugLockedAt DateTime? @map("slug_locked_at")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -489,6 +495,7 @@ model BadgeDefinition {
   grants UserBadgeGrant[]
 
   @@index([ruleType, isActive])
+  @@index([metric, isActive])
   @@map("badge_definitions")
 }
 
