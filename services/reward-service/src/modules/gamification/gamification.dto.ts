@@ -355,17 +355,19 @@ export interface SeasonPatchEnvelopeData {
   season: SeasonDto;
 }
 
-/** POST /admin/seasons/:id/freeze */
-export interface SeasonFreezeEnvelopeData {
-  snapshotsWritten: number;
+export interface FinalizeSeasonQuery {
+  openNext?: boolean;
 }
 
-export interface CloseSeasonOpenNextBody {
+export interface FinalizeSeasonBody {
   nextLabel?: string;
+  startsAt?: string;
+  endsAt?: string;
 }
 
-/** POST /admin/seasons/:id/close-and-open-next */
-export interface SeasonCloseOpenNextEnvelopeData {
-  closed: SeasonDto;
-  next: SeasonDto;
+/** POST /admin/seasons/:id/finalize */
+export interface SeasonFinalizeEnvelopeData {
+  snapshotsWritten: number;
+  closed?: SeasonDto;
+  next?: SeasonDto;
 }

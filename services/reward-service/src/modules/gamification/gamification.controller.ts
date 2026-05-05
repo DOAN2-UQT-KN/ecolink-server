@@ -748,9 +748,47 @@ export async function adminPatchSeason(req: Request, res: Response): Promise<voi
   }
 }
 
-export async function adminFreezeSeason(req: Request, res: Response): Promise<void> {
+export async function adminFinalizeSeason(req: Request, res: Response): Promise<void> {
   try {
-    const result = await seasonService.freezeSeason(req.params.id as string);
+    const openNextRaw = req.query.openNext;
+    const openNext = typeof openNextRaw === "string" && openNextRaw === "true";
+    const nextLabel =
+      req.body.nextLabel !== undefined
+        ? String(req.body.nextLabel)
+        : undefined;
+    const startsAt = req.body.startsAt ? new Date(String(req.body.startsAt)) : undefined;
+    const endsAt = req.body.endsAt ? new Date(String(req.body.endsAt)) : undefined;
+
+    if (openNext) {
+      if (!startsAt || Number.isNaN(startsAt.getTime())) {
+        sendError(
+          res,
+          HTTP_STATUS.VALIDATION_ERROR.withMessage("startsAt is required when openNext=true"),
+        );
+        return;
+      }
+      if (!endsAt || Number.isNaN(endsAt.getTime())) {
+        sendError(
+          res,
+          HTTP_STATUS.VALIDATION_ERROR.withMessage("endsAt is required when openNext=true"),
+        );
+        return;
+      }
+      if (startsAt >= endsAt) {
+        sendError(
+          res,
+          HTTP_STATUS.VALIDATION_ERROR.withMessage("startsAt must be earlier than endsAt"),
+        );
+        return;
+      }
+    }
+
+    const result = await seasonService.finalizeSeason(req.params.id as string, {
+      openNext,
+      nextLabel,
+      startsAt,
+      endsAt,
+    });
     sendSuccess(res, HTTP_STATUS.OK, result);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "";
@@ -758,45 +796,41 @@ export async function adminFreezeSeason(req: Request, res: Response): Promise<vo
       sendError(res, HTTP_STATUS.NOT_FOUND.withMessage("Season not found"));
       return;
     }
-    if (msg === "SEASON_NOT_ACTIVE") {
+    if (msg === "SEASON_NOT_FINALIZABLE") {
       sendError(
         res,
-        HTTP_STATUS.UNPROCESSABLE_ENTITY.withMessage("Season is not ACTIVE"),
+        HTTP_STATUS.UNPROCESSABLE_ENTITY.withMessage(
+          "Season must be ACTIVE or INACTIVE",
+        ),
       );
       return;
     }
-    console.error("adminFreezeSeason", e);
-    sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
-  }
-}
-
-export async function adminCloseSeasonAndOpenNext(
-  req: Request,
-  res: Response,
-): Promise<void> {
-  try {
-    const nextLabel =
-      req.body.nextLabel !== undefined
-        ? String(req.body.nextLabel)
-        : undefined;
-    const result = await seasonService.closeAndOpenNext(req.params.id as string, {
-      nextLabel,
-    });
-    sendSuccess(res, HTTP_STATUS.OK, result);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : "";
-    if (msg === "SEASON_NOT_FOUND") {
-      sendError(res, HTTP_STATUS.NOT_FOUND);
-      return;
-    }
-    if (msg === "SEASON_NOT_FROZEN") {
+    if (msg === "NEXT_DATES_REQUIRED") {
       sendError(
         res,
-        HTTP_STATUS.UNPROCESSABLE_ENTITY.withMessage("Season must be FROZEN"),
+        HTTP_STATUS.VALIDATION_ERROR.withMessage(
+          "startsAt and endsAt are required when openNext=true",
+        ),
       );
       return;
     }
-    console.error("adminCloseSeasonAndOpenNext", e);
+    if (msg === "INVALID_NEXT_DATES") {
+      sendError(
+        res,
+        HTTP_STATUS.VALIDATION_ERROR.withMessage("startsAt must be earlier than endsAt"),
+      );
+      return;
+    }
+    if (msg === "ACTIVE_SEASON_EXISTS") {
+      sendError(
+        res,
+        HTTP_STATUS.UNPROCESSABLE_ENTITY.withMessage(
+          "Another ACTIVE season already exists",
+        ),
+      );
+      return;
+    }
+    console.error("adminFinalizeSeason", e);
     sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
   }
 }

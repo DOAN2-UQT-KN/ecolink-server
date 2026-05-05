@@ -49,7 +49,7 @@ export class GamificationLeaderboardService {
     const prismaMetric = toPrismaMetric(metric);
     const skip = (page - 1) * limit;
 
-    if (resolved.status === "FROZEN" || resolved.status === "CLOSED") {
+    if (resolved.status === "INACTIVE") {
       const where = {
         seasonId: resolved.seasonId,
         metric: prismaMetric,
@@ -189,7 +189,7 @@ export class GamificationLeaderboardService {
 
     const prismaMetric = toPrismaMetric(metric);
 
-    if (resolved.status === "FROZEN" || resolved.status === "CLOSED") {
+    if (resolved.status === "INACTIVE") {
       if (metric === "ORG_AGGREGATE") {
         return null;
       }

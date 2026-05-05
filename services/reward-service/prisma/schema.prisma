@@ -166,8 +166,7 @@ model RewardBackgroundJob {
 
 enum SeasonStatus {
   ACTIVE
-  FROZEN
-  CLOSED
+  INACTIVE
 }
 
 enum SeasonKind {

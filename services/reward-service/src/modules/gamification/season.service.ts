@@ -137,96 +137,80 @@ export class SeasonService {
     }
   }
 
-  /**
-   * Freeze season: rebuild leaderboard snapshots from live aggregates; optional SP payouts from tiers.
-   */
-  async freezeSeason(seasonId: string): Promise<{ snapshotsWritten: number }> {
-    return prisma.$transaction(async (tx) => {
-      const season = await tx.season.findUnique({ where: { id: seasonId } });
-      if (!season) {
-        throw new Error("SEASON_NOT_FOUND");
-      }
-      if (season.status !== "ACTIVE") {
-        throw new Error("SEASON_NOT_ACTIVE");
-      }
+  private async freezeSeasonTx(
+    tx: Prisma.TransactionClient,
+    seasonId: string,
+  ): Promise<number> {
+    await tx.leaderboardSnapshot.deleteMany({ where: { seasonId } });
 
-      await tx.leaderboardSnapshot.deleteMany({ where: { seasonId } });
-
-      const crpRows = await tx.userSeasonRpTotal.findMany({
-        where: { seasonId },
-        orderBy: { citizenRp: "desc" },
-      });
-      const vrpRows = await tx.userSeasonRpTotal.findMany({
-        where: { seasonId },
-        orderBy: { volunteerRp: "desc" },
-      });
-      const orgRows = await tx.organizationSeasonScore.findMany({
-        where: { seasonId },
-        orderBy: { aggregateScore: "desc" },
-      });
-
-      let snapshotsWritten = 0;
-
-      let rank = 0;
-      for (const r of crpRows) {
-        rank += 1;
-        await tx.leaderboardSnapshot.create({
-          data: {
-            id: randomUUID(),
-            seasonId,
-            subjectKind: "USER",
-            subjectId: r.userId,
-            metric: "CRP",
-            score: r.citizenRp,
-            rank,
-          },
-        });
-        snapshotsWritten += 1;
-      }
-
-      rank = 0;
-      for (const r of vrpRows) {
-        rank += 1;
-        await tx.leaderboardSnapshot.create({
-          data: {
-            id: randomUUID(),
-            seasonId,
-            subjectKind: "USER",
-            subjectId: r.userId,
-            metric: "VRP",
-            score: r.volunteerRp,
-            rank,
-          },
-        });
-        snapshotsWritten += 1;
-      }
-
-      rank = 0;
-      for (const r of orgRows) {
-        rank += 1;
-        await tx.leaderboardSnapshot.create({
-          data: {
-            id: randomUUID(),
-            seasonId,
-            subjectKind: "ORGANIZATION",
-            subjectId: r.organizationId,
-            metric: "ORG_AGGREGATE",
-            score: r.aggregateScore,
-            rank,
-          },
-        });
-        snapshotsWritten += 1;
-      }
-
-      await tx.season.update({
-        where: { id: seasonId },
-        data: { status: "FROZEN" },
-      });
-
-      await this.applyPayoutTiersTx(tx, seasonId);
-
-      return { snapshotsWritten };
+    const crpRows = await tx.userSeasonRpTotal.findMany({
+      where: { seasonId },
+      orderBy: { citizenRp: "desc" },
     });
+    const vrpRows = await tx.userSeasonRpTotal.findMany({
+      where: { seasonId },
+      orderBy: { volunteerRp: "desc" },
+    });
+    const orgRows = await tx.organizationSeasonScore.findMany({
+      where: { seasonId },
+      orderBy: { aggregateScore: "desc" },
+    });
+
+    let snapshotsWritten = 0;
+
+    let rank = 0;
+    for (const r of crpRows) {
+      rank += 1;
+      await tx.leaderboardSnapshot.create({
+        data: {
+          id: randomUUID(),
+          seasonId,
+          subjectKind: "USER",
+          subjectId: r.userId,
+          metric: "CRP",
+          score: r.citizenRp,
+          rank,
+        },
+      });
+      snapshotsWritten += 1;
+    }
+
+    rank = 0;
+    for (const r of vrpRows) {
+      rank += 1;
+      await tx.leaderboardSnapshot.create({
+        data: {
+          id: randomUUID(),
+          seasonId,
+          subjectKind: "USER",
+          subjectId: r.userId,
+          metric: "VRP",
+          score: r.volunteerRp,
+          rank,
+        },
+      });
+      snapshotsWritten += 1;
+    }
+
+    rank = 0;
+    for (const r of orgRows) {
+      rank += 1;
+      await tx.leaderboardSnapshot.create({
+        data: {
+          id: randomUUID(),
+          seasonId,
+          subjectKind: "ORGANIZATION",
+          subjectId: r.organizationId,
+          metric: "ORG_AGGREGATE",
+          score: r.aggregateScore,
+          rank,
+        },
+      });
+      snapshotsWritten += 1;
+    }
+
+    await this.applyPayoutTiersTx(tx, seasonId);
+    return snapshotsWritten;
   }
 
   /**
@@ -309,61 +293,102 @@ export class SeasonService {
     }
   }
 
-  /**
-   * Close a FROZEN season and open the next ACTIVE window using schedule metadata defaults (duration heuristic).
-   */
-  async closeAndOpenNext(
-    closedSeasonId: string,
-    body?: { nextLabel?: string | null },
-  ): Promise<{ closed: SeasonResponse; next: SeasonResponse }> {
+  async finalizeSeason(
+    seasonId: string,
+    body?: {
+      openNext?: boolean;
+      nextLabel?: string | null;
+      startsAt?: Date;
+      endsAt?: Date;
+    },
+  ): Promise<{
+    snapshotsWritten: number;
+    closed?: SeasonResponse;
+    next?: SeasonResponse;
+  }> {
     return prisma.$transaction(async (tx) => {
-      const closed = await tx.season.findUnique({ where: { id: closedSeasonId } });
-      if (!closed) {
+      const openNext = Boolean(body?.openNext);
+      if (openNext && (!body?.startsAt || !body?.endsAt)) {
+        throw new Error("NEXT_DATES_REQUIRED");
+      }
+      if (
+        openNext &&
+        body?.startsAt &&
+        body?.endsAt &&
+        body.startsAt >= body.endsAt
+      ) {
+        throw new Error("INVALID_NEXT_DATES");
+      }
+
+      const current = await tx.season.findUnique({ where: { id: seasonId } });
+      if (!current) {
         throw new Error("SEASON_NOT_FOUND");
       }
-      if (closed.status !== "FROZEN") {
-        throw new Error("SEASON_NOT_FROZEN");
+      if (current.status !== "ACTIVE" && current.status !== "INACTIVE") {
+        throw new Error("SEASON_NOT_FINALIZABLE");
       }
 
-      await tx.season.update({
-        where: { id: closedSeasonId },
-        data: { status: "CLOSED" },
-      });
-
-      const schedule = await tx.seasonScheduleRules.findUnique({
-        where: { kind: closed.kind },
-      });
-
-      const prevEnd = closed.endsAt;
-      const startsAt = new Date(prevEnd);
-      startsAt.setMilliseconds(startsAt.getMilliseconds() + 1);
-
-      let endsAt = new Date(startsAt);
-      if (closed.kind === "MONTHLY") {
-        endsAt.setUTCMonth(endsAt.getUTCMonth() + 1);
+      let snapshotsWritten = 0;
+      if (current.status === "ACTIVE") {
+        snapshotsWritten = await this.freezeSeasonTx(tx, seasonId);
+        await tx.season.update({
+          where: { id: seasonId },
+          data: { status: "INACTIVE" },
+        });
       } else {
-        endsAt.setUTCMonth(endsAt.getUTCMonth() + 3);
+        snapshotsWritten = await tx.leaderboardSnapshot.count({ where: { seasonId } });
       }
 
-      const next = await tx.season.create({
-        data: {
-          id: randomUUID(),
-          label: body?.nextLabel ?? `${closed.kind} ${startsAt.toISOString().slice(0, 10)}`,
-          kind: closed.kind,
+      if (!openNext) {
+        return { snapshotsWritten };
+      }
+
+      const startsAt = body?.startsAt as Date;
+      const endsAt = body?.endsAt as Date;
+
+      const existingActive = await tx.season.findFirst({
+        where: { status: "ACTIVE" },
+      });
+      if (existingActive) {
+        const sameAsRequested =
+          existingActive.kind === current.kind &&
+          existingActive.startsAt.getTime() === startsAt.getTime() &&
+          existingActive.endsAt.getTime() === endsAt.getTime() &&
+          existingActive.id !== seasonId;
+        if (!sameAsRequested) {
+          throw new Error("ACTIVE_SEASON_EXISTS");
+        }
+      }
+
+      const existingNext = await tx.season.findFirst({
+        where: {
+          kind: current.kind,
           status: "ACTIVE",
           startsAt,
           endsAt,
         },
       });
 
-      if (schedule && !schedule.autoRotate) {
-        // noop — metadata only
-      }
+      const next =
+        existingNext ??
+        (await tx.season.create({
+          data: {
+            id: randomUUID(),
+            label:
+              body?.nextLabel ??
+              `${current.kind} ${startsAt.toISOString().slice(0, 10)}`,
+            kind: current.kind,
+            status: "ACTIVE",
+            startsAt,
+            endsAt,
+          },
+        }));
+
+      const closed = await tx.season.findUniqueOrThrow({ where: { id: seasonId } });
 
       return {
-        closed: toSeasonResponse(
-          await tx.season.findUniqueOrThrow({ where: { id: closedSeasonId } }),
-        ),
+        snapshotsWritten,
+        closed: toSeasonResponse(closed),
         next: toSeasonResponse(next),
       };
     });

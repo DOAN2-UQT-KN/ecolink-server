@@ -1,5 +1,5 @@
 import { Router, type Request as ExpressRequest } from "express";
-import { param, query, validationResult } from "express-validator";
+import { body, param, query, validationResult } from "express-validator";
 import { HTTP_STATUS, sendError } from "../../constants/http-status";
 import {
   authenticate,
@@ -451,42 +451,29 @@ router.patch(
 );
 
 /**
- * @route   POST /api/v1/admin/seasons/:id/freeze
- * @desc    Snapshot leaderboards and payout SP tiers
+ * @route   POST /api/v1/admin/seasons/:id/finalize
+ * @desc    Finalize current season and optionally open next ACTIVE season
  * @access  Private Admin
  */
 router.post(
-  "/admin/seasons/:id/freeze",
+  "/admin/seasons/:id/finalize",
   authenticate,
   requireAdmin,
   param("id").isUUID(),
+  query("openNext").optional().isBoolean().toBoolean(),
+  body("startsAt")
+    .optional({ nullable: true })
+    .custom((value) => value === undefined || value === null || !Number.isNaN(new Date(String(value)).getTime())),
+  body("endsAt")
+    .optional({ nullable: true })
+    .custom((value) => value === undefined || value === null || !Number.isNaN(new Date(String(value)).getTime())),
   (req, res): void => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
       return;
     }
-    void gc.adminFreezeSeason(er(req), res);
-  },
-);
-
-/**
- * @route   POST /api/v1/admin/seasons/:id/close-and-open-next
- * @desc    Close FROZEN season and open next ACTIVE window
- * @access  Private Admin
- */
-router.post(
-  "/admin/seasons/:id/close-and-open-next",
-  authenticate,
-  requireAdmin,
-  param("id").isUUID(),
-  (req, res): void => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
-      return;
-    }
-    void gc.adminCloseSeasonAndOpenNext(er(req), res);
+    void gc.adminFinalizeSeason(er(req), res);
   },
 );
 

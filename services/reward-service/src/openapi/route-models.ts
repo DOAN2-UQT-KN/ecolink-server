@@ -150,11 +150,9 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
     requestBody: "PatchSeasonBody",
     responseData: "SeasonPatchEnvelopeData",
   },
-  "POST /api/v1/admin/seasons/:id/freeze": {
-    responseData: "SeasonFreezeEnvelopeData",
-  },
-  "POST /api/v1/admin/seasons/:id/close-and-open-next": {
-    requestBody: "CloseSeasonOpenNextBody",
-    responseData: "SeasonCloseOpenNextEnvelopeData",
+  "POST /api/v1/admin/seasons/:id/finalize": {
+    query: "FinalizeSeasonQuery",
+    requestBody: "FinalizeSeasonBody",
+    responseData: "SeasonFinalizeEnvelopeData",
   },
 };
