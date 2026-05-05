@@ -72,15 +72,31 @@ export class SeasonService {
     return row ? toSeasonResponse(row) : null;
   }
 
-  async listAdmin(page: number, limit: number) {
+  async listAdmin(
+    page: number,
+    limit: number,
+    filters?: {
+      kind?: SeasonKind;
+      search?: string;
+    },
+  ) {
     const skip = (page - 1) * limit;
+    const where: Prisma.SeasonWhereInput = {
+      ...(filters?.kind ? { kind: filters.kind } : {}),
+      ...(filters?.search
+        ? {
+            OR: [{ label: { contains: filters.search, mode: "insensitive" } }],
+          }
+        : {}),
+    };
     const [rows, total] = await Promise.all([
       prisma.season.findMany({
+        where,
         orderBy: { startsAt: "desc" },
         skip,
         take: limit,
       }),
-      prisma.season.count(),
+      prisma.season.count({ where }),
     ]);
     return {
       seasons: rows.map(toSeasonResponse),

@@ -676,7 +676,14 @@ export async function adminListSeasons(req: Request, res: Response): Promise<voi
   try {
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
-    const data = await seasonService.listAdmin(page, limit);
+    const kind =
+      typeof req.query.kind === "string" ? (req.query.kind as SeasonKind) : undefined;
+    const search =
+      typeof req.query.search === "string" ? req.query.search.trim() : undefined;
+    const data = await seasonService.listAdmin(page, limit, {
+      kind,
+      search,
+    });
     const totalPages = data.total === 0 ? 0 : Math.ceil(data.total / limit);
     sendSuccess(res, HTTP_STATUS.OK, { ...data, totalPages });
   } catch (e) {

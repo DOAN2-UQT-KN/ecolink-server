@@ -321,6 +321,8 @@ export interface BadgeDefinitionOneEnvelopeData {
 export interface AdminSeasonsQuery {
   page?: number;
   limit?: number;
+  kind?: string;
+  search?: string;
 }
 
 export interface CreateSeasonBody {
