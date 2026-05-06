@@ -70,6 +70,16 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
     query: "MyBadgesQuery",
     responseData: "MyBadgesEnvelopeData",
   },
+  /** Logical metric tables for badge rule builder (`MetricTableDto[]`). */
+  "GET /api/v1/metric-tables": {
+    query: "MetricTablesQuery",
+    responseData: "MetricTablesEnvelopeData",
+  },
+  /** Metric columns (`MetricColumnDto[]`, optional `metricTableId` UUID filter). */
+  "GET /api/v1/metric-columns": {
+    query: "MetricColumnsQuery",
+    responseData: "MetricColumnsEnvelopeData",
+  },
   "GET /api/v1/gamification/campaign-reward-estimate": {
     query: "CampaignRewardEstimateQuery",
     responseData: "CampaignRewardEstimateEnvelopeData",

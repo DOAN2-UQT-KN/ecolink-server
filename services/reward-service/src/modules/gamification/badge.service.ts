@@ -10,6 +10,8 @@ import {
   validateRewardJson,
 } from "./badge-definition.validation";
 import { BadgeRuleEvaluator } from "./badge-rule-evaluator.service";
+import { metricMetadataService } from "../metrics/metric-metadata.service";
+import { validateRulesConfigAgainstMetricMetadata } from "../metrics/metric-rules.validation";
 
 type RewardJson = {
   discountBps?: number;
@@ -176,6 +178,14 @@ export class BadgeService {
       throw new Error(`badge_validation:${rewardErr}`);
     }
 
+    const metricErr = await validateRulesConfigAgainstMetricMetadata(
+      metricMetadataService,
+      body.rulesConfig === undefined ? null : body.rulesConfig,
+    );
+    if (metricErr) {
+      throw new Error(`badge_validation:${metricErr}`);
+    }
+
     return prisma.$transaction(async (tx) => {
       const slug = await allocateUniqueSlug(tx, body.name, body.slug);
       const data: Prisma.BadgeDefinitionCreateInput = {
@@ -271,6 +281,14 @@ export class BadgeService {
     });
     if (shapeErr) {
       throw new Error(`badge_validation:${shapeErr}`);
+    }
+
+    const metricErr = await validateRulesConfigAgainstMetricMetadata(
+      metricMetadataService,
+      rulesConfig,
+    );
+    if (metricErr) {
+      throw new Error(`badge_validation:${metricErr}`);
     }
 
     if (body.reward !== undefined) {

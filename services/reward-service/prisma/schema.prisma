@@ -556,3 +556,48 @@ model LeaderboardSnapshot {
   @@index([seasonId, metric, rank])
   @@map("leaderboard_snapshots")
 }
+
+/// Logical metric sources for badge rule builder UI (keys align with rule `target` strings).
+model MetricTable {
+  id String @id @default(uuid()) @db.Uuid
+
+  key String @unique @db.VarChar(64)
+
+  label String @db.VarChar(255)
+
+  description String? @db.Text
+
+  isActive Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  columns MetricColumn[]
+
+  @@map("metric_tables")
+}
+
+/// Selectable fields per metric table (aggregation/operators enforced in application layer, not stored).
+model MetricColumn {
+  id String @id @default(uuid()) @db.Uuid
+
+  tableId String @map("table_id") @db.Uuid
+
+  table MetricTable @relation(fields: [tableId], references: [id], onDelete: Cascade)
+
+  key String @db.VarChar(64)
+
+  label String @db.VarChar(255)
+
+  /** FE hint: `integer`, `number`, etc. */
+  valueType String @map("value_type") @db.VarChar(32)
+
+  isActive Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([tableId, key])
+  @@index([tableId])
+  @@map("metric_columns")
+}

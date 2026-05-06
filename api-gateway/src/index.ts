@@ -104,7 +104,7 @@ app.get("/api-docs/specs/ai.json", async (req, res, next) => {
   }
 });
 
-/** Swagger UI; reward.json proxies reward-service OpenAPI (gamification DTOs: badges rules AST, seasons, …). */
+/** Swagger UI; reward.json proxies reward-service OpenAPI (gamification DTOs, metric metadata for badge rules, seasons, …). */
 mountGatewaySwaggerUi(app, {
   specs: [
     { name: "Identity", url: "/api-docs/specs/identity.json" },
@@ -247,6 +247,20 @@ app.use(
   "/api/v1/me/badges",
   proxy(REWARD_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/me/badges${req.url}`,
+  }),
+);
+
+app.use(
+  "/api/v1/metric-tables",
+  proxy(REWARD_SERVICE_URL, {
+    proxyReqPathResolver: (req) => `/api/v1/metric-tables${req.url}`,
+  }),
+);
+
+app.use(
+  "/api/v1/metric-columns",
+  proxy(REWARD_SERVICE_URL, {
+    proxyReqPathResolver: (req) => `/api/v1/metric-columns${req.url}`,
   }),
 );
 
