@@ -164,6 +164,7 @@ export interface GamificationLeaderboardQuery {
   page?: number;
   limit?: number;
   seasonId?: string;
+  organizationId?: string;
 }
 
 export interface GamificationLeaderboardUserDto {

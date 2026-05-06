@@ -130,7 +130,7 @@ router.get(
 
 /**
  * @route   GET /api/v1/gamification/leaderboards/:metric
- * @desc    CRP | VRP | ORG_AGGREGATE (case-insensitive path segment)
+ * @desc    CRP | VRP | ORG_AGGREGATE (case-insensitive path segment). Optional `organizationId` filters VRP rows to members of that organization.
  * @access  Public
  */
 router.get(
@@ -139,6 +139,7 @@ router.get(
   query("page").optional().isInt({ min: 1 }).toInt(),
   query("limit").optional().isInt({ min: 1, max: 100 }).toInt(),
   query("seasonId").optional().isUUID(),
+  query("organizationId").optional().isUUID(),
   (req, res): void => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {

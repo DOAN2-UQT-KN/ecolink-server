@@ -297,6 +297,10 @@ export async function getGamificationLeaderboard(
   const limit = Number(req.query.limit) || 20;
   const seasonId =
     typeof req.query.seasonId === "string" ? req.query.seasonId : undefined;
+  const organizationId =
+    typeof req.query.organizationId === "string"
+      ? req.query.organizationId
+      : undefined;
   try {
     const {
       rows,
@@ -307,6 +311,7 @@ export async function getGamificationLeaderboard(
       page,
       limit,
       seasonId,
+      organizationId,
     );
     const totalPages = total === 0 ? 0 : Math.ceil(total / limit);
     sendSuccess(res, HTTP_STATUS.OK, {

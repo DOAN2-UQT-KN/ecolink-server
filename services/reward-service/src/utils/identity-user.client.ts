@@ -3,6 +3,7 @@ export interface OrganizationOwnerResponse {
   name: string;
   avatar: string | null;
   bio: string | null;
+  organizationIds?: string[];
 }
 
 function getClientHeaders() {
@@ -25,6 +26,38 @@ function pickNullableString(v: unknown): string | null {
   if (v === null) return null;
   const s = pickString(v);
   return s !== undefined ? s : null;
+}
+
+function readOrganizationIds(raw: Record<string, unknown>): string[] {
+  const out = new Set<string>();
+  const add = (v: unknown): void => {
+    if (typeof v === "string" && v.trim()) {
+      out.add(v.trim());
+    }
+  };
+
+  add(raw.organizationId);
+  add(raw.organization_id);
+
+  const maybeArr = raw.organizationIds;
+  if (Array.isArray(maybeArr)) {
+    for (const v of maybeArr) {
+      add(v);
+    }
+  }
+
+  const maybeOrgRows = raw.organizations;
+  if (Array.isArray(maybeOrgRows)) {
+    for (const row of maybeOrgRows) {
+      if (!row || typeof row !== "object") continue;
+      const obj = row as Record<string, unknown>;
+      add(obj.id);
+      add(obj.organizationId);
+      add(obj.organization_id);
+    }
+  }
+
+  return [...out];
 }
 
 function pickDisplayString(
@@ -94,11 +127,13 @@ function readProfileFromRow(
   );
   const avatar = pickNullableString(row.avatar) ?? pickNullableString(row.avatar_url);
   const bio = pickNullableString(row.bio);
+  const organizationIds = readOrganizationIds(row);
   return {
     id,
     name,
     avatar,
     bio,
+    ...(organizationIds.length > 0 ? { organizationIds } : {}),
   };
 }
 

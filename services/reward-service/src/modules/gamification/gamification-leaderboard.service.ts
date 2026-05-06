@@ -40,6 +40,7 @@ export class GamificationLeaderboardService {
     page: number,
     limit: number,
     seasonId?: string,
+    organizationId?: string,
   ) {
     const resolved = await this.resolveSeasonId(seasonId);
     if (!resolved) {
@@ -75,6 +76,40 @@ export class GamificationLeaderboardService {
           organizationId: s.subjectId,
         }));
         return { rows, total, seasonId: resolved.seasonId };
+      }
+
+      if (metric === "VRP" && organizationId) {
+        const allSnaps = await prisma.leaderboardSnapshot.findMany({
+          where,
+          orderBy: { rank: "asc" },
+        });
+        const allUserIds = allSnaps.map((s) => s.subjectId);
+        const allProfileMap = await fetchUsersByIds(allUserIds);
+        const filtered = allSnaps.filter((s) => {
+          const p = getUserProfile(allProfileMap, s.subjectId);
+          return (
+            Array.isArray(p?.organizationIds) &&
+            p.organizationIds.includes(organizationId)
+          );
+        });
+        const totalFiltered = filtered.length;
+        const sliced = filtered.slice(skip, skip + limit);
+        const rows = sliced.map((s, i) => {
+          const profile = getUserProfile(allProfileMap, s.subjectId);
+          return {
+            rank: skip + i + 1,
+            score: s.score,
+            userId: s.subjectId,
+            user: profile
+              ? {
+                  id: profile.id,
+                  name: profile.name,
+                  avatar: profile.avatar,
+                }
+              : null,
+          };
+        });
+        return { rows, total: totalFiltered, seasonId: resolved.seasonId };
       }
 
       const userIds = snaps.map((s) => s.subjectId);
@@ -128,6 +163,36 @@ export class GamificationLeaderboardService {
     }
 
     if (metric === "VRP") {
+      if (organizationId) {
+        const allTotals = await prisma.userSeasonRpTotal.findMany({
+          where: { seasonId: resolved.seasonId, volunteerRp: { gt: 0 } },
+          orderBy: { volunteerRp: "desc" },
+        });
+        const allIds = allTotals.map((t) => t.userId);
+        const allProfileMap = await fetchUsersByIds(allIds);
+        const filtered = allTotals.filter((t) => {
+          const p = getUserProfile(allProfileMap, t.userId);
+          return (
+            Array.isArray(p?.organizationIds) &&
+            p.organizationIds.includes(organizationId)
+          );
+        });
+        const totalFiltered = filtered.length;
+        const sliced = filtered.slice(skip, skip + limit);
+        const rows = sliced.map((t, i) => {
+          const profile = getUserProfile(allProfileMap, t.userId);
+          return {
+            rank: skip + i + 1,
+            score: t.volunteerRp,
+            userId: t.userId,
+            user: profile
+              ? { id: profile.id, name: profile.name, avatar: profile.avatar }
+              : null,
+          };
+        });
+        return { rows, total: totalFiltered, seasonId: resolved.seasonId };
+      }
+
       const [totals, total] = await Promise.all([
         prisma.userSeasonRpTotal.findMany({
           where: { seasonId: resolved.seasonId, volunteerRp: { gt: 0 } },
