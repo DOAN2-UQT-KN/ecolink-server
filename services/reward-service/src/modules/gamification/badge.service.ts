@@ -193,10 +193,9 @@ export class BadgeService {
         isRepeatable: body.isRepeatable ?? false,
         maxGrantsPerUser: body.maxGrantsPerUser ?? null,
         cooldownSeconds: body.cooldownSeconds ?? 0,
-        rulesConfig:
-          body.rulesConfig === undefined
-            ? undefined
-            : (body.rulesConfig as Prisma.InputJsonValue),
+        ...(body.rulesConfig !== undefined
+          ? { rulesConfig: body.rulesConfig as Prisma.InputJsonValue }
+          : {}),
         reward: body.reward ?? undefined,
         isActive: body.isActive ?? true,
       };

@@ -65,6 +65,7 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
     query: "PointsBySeasonQuery",
     responseData: "PointsBySeasonEnvelopeData",
   },
+  /** Response uses `BadgeGrantItemDto` (`MyBadgeNestedDto`, optional `BadgeGrantSeasonDto`). */
   "GET /api/v1/me/badges": {
     query: "MyBadgesQuery",
     responseData: "MyBadgesEnvelopeData",
@@ -125,12 +126,14 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
   "DELETE /api/v1/admin/gamification/payout-tiers/:id": {
     responseData: "DeletePayoutTierEnvelopeData",
   },
+  /** `badges`: `GamificationBadgeDefinitionDto[]` (rules engine fields). */
   "GET /api/v1/admin/gamification/badges": {
     query: "AdminBadgeDefinitionsQuery",
     responseData: "BadgeDefinitionsListEnvelopeData",
   },
   "POST /api/v1/admin/gamification/badges": {
     requestBody: "CreateBadgeDefinitionBody",
+    /** `badge`: `GamificationBadgeDefinitionDto` */
     responseData: "BadgeDefinitionOneEnvelopeData",
   },
   "PATCH /api/v1/admin/gamification/badges/:id": {

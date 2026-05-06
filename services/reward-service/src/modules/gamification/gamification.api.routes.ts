@@ -93,7 +93,7 @@ router.get(
 
 /**
  * @route   GET /api/v1/me/badges
- * @desc    Badge grants (optional ?seasonId=)
+ * @desc    Badge grants (optional ?seasonId=); each badge includes rules-engine metadata (scope, rulesConfig AST)
  * @access  Private
  */
 router.get(
@@ -345,7 +345,7 @@ router.delete(
 
 /**
  * @route   GET /api/v1/admin/gamification/badges
- * @desc    Badge definitions
+ * @desc    Badge definitions (rules engine: scope, rulesConfig JSON AST, repeat/cooldown caps)
  * @access  Private Admin
  */
 router.get(
@@ -365,7 +365,7 @@ router.get(
 
 /**
  * @route   POST /api/v1/admin/gamification/badges
- * @desc    Create badge definition
+ * @desc    Create badge definition (rulesConfig AST or legacy ruleType/metric/threshold)
  * @access  Private Admin
  */
 router.post(
@@ -377,7 +377,7 @@ router.post(
 
 /**
  * @route   PATCH /api/v1/admin/gamification/badges/:id
- * @desc    Update badge definition
+ * @desc    Update badge definition (rulesConfig replaces AST; JSON null clears rules)
  * @access  Private Admin
  */
 router.patch(

@@ -8,6 +8,7 @@ import {
 } from "../../constants/http-status";
 import {
   parseBadgeCategory,
+  parseBadgeScope,
 } from "./badge-definition.validation";
 import { badgeService } from "./badge.service";
 import { campaignRewardDisplayService } from "./campaign-reward-display.service";
@@ -64,6 +65,40 @@ function parseNullableInt(value: unknown): number | null | "invalid" {
     return "invalid";
   }
   return n;
+}
+
+function parseNonNegativeInt(value: unknown): number | "invalid" {
+  const n = Number(value);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0) {
+    return "invalid";
+  }
+  return n;
+}
+
+function parsePositiveIntOrNull(value: unknown): number | null | "invalid" {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  const n = Number(value);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) {
+    return "invalid";
+  }
+  return n;
+}
+
+function parseRulesConfigFromBody(
+  raw: unknown,
+): Prisma.InputJsonValue | null | undefined | "invalid" {
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (raw === null) {
+    return null;
+  }
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    return "invalid";
+  }
+  return raw as Prisma.InputJsonValue;
 }
 
 function buildLegacyRulesConfig(
@@ -642,25 +677,80 @@ export async function adminCreateBadge(
         : "";
     const name = String(req.body.name ?? "").trim();
     const category = parseBadgeCategory(String(req.body.category ?? ""));
-    const ruleType = parseBadgeRuleTypeValue(req.body.ruleType);
-    const metric = parseBadgeMetricValue(req.body.metric);
-    const threshold = parseNullableInt(req.body.threshold);
-    const rankTopN = parseNullableInt(req.body.rankTopN);
-    if (!name || !category || !ruleType || !metric) {
+    if (!name || !category) {
       sendError(res, HTTP_STATUS.VALIDATION_ERROR);
       return;
     }
-    if (
-      threshold === "invalid" ||
-      rankTopN === "invalid" ||
-      (threshold !== null && threshold < 0) ||
-      (rankTopN !== null && rankTopN < 1) ||
-      (ruleType === "THRESHOLD" && threshold === null) ||
-      (ruleType === "RANK" && rankTopN === null)
-    ) {
+
+    let scope =
+      req.body.scope !== undefined && req.body.scope !== null && req.body.scope !== ""
+        ? parseBadgeScope(String(req.body.scope))
+        : undefined;
+    if (scope === null) {
       sendError(res, HTTP_STATUS.VALIDATION_ERROR);
       return;
     }
+
+    let rulesConfigParsed = parseRulesConfigFromBody(req.body.rulesConfig);
+    if (rulesConfigParsed === "invalid") {
+      sendError(res, HTTP_STATUS.VALIDATION_ERROR);
+      return;
+    }
+
+    if (rulesConfigParsed === undefined) {
+      const ruleType = parseBadgeRuleTypeValue(req.body.ruleType);
+      const metric = parseBadgeMetricValue(req.body.metric);
+      const threshold = parseNullableInt(req.body.threshold);
+      const rankTopN = parseNullableInt(req.body.rankTopN);
+      if (!ruleType || !metric) {
+        sendError(res, HTTP_STATUS.VALIDATION_ERROR);
+        return;
+      }
+      if (
+        threshold === "invalid" ||
+        rankTopN === "invalid" ||
+        (threshold !== null && threshold < 0) ||
+        (rankTopN !== null && rankTopN < 1) ||
+        (ruleType === "THRESHOLD" && threshold === null) ||
+        (ruleType === "RANK" && rankTopN === null)
+      ) {
+        sendError(res, HTTP_STATUS.VALIDATION_ERROR);
+        return;
+      }
+      rulesConfigParsed = buildLegacyRulesConfig(
+        ruleType,
+        metric,
+        threshold,
+        rankTopN,
+      );
+      scope ??= "SEASON";
+    }
+
+    let isRepeatable: boolean | undefined = undefined;
+    if (req.body.isRepeatable !== undefined) {
+      isRepeatable = Boolean(req.body.isRepeatable);
+    }
+
+    let cooldownSeconds: number | undefined = undefined;
+    if (req.body.cooldownSeconds !== undefined && req.body.cooldownSeconds !== "") {
+      const cd = parseNonNegativeInt(req.body.cooldownSeconds);
+      if (cd === "invalid") {
+        sendError(res, HTTP_STATUS.VALIDATION_ERROR);
+        return;
+      }
+      cooldownSeconds = cd;
+    }
+
+    let maxGrantsPerUser: number | null | undefined = undefined;
+    if (req.body.maxGrantsPerUser !== undefined) {
+      const mx = parsePositiveIntOrNull(req.body.maxGrantsPerUser);
+      if (mx === "invalid") {
+        sendError(res, HTTP_STATUS.VALIDATION_ERROR);
+        return;
+      }
+      maxGrantsPerUser = mx;
+    }
+
     let symbol: string | null | undefined = undefined;
     if (req.body.symbol !== undefined) {
       symbol =
@@ -688,7 +778,11 @@ export async function adminCreateBadge(
       name,
       symbol,
       category,
-      rulesConfig: buildLegacyRulesConfig(ruleType, metric, threshold, rankTopN),
+      ...(scope !== undefined ? { scope } : {}),
+      ...(isRepeatable !== undefined ? { isRepeatable } : {}),
+      ...(cooldownSeconds !== undefined ? { cooldownSeconds } : {}),
+      ...(maxGrantsPerUser !== undefined ? { maxGrantsPerUser } : {}),
+      rulesConfig: rulesConfigParsed,
       reward:
         req.body.reward === undefined
           ? undefined
@@ -739,7 +833,42 @@ export async function adminPatchBadge(
       }
       patch.category = category;
     }
-    if (
+    if (body.scope !== undefined) {
+      const scope = parseBadgeScope(String(body.scope ?? ""));
+      if (!scope) {
+        sendError(res, HTTP_STATUS.VALIDATION_ERROR);
+        return;
+      }
+      patch.scope = scope;
+    }
+    if (body.isRepeatable !== undefined) {
+      patch.isRepeatable = Boolean(body.isRepeatable);
+    }
+    if (body.cooldownSeconds !== undefined) {
+      const cd = parseNonNegativeInt(body.cooldownSeconds);
+      if (cd === "invalid") {
+        sendError(res, HTTP_STATUS.VALIDATION_ERROR);
+        return;
+      }
+      patch.cooldownSeconds = cd;
+    }
+    if (body.maxGrantsPerUser !== undefined) {
+      const mx = parsePositiveIntOrNull(body.maxGrantsPerUser);
+      if (mx === "invalid") {
+        sendError(res, HTTP_STATUS.VALIDATION_ERROR);
+        return;
+      }
+      patch.maxGrantsPerUser = mx;
+    }
+
+    if ("rulesConfig" in body) {
+      const rc = parseRulesConfigFromBody(body.rulesConfig);
+      if (rc === "invalid") {
+        sendError(res, HTTP_STATUS.VALIDATION_ERROR);
+        return;
+      }
+      patch.rulesConfig = rc === null ? null : (rc as Prisma.InputJsonValue);
+    } else if (
       body.ruleType !== undefined ||
       body.metric !== undefined ||
       body.threshold !== undefined ||

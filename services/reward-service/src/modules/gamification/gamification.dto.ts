@@ -100,29 +100,43 @@ export interface MyBadgesQuery {
   seasonId?: string;
 }
 
+/** Season summary on a badge grant (`GET /me/badges`); excludes startsAt/endsAt. */
+export interface BadgeGrantSeasonDto {
+  id: string;
+  label: string | null;
+  kind: string;
+  status: string;
+}
+
+/**
+ * Badge fields nested under each grant (`GET /me/badges`).
+ * Omits admin-only flags (`isActive`, timestamps).
+ */
+export interface MyBadgeNestedDto {
+  id: string;
+  slug: string;
+  name: string;
+  symbol?: string | null;
+  category: string;
+  /** `LIFETIME` | `SEASON` */
+  scope: string;
+  isRepeatable: boolean;
+  maxGrantsPerUser: number | null;
+  cooldownSeconds: number;
+  /**
+   * Rules AST (`logical_operator` AND/OR, `conditions`: nested groups or leaves).
+   * Each leaf: `target`, `agg`, `field`, `operator`, `value`.
+   */
+  rulesConfig?: Record<string, unknown> | null;
+  reward?: Record<string, unknown> | null;
+}
+
 export interface BadgeGrantItemDto {
   id: string;
   grantedAt: string;
   metadata?: Record<string, unknown> | null;
-  season: {
-    id: string;
-    label: string | null;
-    kind: string;
-    status: string;
-  } | null;
-  badge: {
-    id: string;
-    slug: string;
-    name: string;
-    symbol?: string | null;
-    category: string;
-    scope: string;
-    isRepeatable: boolean;
-    maxGrantsPerUser: number | null;
-    cooldownSeconds: number;
-    rulesConfig?: Record<string, unknown> | null;
-    reward?: Record<string, unknown> | null;
-  };
+  season: BadgeGrantSeasonDto | null;
+  badge: MyBadgeNestedDto;
 }
 
 /** GET /me/badges */
@@ -281,14 +295,62 @@ export interface AdminBadgeDefinitionsQuery {
   includeInactive?: string;
 }
 
+/**
+ * Full badge catalog row (`GET/PATCH/POST /admin/gamification/badges`).
+ * Matches persisted definition including rules-engine metadata.
+ */
+export interface GamificationBadgeDefinitionDto {
+  id: string;
+  slug: string;
+  name: string;
+  symbol?: string | null;
+  category: string;
+  /** `LIFETIME` | `SEASON` */
+  scope: string;
+  isRepeatable: boolean;
+  maxGrantsPerUser: number | null;
+  cooldownSeconds: number;
+  /**
+   * Rules AST evaluated server-side (recursive AND/OR groups).
+   * Leaf shape: `{ target, agg, field, operator, value }`.
+   */
+  rulesConfig?: Record<string, unknown> | null;
+  reward?: Record<string, unknown> | null;
+  isActive: boolean;
+  publishedAt: string | null;
+  slugLockedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+}
+
 export interface CreateBadgeDefinitionBody {
   /** Omit or empty: derived from `name` (unique snake_case). */
   slug?: string;
   name: string;
   symbol?: string | null;
   category: string;
-  ruleType: string;
-  metric: string;
+  /**
+   * `LIFETIME` | `SEASON`. Defaults to `SEASON` when omitted.
+   */
+  scope?: string;
+  /** Multiple grants per user when allowed by caps/cooldown. */
+  isRepeatable?: boolean;
+  /** Hard cap on how many times a user may earn this badge; omit for no cap. */
+  maxGrantsPerUser?: number | null;
+  /** Minimum seconds between repeat grants (0 = none). */
+  cooldownSeconds?: number;
+  /**
+   * Rules AST (`logical_operator`, `conditions`). Targets include `orders`, `reviews`,
+   * `reports`, `votes`, `user_point_transactions`.
+   * When present, legacy threshold/rank fields are ignored.
+   */
+  rulesConfig?: Record<string, unknown> | null;
+  /**
+   * Legacy fallback when `rulesConfig` is omitted: THRESHOLD | RANK plus metric/threshold/rankTopN.
+   */
+  ruleType?: string;
+  metric?: string;
   threshold?: number | null;
   rankTopN?: number | null;
   reward?: Record<string, unknown> | null;
@@ -301,6 +363,15 @@ export interface PatchBadgeDefinitionBody {
   name?: string;
   symbol?: string | null;
   category?: string;
+  scope?: string;
+  isRepeatable?: boolean;
+  maxGrantsPerUser?: number | null;
+  cooldownSeconds?: number;
+  /**
+   * Replace rules AST; send JSON `null` to clear stored rules.
+   */
+  rulesConfig?: Record<string, unknown> | null;
+  /** Legacy: rebuild rules AST when `rulesConfig` key not sent. */
   ruleType?: string;
   metric?: string;
   threshold?: number | null;
@@ -312,11 +383,11 @@ export interface PatchBadgeDefinitionBody {
 }
 
 export interface BadgeDefinitionsListEnvelopeData {
-  badges: Record<string, unknown>[];
+  badges: GamificationBadgeDefinitionDto[];
 }
 
 export interface BadgeDefinitionOneEnvelopeData {
-  badge: Record<string, unknown>;
+  badge: GamificationBadgeDefinitionDto;
 }
 
 export interface AdminSeasonsQuery {
