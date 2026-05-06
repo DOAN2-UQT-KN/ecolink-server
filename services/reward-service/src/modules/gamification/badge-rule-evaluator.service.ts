@@ -131,7 +131,7 @@ async function countGrantsForUserBadge(
 async function evaluateLeafCondition(
   userId: string,
   node: RuleLeafCondition,
-  scope: BadgeScope,
+  _: BadgeScope,
   seasonWindow: SeasonWindow | null,
   repeatWindowStart: Date | null,
 ): Promise<boolean> {
