@@ -8,8 +8,6 @@ import {
 } from "../../constants/http-status";
 import {
   parseBadgeCategory,
-  parseBadgeRuleType,
-  parseLeaderboardMetric,
 } from "./badge-definition.validation";
 import { badgeService } from "./badge.service";
 import { campaignRewardDisplayService } from "./campaign-reward-display.service";
@@ -19,6 +17,78 @@ import { gamificationLeaderboardService } from "./gamification-leaderboard.servi
 import { gamificationSummaryService } from "./gamification-summary.service";
 import { seasonService } from "./season.service";
 
+type SeasonStatusValue = "ACTIVE" | "INACTIVE";
+type BadgeRuleTypeValue = "THRESHOLD" | "RANK";
+type BadgeMetricValue = "CRP" | "VRP" | "ORG_AGGREGATE";
+
+function parseSeasonStatus(value: unknown): SeasonStatusValue | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const raw = String(value).trim().toUpperCase();
+  if (raw === "ACTIVE") {
+    return "ACTIVE";
+  }
+  if (raw === "INACTIVE") {
+    return "INACTIVE";
+  }
+  return null;
+}
+
+function parseBadgeRuleTypeValue(value: unknown): BadgeRuleTypeValue | null {
+  const raw = String(value ?? "")
+    .trim()
+    .toUpperCase();
+  if (raw === "THRESHOLD" || raw === "RANK") {
+    return raw;
+  }
+  return null;
+}
+
+function parseBadgeMetricValue(value: unknown): BadgeMetricValue | null {
+  const raw = String(value ?? "")
+    .trim()
+    .toUpperCase();
+  if (raw === "CRP" || raw === "VRP" || raw === "ORG_AGGREGATE") {
+    return raw;
+  }
+  return null;
+}
+
+function parseNullableInt(value: unknown): number | null | "invalid" {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  const n = Number(value);
+  if (!Number.isInteger(n)) {
+    return "invalid";
+  }
+  return n;
+}
+
+function buildLegacyRulesConfig(
+  ruleType: BadgeRuleTypeValue,
+  metric: BadgeMetricValue,
+  threshold: number | null,
+  rankTopN: number | null,
+): Prisma.InputJsonValue {
+  const operator = ruleType === "RANK" ? "lte" : "gte";
+  const value = ruleType === "RANK" ? (rankTopN as number) : (threshold as number);
+  return {
+    logical_operator: "AND",
+    conditions: [
+      {
+        target: "user_point_transactions",
+        agg: "SUM",
+        field: "amount",
+        operator,
+        value,
+        metric,
+        ruleType,
+      },
+    ],
+  } as Prisma.InputJsonValue;
+}
 function parseMetric(param: string): PublicMetric | null {
   const m = param.toUpperCase();
   if (m === "CRP" || m === "VRP" || m === "ORG_AGGREGATE") {
@@ -27,7 +97,10 @@ function parseMetric(param: string): PublicMetric | null {
   return null;
 }
 
-export async function getSeasonCurrent(_req: Request, res: Response): Promise<void> {
+export async function getSeasonCurrent(
+  _req: Request,
+  res: Response,
+): Promise<void> {
   try {
     const season = await seasonService.getCurrentSeason();
     sendSuccess(res, HTTP_STATUS.OK, { season });
@@ -37,7 +110,10 @@ export async function getSeasonCurrent(_req: Request, res: Response): Promise<vo
   }
 }
 
-export async function getSeasonById(req: Request, res: Response): Promise<void> {
+export async function getSeasonById(
+  req: Request,
+  res: Response,
+): Promise<void> {
   try {
     const row = await seasonService.getById(req.params.id as string);
     if (!row) {
@@ -97,7 +173,10 @@ export async function getMyPointTransactions(
   }
 }
 
-export async function getPointsBySeason(req: Request, res: Response): Promise<void> {
+export async function getPointsBySeason(
+  req: Request,
+  res: Response,
+): Promise<void> {
   const userId = req.user?.userId;
   if (!userId) {
     sendError(res, HTTP_STATUS.UNAUTHORIZED);
@@ -184,13 +263,16 @@ export async function getGamificationLeaderboard(
   const seasonId =
     typeof req.query.seasonId === "string" ? req.query.seasonId : undefined;
   try {
-    const { rows, total, seasonId: sid } =
-      await gamificationLeaderboardService.getLeaderboard(
-        metric,
-        page,
-        limit,
-        seasonId,
-      );
+    const {
+      rows,
+      total,
+      seasonId: sid,
+    } = await gamificationLeaderboardService.getLeaderboard(
+      metric,
+      page,
+      limit,
+      seasonId,
+    );
     const totalPages = total === 0 ? 0 : Math.ceil(total / limit);
     sendSuccess(res, HTTP_STATUS.OK, {
       metric,
@@ -233,12 +315,11 @@ export async function getGamificationLeaderboardMe(
   const seasonId =
     typeof req.query.seasonId === "string" ? req.query.seasonId : undefined;
   try {
-    const leaderboardMe =
-      await gamificationLeaderboardService.getLeaderboardMe(
-        userId,
-        metric,
-        seasonId,
-      );
+    const leaderboardMe = await gamificationLeaderboardService.getLeaderboardMe(
+      userId,
+      metric,
+      seasonId,
+    );
     sendSuccess(res, HTTP_STATUS.OK, { leaderboardMe });
   } catch (e) {
     console.error("getGamificationLeaderboardMe", e);
@@ -248,7 +329,10 @@ export async function getGamificationLeaderboardMe(
 
 // --- Admin ---
 
-export async function adminGetPointRules(_req: Request, res: Response): Promise<void> {
+export async function adminGetPointRules(
+  _req: Request,
+  res: Response,
+): Promise<void> {
   try {
     const rules = await gamificationConfigService.getActivePointRules();
     sendSuccess(res, HTTP_STATUS.OK, { rules });
@@ -258,7 +342,10 @@ export async function adminGetPointRules(_req: Request, res: Response): Promise<
   }
 }
 
-export async function adminPatchPointRules(req: Request, res: Response): Promise<void> {
+export async function adminPatchPointRules(
+  req: Request,
+  res: Response,
+): Promise<void> {
   try {
     const baseReportPoint = Number(req.body.baseReportPoint);
     const raw = req.body.reportMilestoneThresholds;
@@ -292,7 +379,10 @@ export async function adminPatchPointRules(req: Request, res: Response): Promise
   }
 }
 
-export async function adminGetSpRules(_req: Request, res: Response): Promise<void> {
+export async function adminGetSpRules(
+  _req: Request,
+  res: Response,
+): Promise<void> {
   try {
     const rules = await gamificationConfigService.getActiveSpRules();
     sendSuccess(res, HTTP_STATUS.OK, { rules });
@@ -302,7 +392,10 @@ export async function adminGetSpRules(_req: Request, res: Response): Promise<voi
   }
 }
 
-export async function adminPatchSpRules(req: Request, res: Response): Promise<void> {
+export async function adminPatchSpRules(
+  req: Request,
+  res: Response,
+): Promise<void> {
   try {
     const expirationDays = Number(req.body.expirationDays);
     if (!Number.isInteger(expirationDays) || expirationDays < 1) {
@@ -322,7 +415,10 @@ export async function adminPatchSpRules(req: Request, res: Response): Promise<vo
   }
 }
 
-export async function adminListMultipliers(_req: Request, res: Response): Promise<void> {
+export async function adminListMultipliers(
+  _req: Request,
+  res: Response,
+): Promise<void> {
   try {
     const multipliers = await gamificationConfigService.listMultiplierRules();
     sendSuccess(res, HTTP_STATUS.OK, { multipliers });
@@ -332,7 +428,10 @@ export async function adminListMultipliers(_req: Request, res: Response): Promis
   }
 }
 
-export async function adminPutMultiplier(req: Request, res: Response): Promise<void> {
+export async function adminPutMultiplier(
+  req: Request,
+  res: Response,
+): Promise<void> {
   try {
     const code = String(req.body.code ?? "").trim();
     if (!code) {
@@ -345,7 +444,9 @@ export async function adminPutMultiplier(req: Request, res: Response): Promise<v
       priority:
         req.body.priority !== undefined ? Number(req.body.priority) : undefined,
       isActive:
-        req.body.isActive !== undefined ? Boolean(req.body.isActive) : undefined,
+        req.body.isActive !== undefined
+          ? Boolean(req.body.isActive)
+          : undefined,
     });
     sendSuccess(res, HTTP_STATUS.OK, { multiplier: row });
   } catch (e) {
@@ -367,7 +468,10 @@ export async function adminListSeasonSchedules(
   }
 }
 
-export async function adminPutSeasonSchedule(req: Request, res: Response): Promise<void> {
+export async function adminPutSeasonSchedule(
+  req: Request,
+  res: Response,
+): Promise<void> {
   try {
     const kind = String(req.body.kind ?? "").toUpperCase();
     if (kind !== "MONTHLY" && kind !== "QUARTERLY") {
@@ -377,7 +481,9 @@ export async function adminPutSeasonSchedule(req: Request, res: Response): Promi
     const row = await gamificationConfigService.upsertSeasonScheduleRule({
       kind: kind as SeasonKind,
       autoRotate:
-        req.body.autoRotate !== undefined ? Boolean(req.body.autoRotate) : undefined,
+        req.body.autoRotate !== undefined
+          ? Boolean(req.body.autoRotate)
+          : undefined,
       metadata:
         req.body.metadata === null || req.body.metadata === undefined
           ? req.body.metadata
@@ -390,7 +496,10 @@ export async function adminPutSeasonSchedule(req: Request, res: Response): Promi
   }
 }
 
-export async function adminListPayoutTiers(req: Request, res: Response): Promise<void> {
+export async function adminListPayoutTiers(
+  req: Request,
+  res: Response,
+): Promise<void> {
   try {
     const seasonId =
       typeof req.query.seasonId === "string" ? req.query.seasonId : undefined;
@@ -402,11 +511,17 @@ export async function adminListPayoutTiers(req: Request, res: Response): Promise
   }
 }
 
-export async function adminCreatePayoutTier(req: Request, res: Response): Promise<void> {
+export async function adminCreatePayoutTier(
+  req: Request,
+  res: Response,
+): Promise<void> {
   try {
     const metric = String(req.body.metric ?? "").toUpperCase();
     if (!["CRP", "VRP", "ORG_AGGREGATE"].includes(metric)) {
-      sendError(res, HTTP_STATUS.VALIDATION_ERROR.withMessage("Invalid metric"));
+      sendError(
+        res,
+        HTTP_STATUS.VALIDATION_ERROR.withMessage("Invalid metric"),
+      );
       return;
     }
     const rankMin = Number(req.body.rankMin);
@@ -420,7 +535,10 @@ export async function adminCreatePayoutTier(req: Request, res: Response): Promis
       !Number.isInteger(spAmount) ||
       spAmount < 0
     ) {
-      sendError(res, HTTP_STATUS.VALIDATION_ERROR.withMessage("Invalid tier bounds"));
+      sendError(
+        res,
+        HTTP_STATUS.VALIDATION_ERROR.withMessage("Invalid tier bounds"),
+      );
       return;
     }
     const tier = await gamificationConfigService.createPayoutTier({
@@ -438,7 +556,10 @@ export async function adminCreatePayoutTier(req: Request, res: Response): Promis
   }
 }
 
-export async function adminPatchPayoutTier(req: Request, res: Response): Promise<void> {
+export async function adminPatchPayoutTier(
+  req: Request,
+  res: Response,
+): Promise<void> {
   try {
     const patch: {
       seasonId?: string | null;
@@ -477,7 +598,10 @@ export async function adminPatchPayoutTier(req: Request, res: Response): Promise
   }
 }
 
-export async function adminDeletePayoutTier(req: Request, res: Response): Promise<void> {
+export async function adminDeletePayoutTier(
+  req: Request,
+  res: Response,
+): Promise<void> {
   try {
     const ok = await gamificationConfigService.deletePayoutTier(
       req.params.id as string,
@@ -493,7 +617,10 @@ export async function adminDeletePayoutTier(req: Request, res: Response): Promis
   }
 }
 
-export async function adminListBadges(req: Request, res: Response): Promise<void> {
+export async function adminListBadges(
+  req: Request,
+  res: Response,
+): Promise<void> {
   try {
     const includeInactive = req.query.includeInactive === "true";
     const badges = await badgeService.listDefinitionsAdmin(includeInactive);
@@ -504,7 +631,10 @@ export async function adminListBadges(req: Request, res: Response): Promise<void
   }
 }
 
-export async function adminCreateBadge(req: Request, res: Response): Promise<void> {
+export async function adminCreateBadge(
+  req: Request,
+  res: Response,
+): Promise<void> {
   try {
     const slugRaw =
       req.body.slug !== undefined && req.body.slug !== null
@@ -512,9 +642,22 @@ export async function adminCreateBadge(req: Request, res: Response): Promise<voi
         : "";
     const name = String(req.body.name ?? "").trim();
     const category = parseBadgeCategory(String(req.body.category ?? ""));
-    const ruleType = parseBadgeRuleType(String(req.body.ruleType ?? ""));
-    const metric = parseLeaderboardMetric(String(req.body.metric ?? ""));
+    const ruleType = parseBadgeRuleTypeValue(req.body.ruleType);
+    const metric = parseBadgeMetricValue(req.body.metric);
+    const threshold = parseNullableInt(req.body.threshold);
+    const rankTopN = parseNullableInt(req.body.rankTopN);
     if (!name || !category || !ruleType || !metric) {
+      sendError(res, HTTP_STATUS.VALIDATION_ERROR);
+      return;
+    }
+    if (
+      threshold === "invalid" ||
+      rankTopN === "invalid" ||
+      (threshold !== null && threshold < 0) ||
+      (rankTopN !== null && rankTopN < 1) ||
+      (ruleType === "THRESHOLD" && threshold === null) ||
+      (ruleType === "RANK" && rankTopN === null)
+    ) {
       sendError(res, HTTP_STATUS.VALIDATION_ERROR);
       return;
     }
@@ -545,16 +688,7 @@ export async function adminCreateBadge(req: Request, res: Response): Promise<voi
       name,
       symbol,
       category,
-      ruleType,
-      metric,
-      threshold:
-        req.body.threshold !== undefined && req.body.threshold !== null
-          ? Number(req.body.threshold)
-          : null,
-      rankTopN:
-        req.body.rankTopN !== undefined && req.body.rankTopN !== null
-          ? Number(req.body.rankTopN)
-          : null,
+      rulesConfig: buildLegacyRulesConfig(ruleType, metric, threshold, rankTopN),
       reward:
         req.body.reward === undefined
           ? undefined
@@ -562,7 +696,9 @@ export async function adminCreateBadge(req: Request, res: Response): Promise<voi
             ? null
             : (req.body.reward as Prisma.InputJsonValue),
       isActive:
-        req.body.isActive !== undefined ? Boolean(req.body.isActive) : undefined,
+        req.body.isActive !== undefined
+          ? Boolean(req.body.isActive)
+          : undefined,
       publishedAt,
     });
     sendSuccess(res, HTTP_STATUS.CREATED, { badge });
@@ -581,7 +717,10 @@ export async function adminCreateBadge(req: Request, res: Response): Promise<voi
   }
 }
 
-export async function adminPatchBadge(req: Request, res: Response): Promise<void> {
+export async function adminPatchBadge(
+  req: Request,
+  res: Response,
+): Promise<void> {
   try {
     const body = req.body;
     const patch: Parameters<typeof badgeService.patchDefinition>[1] = {};
@@ -590,17 +729,7 @@ export async function adminPatchBadge(req: Request, res: Response): Promise<void
     }
     if (body.symbol !== undefined) {
       patch.symbol =
-        body.symbol === null
-          ? null
-          : String(body.symbol).trim() || null;
-    }
-    if (body.ruleType !== undefined) {
-      const rt = parseBadgeRuleType(String(body.ruleType));
-      if (!rt) {
-        sendError(res, HTTP_STATUS.VALIDATION_ERROR);
-        return;
-      }
-      patch.ruleType = rt;
+        body.symbol === null ? null : String(body.symbol).trim() || null;
     }
     if (body.category !== undefined) {
       const category = parseBadgeCategory(String(body.category));
@@ -610,27 +739,34 @@ export async function adminPatchBadge(req: Request, res: Response): Promise<void
       }
       patch.category = category;
     }
-    if (body.metric !== undefined) {
-      const m = parseLeaderboardMetric(String(body.metric));
-      if (!m) {
+    if (
+      body.ruleType !== undefined ||
+      body.metric !== undefined ||
+      body.threshold !== undefined ||
+      body.rankTopN !== undefined
+    ) {
+      const rt = parseBadgeRuleTypeValue(body.ruleType);
+      const m = parseBadgeMetricValue(body.metric);
+      const threshold = parseNullableInt(body.threshold);
+      const rankTopN = parseNullableInt(body.rankTopN);
+      if (
+        !rt ||
+        !m ||
+        threshold === "invalid" ||
+        rankTopN === "invalid" ||
+        (threshold !== null && threshold < 0) ||
+        (rankTopN !== null && rankTopN < 1) ||
+        (rt === "THRESHOLD" && threshold === null) ||
+        (rt === "RANK" && rankTopN === null)
+      ) {
         sendError(res, HTTP_STATUS.VALIDATION_ERROR);
         return;
       }
-      patch.metric = m;
-    }
-    if (body.threshold !== undefined) {
-      patch.threshold =
-        body.threshold === null ? null : Number(body.threshold);
-    }
-    if (body.rankTopN !== undefined) {
-      patch.rankTopN =
-        body.rankTopN === null ? null : Number(body.rankTopN);
+      patch.rulesConfig = buildLegacyRulesConfig(rt, m, threshold, rankTopN);
     }
     if (body.reward !== undefined) {
       patch.reward =
-        body.reward === null
-          ? null
-          : (body.reward as Prisma.InputJsonValue);
+        body.reward === null ? null : (body.reward as Prisma.InputJsonValue);
     }
     if (body.isActive !== undefined) {
       patch.isActive = Boolean(body.isActive);
@@ -653,17 +789,17 @@ export async function adminPatchBadge(req: Request, res: Response): Promise<void
       patch.publishedAt = d;
     }
 
-    const badge = await badgeService.patchDefinition(req.params.id as string, patch);
+    const badge = await badgeService.patchDefinition(
+      req.params.id as string,
+      patch,
+    );
     if (!badge) {
       sendError(res, HTTP_STATUS.NOT_FOUND);
       return;
     }
     sendSuccess(res, HTTP_STATUS.OK, { badge });
   } catch (e) {
-    if (
-      e instanceof Error &&
-      e.message.startsWith("badge_validation:")
-    ) {
+    if (e instanceof Error && e.message.startsWith("badge_validation:")) {
       sendError(res, HTTP_STATUS.VALIDATION_ERROR);
       return;
     }
@@ -672,14 +808,21 @@ export async function adminPatchBadge(req: Request, res: Response): Promise<void
   }
 }
 
-export async function adminListSeasons(req: Request, res: Response): Promise<void> {
+export async function adminListSeasons(
+  req: Request,
+  res: Response,
+): Promise<void> {
   try {
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
     const kind =
-      typeof req.query.kind === "string" ? (req.query.kind as SeasonKind) : undefined;
+      typeof req.query.kind === "string"
+        ? (req.query.kind as SeasonKind)
+        : undefined;
     const search =
-      typeof req.query.search === "string" ? req.query.search.trim() : undefined;
+      typeof req.query.search === "string"
+        ? req.query.search.trim()
+        : undefined;
     const data = await seasonService.listAdmin(page, limit, {
       kind,
       search,
@@ -692,7 +835,10 @@ export async function adminListSeasons(req: Request, res: Response): Promise<voi
   }
 }
 
-export async function adminCreateSeason(req: Request, res: Response): Promise<void> {
+export async function adminCreateSeason(
+  req: Request,
+  res: Response,
+): Promise<void> {
   try {
     const kind = String(req.body.kind ?? "").toUpperCase();
     if (kind !== "MONTHLY" && kind !== "QUARTERLY") {
@@ -706,14 +852,13 @@ export async function adminCreateSeason(req: Request, res: Response): Promise<vo
       return;
     }
     const season = await seasonService.createSeason({
-      label:
-        req.body.label !== undefined ? String(req.body.label) : null,
+      label: req.body.label !== undefined ? String(req.body.label) : null,
       kind: kind as SeasonKind,
       startsAt,
       endsAt,
       status:
         req.body.status !== undefined
-          ? (String(req.body.status).toUpperCase() as import("@prisma/client").SeasonStatus)
+          ? (String(req.body.status).toUpperCase() as SeasonStatusValue)
           : undefined,
     });
     sendSuccess(res, HTTP_STATUS.CREATED, { season });
@@ -723,12 +868,14 @@ export async function adminCreateSeason(req: Request, res: Response): Promise<vo
   }
 }
 
-export async function adminPatchSeason(req: Request, res: Response): Promise<void> {
+export async function adminPatchSeason(
+  req: Request,
+  res: Response,
+): Promise<void> {
   try {
     const patch: Parameters<typeof seasonService.patchSeason>[1] = {};
     if (req.body.label !== undefined) {
-      patch.label =
-        req.body.label === null ? null : String(req.body.label);
+      patch.label = req.body.label === null ? null : String(req.body.label);
     }
     if (req.body.startsAt !== undefined) {
       patch.startsAt = new Date(String(req.body.startsAt));
@@ -737,13 +884,24 @@ export async function adminPatchSeason(req: Request, res: Response): Promise<voi
       patch.endsAt = new Date(String(req.body.endsAt));
     }
     if (req.body.status !== undefined) {
-      patch.status = String(req.body.status).toUpperCase() as import("@prisma/client").SeasonStatus;
+      const parsedStatus = parseSeasonStatus(req.body.status);
+      if (parsedStatus === null) {
+        sendError(
+          res,
+          HTTP_STATUS.VALIDATION_ERROR.withMessage("Invalid status"),
+        );
+        return;
+      }
+      patch.status = parsedStatus;
     }
     if (req.body.kind !== undefined) {
       patch.kind = String(req.body.kind).toUpperCase() as SeasonKind;
     }
 
-    const season = await seasonService.patchSeason(req.params.id as string, patch);
+    const season = await seasonService.patchSeason(
+      req.params.id as string,
+      patch,
+    );
     if (!season) {
       sendError(res, HTTP_STATUS.NOT_FOUND);
       return;
@@ -755,36 +913,47 @@ export async function adminPatchSeason(req: Request, res: Response): Promise<voi
   }
 }
 
-export async function adminFinalizeSeason(req: Request, res: Response): Promise<void> {
+export async function adminFinalizeSeason(
+  req: Request,
+  res: Response,
+): Promise<void> {
   try {
     const openNextRaw = req.query.openNext;
     const openNext = typeof openNextRaw === "string" && openNextRaw === "true";
     const nextLabel =
-      req.body.nextLabel !== undefined
-        ? String(req.body.nextLabel)
-        : undefined;
-    const startsAt = req.body.startsAt ? new Date(String(req.body.startsAt)) : undefined;
-    const endsAt = req.body.endsAt ? new Date(String(req.body.endsAt)) : undefined;
+      req.body.nextLabel !== undefined ? String(req.body.nextLabel) : undefined;
+    const startsAt = req.body.startsAt
+      ? new Date(String(req.body.startsAt))
+      : undefined;
+    const endsAt = req.body.endsAt
+      ? new Date(String(req.body.endsAt))
+      : undefined;
 
     if (openNext) {
       if (!startsAt || Number.isNaN(startsAt.getTime())) {
         sendError(
           res,
-          HTTP_STATUS.VALIDATION_ERROR.withMessage("startsAt is required when openNext=true"),
+          HTTP_STATUS.VALIDATION_ERROR.withMessage(
+            "startsAt is required when openNext=true",
+          ),
         );
         return;
       }
       if (!endsAt || Number.isNaN(endsAt.getTime())) {
         sendError(
           res,
-          HTTP_STATUS.VALIDATION_ERROR.withMessage("endsAt is required when openNext=true"),
+          HTTP_STATUS.VALIDATION_ERROR.withMessage(
+            "endsAt is required when openNext=true",
+          ),
         );
         return;
       }
       if (startsAt >= endsAt) {
         sendError(
           res,
-          HTTP_STATUS.VALIDATION_ERROR.withMessage("startsAt must be earlier than endsAt"),
+          HTTP_STATUS.VALIDATION_ERROR.withMessage(
+            "startsAt must be earlier than endsAt",
+          ),
         );
         return;
       }
@@ -824,7 +993,9 @@ export async function adminFinalizeSeason(req: Request, res: Response): Promise<
     if (msg === "INVALID_NEXT_DATES") {
       sendError(
         res,
-        HTTP_STATUS.VALIDATION_ERROR.withMessage("startsAt must be earlier than endsAt"),
+        HTTP_STATUS.VALIDATION_ERROR.withMessage(
+          "startsAt must be earlier than endsAt",
+        ),
       );
       return;
     }

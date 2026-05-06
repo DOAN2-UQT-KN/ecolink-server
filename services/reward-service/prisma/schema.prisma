@@ -204,10 +204,9 @@ enum LeaderboardMetric {
   ORG_AGGREGATE
 }
 
-/// How a badge is evaluated (distinct from LeaderboardMetric).
-enum BadgeRuleType {
-  THRESHOLD
-  RANK
+enum BadgeScope {
+  LIFETIME
+  SEASON
 }
 
 /// Badge grouping for deterministic metric compatibility.
@@ -479,16 +478,19 @@ model BadgeDefinition {
 
   category BadgeCategory
 
-  ruleType BadgeRuleType @map("rule_type")
+  scope BadgeScope @default(SEASON)
 
-  /// Leaderboard / score signal (CRP, VRP, org aggregate).
-  metric LeaderboardMetric @map("metric")
+  /// When true, badge logic can grant multiple times per user (subject to caps).
+  isRepeatable Boolean @default(false) @map("is_repeatable")
 
-  /// Minimum score for THRESHOLD badges (RP or org aggregate).
-  threshold Int?
+  /// Optional hard cap on total times a user may earn this badge.
+  maxGrantsPerUser Int? @map("max_grants_per_user")
 
-  /// Top-N snapshot rank required for RANK badges (e.g. 10 => top 10).
-  rankTopN Int? @map("rank_top_n")
+  /// Cooldown between repeat grants in seconds (0 = no cooldown).
+  cooldownSeconds Int @default(0) @map("cooldown_seconds")
+
+  /// JSON rules AST evaluated by the badge rules engine.
+  rulesConfig Json? @map("rules_config")
 
   /// Benefits: discount bps, partner tier codes, etc.
   reward Json?
@@ -508,8 +510,6 @@ model BadgeDefinition {
   grants UserBadgeGrant[]
 
   @@index([category, isActive])
-  @@index([ruleType, isActive])
-  @@index([metric, isActive])
   @@map("badge_definitions")
 }
 
@@ -520,17 +520,18 @@ model UserBadgeGrant {
 
   badgeId String @map("badge_id") @db.Uuid
 
-  seasonId String @map("season_id") @db.Uuid
+  seasonId String? @map("season_id") @db.Uuid
 
   grantedAt DateTime @default(now()) @map("granted_at")
 
   metadata Json?
 
   badge  BadgeDefinition @relation(fields: [badgeId], references: [id], onDelete: Cascade)
-  season Season          @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  season Season?         @relation(fields: [seasonId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, badgeId, seasonId])
   @@index([userId])
+  @@index([badgeId])
+  @@index([seasonId])
   @@map("user_badge_grants")
 }
 

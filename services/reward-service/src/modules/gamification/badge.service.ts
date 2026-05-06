@@ -1,10 +1,5 @@
 import { randomUUID } from "crypto";
-import type {
-  BadgeCategory,
-  BadgeRuleType,
-  LeaderboardMetric,
-  Prisma,
-} from "@prisma/client";
+import type { BadgeCategory, BadgeScope, Prisma } from "@prisma/client";
 import { Prisma as PrismaClient } from "@prisma/client";
 import prisma from "../../config/prisma.client";
 import { seasonService } from "./season.service";
@@ -14,6 +9,7 @@ import {
   validateBadgeDefinitionShape,
   validateRewardJson,
 } from "./badge-definition.validation";
+import { BadgeRuleEvaluator } from "./badge-rule-evaluator.service";
 
 type RewardJson = {
   discountBps?: number;
@@ -119,22 +115,25 @@ export class BadgeService {
         id: g.id,
         grantedAt: g.grantedAt.toISOString(),
         metadata: g.metadata,
-        season: {
-          id: g.season.id,
-          label: g.season.label,
-          kind: g.season.kind,
-          status: g.season.status,
-        },
+        season: g.season
+          ? {
+              id: g.season.id,
+              label: g.season.label,
+              kind: g.season.kind,
+              status: g.season.status,
+            }
+          : null,
         badge: {
           id: g.badge!.id,
           slug: g.badge!.slug,
           name: g.badge!.name,
           symbol: g.badge!.symbol,
           category: g.badge!.category,
-          ruleType: g.badge!.ruleType,
-          metric: g.badge!.metric,
-          threshold: g.badge!.threshold,
-          rankTopN: g.badge!.rankTopN,
+          scope: g.badge!.scope,
+          isRepeatable: g.badge!.isRepeatable,
+          maxGrantsPerUser: g.badge!.maxGrantsPerUser,
+          cooldownSeconds: g.badge!.cooldownSeconds,
+          rulesConfig: g.badge!.rulesConfig as Prisma.JsonValue | null,
           reward: g.badge!.reward,
         },
       }));
@@ -152,20 +151,22 @@ export class BadgeService {
     name: string;
     symbol?: string | null;
     category: BadgeCategory;
-    ruleType: BadgeRuleType;
-    metric: LeaderboardMetric;
-    threshold?: number | null;
-    rankTopN?: number | null;
+    scope?: BadgeScope;
+    isRepeatable?: boolean;
+    maxGrantsPerUser?: number | null;
+    cooldownSeconds?: number;
+    rulesConfig?: Prisma.InputJsonValue | null;
     reward?: Prisma.InputJsonValue | null;
     isActive?: boolean;
     publishedAt?: Date | null;
   }) {
     const shapeErr = validateBadgeDefinitionShape({
       category: body.category,
-      ruleType: body.ruleType,
-      metric: body.metric,
-      threshold: body.threshold,
-      rankTopN: body.rankTopN,
+      scope: body.scope ?? "SEASON",
+      isRepeatable: body.isRepeatable ?? false,
+      maxGrantsPerUser: body.maxGrantsPerUser ?? null,
+      cooldownSeconds: body.cooldownSeconds ?? 0,
+      rulesConfig: body.rulesConfig ?? null,
     });
     if (shapeErr) {
       throw new Error(`badge_validation:${shapeErr}`);
@@ -188,17 +189,20 @@ export class BadgeService {
               ? null
               : body.symbol.trim() || null,
         category: body.category,
-        ruleType: body.ruleType,
-        metric: body.metric,
-        threshold: body.threshold ?? null,
-        rankTopN: body.rankTopN ?? null,
+        scope: body.scope ?? "SEASON",
+        isRepeatable: body.isRepeatable ?? false,
+        maxGrantsPerUser: body.maxGrantsPerUser ?? null,
+        cooldownSeconds: body.cooldownSeconds ?? 0,
+        rulesConfig:
+          body.rulesConfig === undefined
+            ? undefined
+            : (body.rulesConfig as Prisma.InputJsonValue),
         reward: body.reward ?? undefined,
         isActive: body.isActive ?? true,
       };
       if (body.publishedAt !== undefined) {
         data.publishedAt = body.publishedAt;
-        data.slugLockedAt =
-          body.publishedAt != null ? new Date() : null;
+        data.slugLockedAt = body.publishedAt != null ? new Date() : null;
       }
       return tx.badgeDefinition.create({ data });
     });
@@ -210,10 +214,11 @@ export class BadgeService {
       name: string;
       symbol: string | null;
       category: BadgeCategory;
-      ruleType: BadgeRuleType;
-      metric: LeaderboardMetric;
-      threshold: number | null;
-      rankTopN: number | null;
+      scope: BadgeScope;
+      isRepeatable: boolean;
+      maxGrantsPerUser: number | null;
+      cooldownSeconds: number;
+      rulesConfig: Prisma.InputJsonValue | null;
       reward: Prisma.InputJsonValue | null;
       isActive: boolean;
       deletedAt: Date | null;
@@ -232,40 +237,38 @@ export class BadgeService {
     const lockedCore = grantCount > 0;
 
     if (lockedCore) {
-      if (body.ruleType !== undefined && body.ruleType !== current.ruleType) {
-        throw new Error("badge_validation:rule_locked_after_grant");
-      }
-      if (body.metric !== undefined && body.metric !== current.metric) {
-        throw new Error("badge_validation:metric_locked_after_grant");
-      }
       if (body.category !== undefined && body.category !== current.category) {
         throw new Error("badge_validation:category_locked_after_grant");
       }
-      if (
-        body.threshold !== undefined &&
-        body.threshold !== current.threshold
-      ) {
-        throw new Error("badge_validation:threshold_locked_after_grant");
-      }
-      if (body.rankTopN !== undefined && body.rankTopN !== current.rankTopN) {
-        throw new Error("badge_validation:rank_top_n_locked_after_grant");
+      if (body.scope !== undefined && body.scope !== current.scope) {
+        throw new Error("badge_validation:scope_locked_after_grant");
       }
     }
 
     const category = body.category ?? current.category;
-    const ruleType = body.ruleType ?? current.ruleType;
-    const metric = body.metric ?? current.metric;
-    const threshold =
-      body.threshold !== undefined ? body.threshold : current.threshold;
-    const rankTopN =
-      body.rankTopN !== undefined ? body.rankTopN : current.rankTopN;
+    const scope = body.scope ?? current.scope;
+    const isRepeatable =
+      body.isRepeatable !== undefined ? body.isRepeatable : current.isRepeatable;
+    const maxGrantsPerUser =
+      body.maxGrantsPerUser !== undefined
+        ? body.maxGrantsPerUser
+        : current.maxGrantsPerUser;
+    const cooldownSeconds =
+      body.cooldownSeconds !== undefined
+        ? body.cooldownSeconds
+        : current.cooldownSeconds;
+    const rulesConfig =
+      body.rulesConfig !== undefined
+        ? (body.rulesConfig as Prisma.InputJsonValue | null)
+        : (current.rulesConfig as Prisma.InputJsonValue | null);
 
     const shapeErr = validateBadgeDefinitionShape({
       category,
-      ruleType,
-      metric,
-      threshold,
-      rankTopN,
+      scope,
+      isRepeatable,
+      maxGrantsPerUser,
+      cooldownSeconds,
+      rulesConfig,
     });
     if (shapeErr) {
       throw new Error(`badge_validation:${shapeErr}`);
@@ -285,23 +288,28 @@ export class BadgeService {
       data.name = body.name;
     }
     if (body.symbol !== undefined) {
-      data.symbol =
-        body.symbol === null ? null : body.symbol.trim() || null;
+      data.symbol = body.symbol === null ? null : body.symbol.trim() || null;
     }
     if (body.category !== undefined) {
       data.category = body.category;
     }
-    if (body.ruleType !== undefined) {
-      data.ruleType = body.ruleType;
+    if (body.scope !== undefined) {
+      data.scope = body.scope;
     }
-    if (body.metric !== undefined) {
-      data.metric = body.metric;
+    if (body.isRepeatable !== undefined) {
+      data.isRepeatable = body.isRepeatable;
     }
-    if (body.threshold !== undefined) {
-      data.threshold = body.threshold;
+    if (body.maxGrantsPerUser !== undefined) {
+      data.maxGrantsPerUser = body.maxGrantsPerUser;
     }
-    if (body.rankTopN !== undefined) {
-      data.rankTopN = body.rankTopN;
+    if (body.cooldownSeconds !== undefined) {
+      data.cooldownSeconds = body.cooldownSeconds;
+    }
+    if (body.rulesConfig !== undefined) {
+      data.rulesConfig =
+        body.rulesConfig === null
+          ? PrismaClient.JsonNull
+          : (body.rulesConfig as Prisma.InputJsonValue);
     }
     if (body.reward !== undefined) {
       data.reward =
@@ -339,107 +347,23 @@ export class BadgeService {
   }
 
   /**
-   * Evaluate threshold badges for a user after RP totals change (called from workers).
-   * Only CRP / VRP user metrics; org aggregate thresholds are evaluated elsewhere.
+   * Evaluate a single badge definition for a user using the JSON rules engine.
+   * This does not create a grant; callers can decide whether and how to persist.
    */
-  async evaluateThresholdBadgesForUser(
-    userId: string,
-    seasonId: string,
-    citizenRp: number,
-    volunteerRp: number,
-    activityMetrics?: {
-      reportUpvotes?: number;
-      reportCount?: number;
-      campaignCompleted?: number;
-    },
-  ): Promise<void> {
-    const defs = await prisma.badgeDefinition.findMany({
-      where: {
-        deletedAt: null,
-        isActive: true,
-        ruleType: "THRESHOLD",
-      },
+  async evaluateBadge(userId: string, badgeId: string, seasonId?: string) {
+    const badge = await prisma.badgeDefinition.findUnique({
+      where: { id: badgeId },
     });
-
-    for (const def of defs) {
-      if (def.threshold == null) {
-        continue;
-      }
-      const metricValue =
-        def.metric === "CRP"
-          ? citizenRp
-          : def.metric === "VRP"
-            ? volunteerRp
-            : def.metric === "REPORT_UPVOTES"
-              ? (activityMetrics?.reportUpvotes ?? 0)
-              : def.metric === "REPORT_COUNT"
-                ? (activityMetrics?.reportCount ?? 0)
-                : def.metric === "CAMPAIGN_COMPLETED"
-                  ? (activityMetrics?.campaignCompleted ?? 0)
-                  : -1;
-      const passes = metricValue >= def.threshold;
-      if (!passes) {
-        continue;
-      }
-
-      await prisma.userBadgeGrant.upsert({
-        where: {
-          userId_badgeId_seasonId: {
-            userId,
-            badgeId: def.id,
-            seasonId,
-          },
-        },
-        create: {
-          id: randomUUID(),
-          userId,
-          badgeId: def.id,
-          seasonId,
-        },
-        update: {},
-      });
-      await touchSlugLockedAt(def.id);
+    if (!badge || badge.deletedAt || !badge.isActive) {
+      return false;
     }
-  }
-
-  async evaluateRankBadgesForUser(
-    userId: string,
-    seasonId: string,
-    ranks: Partial<Record<LeaderboardMetric, number>>,
-  ): Promise<void> {
-    const defs = await prisma.badgeDefinition.findMany({
-      where: {
-        deletedAt: null,
-        isActive: true,
-        ruleType: "RANK",
-      },
+    const passes = await BadgeRuleEvaluator.evaluateBadge(userId, badge, {
+      seasonId: seasonId ?? null,
     });
-    for (const def of defs) {
-      if (def.rankTopN == null) {
-        continue;
-      }
-      const rank = ranks[def.metric];
-      if (rank == null || rank > def.rankTopN) {
-        continue;
-      }
-      await prisma.userBadgeGrant.upsert({
-        where: {
-          userId_badgeId_seasonId: {
-            userId,
-            badgeId: def.id,
-            seasonId,
-          },
-        },
-        create: {
-          id: randomUUID(),
-          userId,
-          badgeId: def.id,
-          seasonId,
-        },
-        update: {},
-      });
-      await touchSlugLockedAt(def.id);
+    if (passes) {
+      await touchSlugLockedAt(badge.id);
     }
+    return passes;
   }
 }
 

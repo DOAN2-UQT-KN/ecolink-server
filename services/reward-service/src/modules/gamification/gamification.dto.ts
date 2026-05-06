@@ -109,17 +109,18 @@ export interface BadgeGrantItemDto {
     label: string | null;
     kind: string;
     status: string;
-  };
+  } | null;
   badge: {
     id: string;
     slug: string;
     name: string;
     symbol?: string | null;
     category: string;
-    ruleType: string;
-    metric: string;
-    threshold: number | null;
-    rankTopN: number | null;
+    scope: string;
+    isRepeatable: boolean;
+    maxGrantsPerUser: number | null;
+    cooldownSeconds: number;
+    rulesConfig?: Record<string, unknown> | null;
     reward?: Record<string, unknown> | null;
   };
 }

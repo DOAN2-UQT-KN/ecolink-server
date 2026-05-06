@@ -1,9 +1,4 @@
-import type {
-  BadgeCategory,
-  BadgeRuleType,
-  LeaderboardMetric,
-  Prisma,
-} from "@prisma/client";
+import type { BadgeCategory, BadgeScope, Prisma } from "@prisma/client";
 
 export const BADGE_CATEGORIES: BadgeCategory[] = [
   "REPORT",
@@ -11,23 +6,7 @@ export const BADGE_CATEGORIES: BadgeCategory[] = [
   "CONTRIBUTION",
   "RANK",
 ];
-export const BADGE_RULE_TYPES: BadgeRuleType[] = ["THRESHOLD", "RANK"];
-
-export const LEADERBOARD_METRICS: LeaderboardMetric[] = [
-  "CRP",
-  "VRP",
-  "REPORT_UPVOTES",
-  "REPORT_COUNT",
-  "CAMPAIGN_COMPLETED",
-  "ORG_AGGREGATE",
-];
-
-export function parseBadgeRuleType(raw: string): BadgeRuleType | null {
-  const v = raw.trim().toUpperCase();
-  return BADGE_RULE_TYPES.includes(v as BadgeRuleType)
-    ? (v as BadgeRuleType)
-    : null;
-}
+export const BADGE_SCOPES: BadgeScope[] = ["LIFETIME", "SEASON"];
 
 export function parseBadgeCategory(raw: string): BadgeCategory | null {
   const v = raw.trim().toUpperCase();
@@ -36,11 +15,9 @@ export function parseBadgeCategory(raw: string): BadgeCategory | null {
     : null;
 }
 
-export function parseLeaderboardMetric(raw: string): LeaderboardMetric | null {
+export function parseBadgeScope(raw: string): BadgeScope | null {
   const v = raw.trim().toUpperCase();
-  return LEADERBOARD_METRICS.includes(v as LeaderboardMetric)
-    ? (v as LeaderboardMetric)
-    : null;
+  return BADGE_SCOPES.includes(v as BadgeScope) ? (v as BadgeScope) : null;
 }
 
 /** Lowercase snake_case from arbitrary admin input. */
@@ -63,53 +40,35 @@ export function slugifyFromName(name: string): string {
 
 export function validateBadgeDefinitionShape(input: {
   category: BadgeCategory;
-  ruleType: BadgeRuleType;
-  metric: LeaderboardMetric;
-  threshold: number | null | undefined;
-  rankTopN: number | null | undefined;
+  scope: BadgeScope;
+  isRepeatable: boolean;
+  maxGrantsPerUser: number | null | undefined;
+  cooldownSeconds: number;
+  rulesConfig: Prisma.InputJsonValue | null | undefined;
 }): string | null {
-  const { category, ruleType, metric, threshold, rankTopN } = input;
-  if (!LEADERBOARD_METRICS.includes(metric)) {
-    return "invalid_metric";
-  }
+  const { category, scope, maxGrantsPerUser, cooldownSeconds, rulesConfig } =
+    input;
+
   if (!BADGE_CATEGORIES.includes(category)) {
     return "invalid_category";
   }
-  if (!BADGE_RULE_TYPES.includes(ruleType)) {
-    return "invalid_rule_type";
+  if (!BADGE_SCOPES.includes(scope)) {
+    return "invalid_scope";
   }
-  if (category === "REPORT" && !metric.startsWith("REPORT_")) {
-    return "metric_category_mismatch";
+  if (maxGrantsPerUser != null) {
+    if (!Number.isInteger(maxGrantsPerUser) || maxGrantsPerUser <= 0) {
+      return "max_grants_per_user_invalid";
+    }
   }
-  if (category === "CAMPAIGN" && !metric.startsWith("CAMPAIGN_")) {
-    return "metric_category_mismatch";
+  if (!Number.isFinite(cooldownSeconds)) {
+    return "cooldown_seconds_invalid";
   }
-  if (category === "CONTRIBUTION" && !["CRP", "VRP"].includes(metric)) {
-    return "metric_category_mismatch";
+  if (!Number.isInteger(cooldownSeconds) || cooldownSeconds < 0) {
+    return "cooldown_seconds_invalid";
   }
-  if (category === "RANK" && ruleType !== "RANK") {
-    return "rank_category_requires_rank_rule";
-  }
-
-  if (ruleType === "THRESHOLD") {
-    if (threshold == null || !Number.isFinite(threshold)) {
-      return "threshold_required";
-    }
-    if (!Number.isInteger(threshold) || threshold < 0) {
-      return "threshold_invalid";
-    }
-    if (rankTopN != null) {
-      return "rank_top_n_must_be_null_for_threshold";
-    }
-  } else {
-    if (rankTopN == null || !Number.isFinite(rankTopN)) {
-      return "rank_top_n_required";
-    }
-    if (!Number.isInteger(rankTopN) || rankTopN < 1) {
-      return "rank_top_n_invalid";
-    }
-    if (threshold != null) {
-      return "threshold_must_be_null_for_rank";
+  if (rulesConfig != null) {
+    if (typeof rulesConfig !== "object" || Array.isArray(rulesConfig)) {
+      return "rules_config_must_be_object";
     }
   }
   return null;
