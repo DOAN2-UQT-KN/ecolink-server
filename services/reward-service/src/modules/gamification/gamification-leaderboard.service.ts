@@ -1,4 +1,8 @@
-import type { LeaderboardMetric, SeasonStatus } from "@prisma/client";
+import type { LeaderboardMetric } from "@prisma/client";
+import {
+  SeasonStatus,
+  isSeasonInactiveStatus,
+} from "@da2/constants";
 import prisma from "../../config/prisma.client";
 import { fetchUsersByIds, getUserProfile } from "../../utils/identity-user.client";
 
@@ -8,10 +12,17 @@ function toPrismaMetric(m: PublicMetric): LeaderboardMetric {
   return m;
 }
 
+function isInactiveSeason(status: number | string): boolean {
+  if (typeof status === "string") {
+    return status === "INACTIVE" || status === String(SeasonStatus.INACTIVE);
+  }
+  return isSeasonInactiveStatus(status);
+}
+
 export class GamificationLeaderboardService {
   async resolveSeasonId(explicit?: string): Promise<{
     seasonId: string;
-    status: SeasonStatus;
+    status: number | string;
   } | null> {
     if (explicit) {
       const s = await prisma.season.findUnique({ where: { id: explicit } });
@@ -21,14 +32,14 @@ export class GamificationLeaderboardService {
     const s =
       (await prisma.season.findFirst({
         where: {
-          status: "ACTIVE",
+          status: SeasonStatus.ACTIVE,
           startsAt: { lte: now },
           endsAt: { gte: now },
         },
         orderBy: { startsAt: "desc" },
       })) ??
       (await prisma.season.findFirst({
-        where: { status: "ACTIVE" },
+        where: { status: SeasonStatus.ACTIVE },
         orderBy: { startsAt: "desc" },
       })) ??
       (await prisma.season.findFirst({ orderBy: { startsAt: "desc" } }));
@@ -50,7 +61,7 @@ export class GamificationLeaderboardService {
     const prismaMetric = toPrismaMetric(metric);
     const skip = (page - 1) * limit;
 
-    if (resolved.status === "INACTIVE") {
+    if (isInactiveSeason(resolved.status)) {
       const where = {
         seasonId: resolved.seasonId,
         metric: prismaMetric,
@@ -254,7 +265,7 @@ export class GamificationLeaderboardService {
 
     const prismaMetric = toPrismaMetric(metric);
 
-    if (resolved.status === "INACTIVE") {
+    if (isInactiveSeason(resolved.status)) {
       if (metric === "ORG_AGGREGATE") {
         return null;
       }

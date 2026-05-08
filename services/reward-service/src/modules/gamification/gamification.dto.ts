@@ -6,7 +6,7 @@ export interface SeasonDto {
   id: string;
   label: string | null;
   kind: string;
-  status: string;
+  status: number;
   startsAt: string;
   endsAt: string;
 }
@@ -76,7 +76,7 @@ export interface UserSeasonPointsRowDto {
   seasonId: string;
   label: string | null;
   kind: string;
-  status: string;
+  status: number;
   startsAt: string;
   endsAt: string;
   /** Citizen ranking points this season */
@@ -105,7 +105,7 @@ export interface BadgeGrantSeasonDto {
   id: string;
   label: string | null;
   kind: string;
-  status: string;
+  status: number;
 }
 
 /**
@@ -403,14 +403,14 @@ export interface CreateSeasonBody {
   kind: string;
   startsAt: string;
   endsAt: string;
-  status?: string;
+  status?: number;
 }
 
 export interface PatchSeasonBody {
   label?: string | null;
   startsAt?: string;
   endsAt?: string;
-  status?: string;
+  status?: number;
   kind?: string;
 }
 

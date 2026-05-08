@@ -164,11 +164,6 @@ model RewardBackgroundJob {
 
 // --- Gamification v2: seasonal RP (CRP/VRP), persistent SP wallet batches, badges, snapshots ---
 
-enum SeasonStatus {
-  ACTIVE
-  INACTIVE
-}
-
 enum SeasonKind {
   MONTHLY
   QUARTERLY
@@ -222,7 +217,7 @@ model Season {
   id     String       @id @default(uuid()) @db.Uuid
   label  String?      @db.VarChar(128)
   kind   SeasonKind   @map("season_kind")
-  status SeasonStatus @default(ACTIVE)
+  status Int          @default(1)
 
   startsAt DateTime @map("starts_at")
   endsAt   DateTime @map("ends_at")

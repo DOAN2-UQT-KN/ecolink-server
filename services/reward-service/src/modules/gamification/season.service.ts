@@ -2,8 +2,13 @@ import { randomUUID } from "crypto";
 import type {
   LeaderboardMetric,
   SeasonKind,
-  SeasonStatus,
 } from "@prisma/client";
+import {
+  SeasonStatus,
+  type SeasonStatusType,
+  isSeasonActiveStatus,
+  isSeasonInactiveStatus,
+} from "@da2/constants";
 import { Prisma } from "@prisma/client";
 import prisma from "../../config/prisma.client";
 
@@ -11,16 +16,30 @@ export type SeasonResponse = {
   id: string;
   label: string | null;
   kind: SeasonKind;
-  status: SeasonStatus;
+  status: number;
   startsAt: string;
   endsAt: string;
 };
+
+function normalizeSeasonStatus(status: number | string): number {
+  if (typeof status === "number") {
+    return status;
+  }
+  if (status === "ACTIVE") {
+    return SeasonStatus.ACTIVE;
+  }
+  if (status === "INACTIVE") {
+    return SeasonStatus.INACTIVE;
+  }
+  const parsed = Number(status);
+  return Number.isInteger(parsed) ? parsed : SeasonStatus.INACTIVE;
+}
 
 function toSeasonResponse(row: {
   id: string;
   label: string | null;
   kind: SeasonKind;
-  status: SeasonStatus;
+  status: number | string;
   startsAt: Date;
   endsAt: Date;
 }): SeasonResponse {
@@ -28,7 +47,7 @@ function toSeasonResponse(row: {
     id: row.id,
     label: row.label,
     kind: row.kind,
-    status: row.status,
+    status: normalizeSeasonStatus(row.status),
     startsAt: row.startsAt.toISOString(),
     endsAt: row.endsAt.toISOString(),
   };
@@ -43,7 +62,7 @@ export class SeasonService {
 
     const activeInWindow = await prisma.season.findFirst({
       where: {
-        status: "ACTIVE",
+        status: SeasonStatus.ACTIVE,
         startsAt: { lte: now },
         endsAt: { gte: now },
       },
@@ -54,7 +73,7 @@ export class SeasonService {
     }
 
     const activeAny = await prisma.season.findFirst({
-      where: { status: "ACTIVE" },
+      where: { status: SeasonStatus.ACTIVE },
       orderBy: { startsAt: "desc" },
     });
     if (activeAny) {
@@ -111,7 +130,7 @@ export class SeasonService {
     kind: SeasonKind;
     startsAt: Date;
     endsAt: Date;
-    status?: SeasonStatus;
+    status?: SeasonStatusType;
   }): Promise<SeasonResponse> {
     const row = await prisma.season.create({
       data: {
@@ -120,7 +139,7 @@ export class SeasonService {
         kind: body.kind,
         startsAt: body.startsAt,
         endsAt: body.endsAt,
-        status: body.status ?? "ACTIVE",
+        status: body.status ?? SeasonStatus.ACTIVE,
       },
     });
     return toSeasonResponse(row);
@@ -132,7 +151,7 @@ export class SeasonService {
       label: string | null;
       startsAt: Date;
       endsAt: Date;
-      status: SeasonStatus;
+      status: SeasonStatusType;
       kind: SeasonKind;
     }>,
   ): Promise<SeasonResponse | null> {
@@ -340,16 +359,19 @@ export class SeasonService {
       if (!current) {
         throw new Error("SEASON_NOT_FOUND");
       }
-      if (current.status !== "ACTIVE" && current.status !== "INACTIVE") {
+      if (
+        !isSeasonActiveStatus(current.status) &&
+        !isSeasonInactiveStatus(current.status)
+      ) {
         throw new Error("SEASON_NOT_FINALIZABLE");
       }
 
       let snapshotsWritten = 0;
-      if (current.status === "ACTIVE") {
+      if (isSeasonActiveStatus(current.status)) {
         snapshotsWritten = await this.freezeSeasonTx(tx, seasonId);
         await tx.season.update({
           where: { id: seasonId },
-          data: { status: "INACTIVE" },
+          data: { status: SeasonStatus.INACTIVE },
         });
       } else {
         snapshotsWritten = await tx.leaderboardSnapshot.count({ where: { seasonId } });
@@ -363,7 +385,7 @@ export class SeasonService {
       const endsAt = body?.endsAt as Date;
 
       const existingActive = await tx.season.findFirst({
-        where: { status: "ACTIVE" },
+        where: { status: SeasonStatus.ACTIVE },
       });
       if (existingActive) {
         const sameAsRequested =
@@ -379,7 +401,7 @@ export class SeasonService {
       const existingNext = await tx.season.findFirst({
         where: {
           kind: current.kind,
-          status: "ACTIVE",
+          status: SeasonStatus.ACTIVE,
           startsAt,
           endsAt,
         },
@@ -394,7 +416,7 @@ export class SeasonService {
               body?.nextLabel ??
               `${current.kind} ${startsAt.toISOString().slice(0, 10)}`,
             kind: current.kind,
-            status: "ACTIVE",
+            status: SeasonStatus.ACTIVE,
             startsAt,
             endsAt,
           },

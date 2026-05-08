@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import type { LeaderboardMetric, SeasonKind } from "@prisma/client";
+import { SeasonStatus, type SeasonStatusType } from "@da2/constants";
 import { Prisma } from "@prisma/client";
 import {
   HTTP_STATUS,
@@ -18,20 +19,25 @@ import { gamificationLeaderboardService } from "./gamification-leaderboard.servi
 import { gamificationSummaryService } from "./gamification-summary.service";
 import { seasonService } from "./season.service";
 
-type SeasonStatusValue = "ACTIVE" | "INACTIVE";
 type BadgeRuleTypeValue = "THRESHOLD" | "RANK";
 type BadgeMetricValue = "CRP" | "VRP" | "ORG_AGGREGATE";
 
-function parseSeasonStatus(value: unknown): SeasonStatusValue | null {
+function parseSeasonStatus(value: unknown): SeasonStatusType | null {
   if (value === undefined || value === null) {
     return null;
   }
-  const raw = String(value).trim().toUpperCase();
-  if (raw === "ACTIVE") {
-    return "ACTIVE";
+  if (typeof value === "number" && Number.isInteger(value)) {
+    if (value === SeasonStatus.ACTIVE || value === SeasonStatus.INACTIVE) {
+      return value;
+    }
+    return null;
   }
-  if (raw === "INACTIVE") {
-    return "INACTIVE";
+  const raw = String(value).trim().toUpperCase();
+  if (raw === "ACTIVE" || raw === String(SeasonStatus.ACTIVE)) {
+    return SeasonStatus.ACTIVE;
+  }
+  if (raw === "INACTIVE" || raw === String(SeasonStatus.INACTIVE)) {
+    return SeasonStatus.INACTIVE;
   }
   return null;
 }
@@ -985,15 +991,24 @@ export async function adminCreateSeason(
       sendError(res, HTTP_STATUS.VALIDATION_ERROR.withMessage("Invalid dates"));
       return;
     }
+    let status: SeasonStatusType | undefined;
+    if (req.body.status !== undefined) {
+      const parsedStatus = parseSeasonStatus(req.body.status);
+      if (parsedStatus === null) {
+        sendError(
+          res,
+          HTTP_STATUS.VALIDATION_ERROR.withMessage("Invalid status"),
+        );
+        return;
+      }
+      status = parsedStatus;
+    }
     const season = await seasonService.createSeason({
       label: req.body.label !== undefined ? String(req.body.label) : null,
       kind: kind as SeasonKind,
       startsAt,
       endsAt,
-      status:
-        req.body.status !== undefined
-          ? (String(req.body.status).toUpperCase() as SeasonStatusValue)
-          : undefined,
+      status,
     });
     sendSuccess(res, HTTP_STATUS.CREATED, { season });
   } catch (e) {
@@ -1110,7 +1125,7 @@ export async function adminFinalizeSeason(
       sendError(
         res,
         HTTP_STATUS.UNPROCESSABLE_ENTITY.withMessage(
-          "Season must be ACTIVE or INACTIVE",
+          `Season must be ${SeasonStatus.ACTIVE} (ACTIVE) or ${SeasonStatus.INACTIVE} (INACTIVE)`,
         ),
       );
       return;

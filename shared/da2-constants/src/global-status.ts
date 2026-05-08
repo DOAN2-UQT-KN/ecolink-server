@@ -33,6 +33,19 @@ export const ReportStatus = GlobalStatus;
 export const TaskStatus = GlobalStatus;
 export const JoinRequestStatus = GlobalStatus;
 export const ResultStatus = GlobalStatus;
+export const SeasonStatus = {
+  ACTIVE: GlobalStatus._STATUS_ACTIVE,
+  INACTIVE: GlobalStatus._STATUS_INACTIVE,
+} as const;
+export type SeasonStatusType = (typeof SeasonStatus)[keyof typeof SeasonStatus];
+
+export function isSeasonActiveStatus(status: number): boolean {
+  return status === SeasonStatus.ACTIVE;
+}
+
+export function isSeasonInactiveStatus(status: number): boolean {
+  return status === SeasonStatus.INACTIVE;
+}
 
 export enum MediaFileStage {
   BEFORE = "BEFORE",
