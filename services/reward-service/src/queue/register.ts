@@ -1,12 +1,16 @@
 import { FacebookRecognitionWorker } from "./workers/facebook-recognition.worker";
 import { GreenPointCreditWorker } from "./workers/green-point-credit.worker";
+import { TranslationWorker } from "./workers/translation.worker";
 import {
   backgroundJobStore,
   facebookRecognitionQueue,
   greenPointQueue,
+  translationQueue,
 } from "./green-point-queue.bootstrap";
 
-const workers: Array<GreenPointCreditWorker | FacebookRecognitionWorker> = [];
+const workers: Array<
+  GreenPointCreditWorker | FacebookRecognitionWorker | TranslationWorker
+> = [];
 let started = false;
 
 const thresholds = {
@@ -24,6 +28,9 @@ const thresholds = {
 
 const concurrency = Number(process.env.GREEN_POINT_QUEUE_CONCURRENCY ?? 1);
 const facebookConcurrency = Number(process.env.FACEBOOK_QUEUE_CONCURRENCY ?? 1);
+const translationConcurrency = Number(
+  process.env.TRANSLATION_QUEUE_CONCURRENCY ?? 1,
+);
 
 export function startAllQueues(): void {
   if (started) return;
@@ -41,6 +48,15 @@ export function startAllQueues(): void {
   for (let i = 0; i < facebookConcurrency; i++) {
     const worker = new FacebookRecognitionWorker(
       facebookRecognitionQueue,
+      backgroundJobStore,
+      thresholds,
+    );
+    workers.push(worker);
+    worker.start();
+  }
+  for (let i = 0; i < translationConcurrency; i++) {
+    const worker = new TranslationWorker(
+      translationQueue,
       backgroundJobStore,
       thresholds,
     );

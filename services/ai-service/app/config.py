@@ -8,6 +8,9 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/ecolink"
     jwt_secret: str = ""
+    # Shared secret for service-to-service calls hitting `/internal/v1/...`.
+    # Callers must send it in the `x-internal-api-key` header.
+    internal_ai_api_key: str = ""
     openai_api_key: str = ""
     openai_base_url: Optional[str] = None
     openai_chat_model: str = "gpt-4o-mini"

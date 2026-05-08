@@ -25,7 +25,41 @@ import { buildVerifyContactEmailRequestUrl } from "./organization-contact-email-
 import { organizationJoiningRequestRepository } from "./organization_joining_request.repository";
 import { organizationMemberRepository } from "./organization_member.repository";
 import { organizationRepository } from "./organization.repository";
-import { translateText } from "../translation/translation.client";
+import { backgroundJobDispatcher } from "../../queue/register";
+import {
+  ReportJobType,
+  TranslationFieldTarget,
+  TranslationResourceType,
+} from "../../constants/job-type.enum";
+
+/**
+ * Best-effort enqueue of a TRANSLATE_TEXT job for an organization. Failure is
+ * logged but does NOT propagate so request handlers stay fast and do not roll
+ * back the primary write when SQS is unavailable.
+ */
+function enqueueOrganizationTranslationJob(
+  resourceId: string,
+  translations: TranslationFieldTarget[],
+): void {
+  const cleaned = translations.filter(
+    (t) => t.sourceText.trim().length > 0 && (t.viField || t.enField),
+  );
+  if (cleaned.length === 0) {
+    return;
+  }
+  backgroundJobDispatcher
+    .enqueue(ReportJobType.TRANSLATE_TEXT, {
+      resourceType: TranslationResourceType.ORGANIZATION,
+      resourceId,
+      translations: cleaned,
+    })
+    .catch((err: Error) => {
+      console.error(
+        "[incident-service] Failed to enqueue organization translation job:",
+        err.message,
+      );
+    });
+}
 
 type OrganizationCore = Omit<OrganizationResponse, "owner">;
 
@@ -136,19 +170,20 @@ export class OrganizationService {
   async createOrganization(
     ownerId: string,
     body: CreateOrganizationBody,
-    authorization?: string,
+    _authorization?: string,
   ): Promise<OrganizationResponse> {
-    const providedVi = body.descriptionVi?.trim();
-    const providedEn = body.descriptionEn?.trim();
-    const legacy = body.description?.trim();
-    const sourceText = providedVi || providedEn || legacy || "";
-    let descriptionVi: string | null = providedVi ?? null;
-    let descriptionEn: string | null = providedEn ?? null;
-    if (sourceText && (!descriptionVi || !descriptionEn)) {
-      const tr = await translateText(sourceText, authorization);
-      descriptionVi = descriptionVi ?? tr.vi;
-      descriptionEn = descriptionEn ?? tr.en;
-    }
+    const providedVi = body.descriptionVi?.trim() || "";
+    const providedEn = body.descriptionEn?.trim() || "";
+    const legacy = body.description?.trim() || "";
+    const sourceText = providedVi || providedEn || legacy;
+    // Use the source text as a placeholder for any missing language; the
+    // background translation worker overwrites it with the real translation.
+    const descriptionVi: string | null = sourceText
+      ? providedVi || sourceText
+      : null;
+    const descriptionEn: string | null = sourceText
+      ? providedEn || sourceText
+      : null;
 
     const created = await organizationRepository.create({
       name: body.name.trim(),
@@ -161,6 +196,16 @@ export class OrganizationService {
       ownerId,
       createdBy: ownerId,
     });
+
+    if (sourceText && (!providedVi || !providedEn)) {
+      enqueueOrganizationTranslationJob(created.id, [
+        {
+          sourceText,
+          viField: providedVi ? undefined : "descriptionVi",
+          enField: providedEn ? undefined : "descriptionEn",
+        },
+      ]);
+    }
 
     if (created.contactEmail) {
       void this.queueOrganizationContactVerificationEmail(
@@ -300,7 +345,7 @@ export class OrganizationService {
     organizationId: string,
     ownerId: string,
     body: UpdateOrganizationBody,
-    authorization?: string,
+    _authorization?: string,
   ): Promise<OrganizationResponse> {
     const org = await organizationRepository.findById(organizationId);
     if (!org) {
@@ -333,16 +378,16 @@ export class OrganizationService {
     if (body.descriptionEn !== undefined) {
       patch.descriptionEn = body.descriptionEn?.trim() || null;
     }
+    const userVi = body.descriptionVi?.trim() || "";
+    const userEn = body.descriptionEn?.trim() || "";
     const sourceText =
-      body.descriptionVi?.trim() ||
-      body.descriptionEn?.trim() ||
-      body.description?.trim() ||
-      "";
+      userVi || userEn || body.description?.trim() || "";
+    // Pre-fill any missing language with the source text so the row reads back
+    // sensibly until the translation worker overwrites it.
     if (sourceText) {
-      const tr = await translateText(sourceText, authorization);
-      if (patch.descriptionVi === undefined) patch.descriptionVi = tr.vi;
-      if (patch.descriptionEn === undefined) patch.descriptionEn = tr.en;
-      if (patch.description === undefined) patch.description = tr.vi;
+      if (patch.descriptionVi === undefined) patch.descriptionVi = sourceText;
+      if (patch.descriptionEn === undefined) patch.descriptionEn = sourceText;
+      if (patch.description === undefined) patch.description = sourceText;
     }
     if (body.logoUrl !== undefined) {
       patch.logoUrl = body.logoUrl.trim();
@@ -363,6 +408,16 @@ export class OrganizationService {
     }
 
     const updated = await organizationRepository.update(organizationId, patch);
+
+    if (sourceText && (!userVi || !userEn)) {
+      enqueueOrganizationTranslationJob(updated.id, [
+        {
+          sourceText,
+          viField: userVi ? undefined : "descriptionVi",
+          enField: userEn ? undefined : "descriptionEn",
+        },
+      ]);
+    }
 
     if (contactEmailChanged && updated.contactEmail) {
       void this.queueOrganizationContactVerificationEmail(
