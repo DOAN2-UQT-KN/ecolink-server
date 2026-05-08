@@ -269,6 +269,58 @@ async def stream_chat_turn(
     yield format_sse("error", {"message": "Too many tool rounds; aborting."})
 
 
+def _extract_json_object(text: str) -> str:
+    """
+    Pull the outer `{...}` object from a string that may contain leading prose,
+    Markdown code fences (```json ... ```), or trailing commentary.
+
+    Returns the bare JSON string, or the original text if no balanced object is
+    found (the caller will then surface a parse error with full context).
+    """
+    if not text:
+        return text
+
+    s = text.strip()
+
+    # Strip Markdown code fences if present (```json … ``` or ``` … ```).
+    if s.startswith("```"):
+        # Drop opening fence (``` or ```json + optional newline).
+        first_nl = s.find("\n")
+        if first_nl >= 0:
+            s = s[first_nl + 1 :]
+        # Drop closing fence.
+        if s.rstrip().endswith("```"):
+            s = s.rstrip()[:-3]
+        s = s.strip()
+
+    start = s.find("{")
+    if start < 0:
+        return s
+
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(start, len(s)):
+        ch = s[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return s[start : i + 1]
+    return s
+
+
 async def translate_text(user_text: str) -> dict[str, str]:
     if not settings.openai_api_key:
         raise RuntimeError("OPENAI_API_KEY is not configured")
@@ -287,19 +339,40 @@ async def translate_text(user_text: str) -> dict[str, str]:
     )
     raw = (resp.choices[0].message.content or "").strip()
 
+    # Some providers (MiniMax, DeepSeek-R1, etc.) emit `<think>…</think>` blocks
+    # before the JSON payload even when `response_format=json_object` is set.
+    # Strip them, then defensively pull the outer JSON object out of whatever
+    # remains (in case there's a trailing comment or stray prose).
+    cleaned = strip_thinking(raw)
+    cleaned = _extract_json_object(cleaned)
+
+    # Truncated previews for error messages (helps debugging when the LLM
+    # ignores the schema or returns a short refusal).
+    raw_preview = raw[:300] if raw else "<empty>"
+    cleaned_preview = cleaned[:300] if cleaned else "<empty>"
+
     try:
-        data = json.loads(raw) if raw else {}
+        data = json.loads(cleaned) if cleaned else {}
     except json.JSONDecodeError as e:
-        raise RuntimeError("Translation assistant returned invalid JSON") from e
+        raise RuntimeError(
+            f"Translation assistant returned invalid JSON: cleaned={cleaned_preview!r} "
+            f"raw={raw_preview!r}"
+        ) from e
 
     detected = data.get("detected_language")
     if detected not in ("vi", "en"):
-        raise RuntimeError("Translation assistant returned invalid detected_language")
+        raise RuntimeError(
+            f"Translation assistant returned invalid detected_language={detected!r}; "
+            f"cleaned={cleaned_preview!r}"
+        )
 
     vn_value = data.get("vn")
     en_value = data.get("en")
     if not isinstance(vn_value, str) or not isinstance(en_value, str):
-        raise RuntimeError("Translation assistant returned invalid payload")
+        raise RuntimeError(
+            f"Translation assistant returned invalid payload (vn={type(vn_value).__name__}, "
+            f"en={type(en_value).__name__}); cleaned={cleaned_preview!r}"
+        )
 
     # Enforce exact preservation of original text in its source-language field.
     if detected == "vi":

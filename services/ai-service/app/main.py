@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import logging
 
 from app.chat.router import router as chat_router
+from app.internal.router import router as internal_router
 from app.recommendation.router import router as recommendation_router
 from app.social.router import router as social_router
 from app.config import settings
@@ -67,3 +68,5 @@ async def health() -> dict[str, str]:
 app.include_router(chat_router, prefix="/api/v1/chat")
 app.include_router(recommendation_router, prefix="/api/v1/recommendations")
 app.include_router(social_router, prefix="/api/v1/social")
+# Service-to-service routes (api-gateway does NOT proxy `/internal/...`).
+app.include_router(internal_router, prefix="/internal/v1")

@@ -2,6 +2,7 @@ import { QueueRunner, QueueRouteConfig } from "@da2/queue";
 import { ReportSqsQueueFactory } from "./report-sqs-queue-factory";
 import prisma from "../config/prisma.client";
 import { ReportAnalysisWorker } from "./worker/report-analysis-worker";
+import { TranslationWorker } from "./worker/translation-worker";
 import { ReportJobType } from "../constants/job-type.enum";
 import BackgroundJobStore from "./background-job-store";
 
@@ -24,15 +25,19 @@ const QUEUE_ROUTES: QueueRouteConfig[] = [
       new ReportAnalysisWorker(queue, store, {}),
     ],
   },
-  // Add new routes here — no other code changes needed.
-  // Example:
-  // {
-  //   jobType: ReportJobType.SEND_WEBHOOK,
-  //   concurrency: Number(process.env.WEBHOOK_CONCURRENCY ?? 1),
-  //   createQueue: () => sqsFactory.createQueue("SQS_WEBHOOK_QUEUE_URL", backgroundJobStore),
-  //   store: backgroundJobStore,
-  //   createWorkers: (queue, store) => [new WebhookWorker(queue, store, {})],
-  // },
+  {
+    jobType: ReportJobType.TRANSLATE_TEXT,
+    concurrency: Number(process.env.TRANSLATE_TEXT_CONCURRENCY ?? 1),
+    createQueue: () =>
+      sqsFactory.createQueue(
+        "SQS_INCIDENT_TRANSLATION_QUEUE_URL",
+        backgroundJobStore,
+      ),
+    store: backgroundJobStore,
+    createWorkers: (queue, store) => [
+      new TranslationWorker(queue, store, {}),
+    ],
+  },
 ];
 
 // ─── Queue runner ─────────────────────────────────────────────────────────────
