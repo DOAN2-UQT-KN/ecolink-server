@@ -1,20 +1,17 @@
-/** Job types owned by incident-service. */
-export enum ReportJobType {
-  ANALYZE_REPORT = "ANALYZE_REPORT",
-  TRANSLATE_TEXT = "TRANSLATE_TEXT",
-}
+/** SQS envelope `jobType` for asynchronous translation work in reward-service. */
+export const TRANSLATE_TEXT_JOB_TYPE = "TRANSLATE_TEXT" as const;
 
 /** Logical resource types carried in TRANSLATE_TEXT payloads. */
 export enum TranslationResourceType {
-  REPORT = "REPORT",
-  ORGANIZATION = "ORGANIZATION",
+  GIFT = "GIFT",
+  DIFFICULTY = "DIFFICULTY",
 }
 
 /**
  * Single translation request inside a TRANSLATE_TEXT job. The worker calls the
  * AI translation service for `sourceText` and writes the result into the named
  * Vietnamese / English columns. Either target may be omitted (e.g. when the
- * client already provided one of the two languages).
+ * client already supplied one of the two languages).
  */
 export interface TranslationFieldTarget {
   sourceText: string;

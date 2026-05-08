@@ -20,7 +20,41 @@ import {
   toGiftResponse,
   UpdateGiftBody,
 } from "./gift.dto";
-import { translateText } from "../translation/translation.client";
+import { backgroundJobDispatcher } from "../../queue/green-point-queue.bootstrap";
+import {
+  TRANSLATE_TEXT_JOB_TYPE,
+  TranslationFieldTarget,
+  TranslationResourceType,
+} from "../translation/translation.types";
+
+/**
+ * Best-effort enqueue of a TRANSLATE_TEXT job. Failure is logged but does NOT
+ * propagate so request handlers stay fast and do not roll back the primary
+ * write when SQS is unavailable.
+ */
+function enqueueGiftTranslationJob(
+  resourceId: string,
+  translations: TranslationFieldTarget[],
+): void {
+  const cleaned = translations.filter(
+    (t) => t.sourceText.trim().length > 0 && (t.viField || t.enField),
+  );
+  if (cleaned.length === 0) {
+    return;
+  }
+  backgroundJobDispatcher
+    .enqueue(TRANSLATE_TEXT_JOB_TYPE, {
+      resourceType: TranslationResourceType.GIFT,
+      resourceId,
+      translations: cleaned,
+    })
+    .catch((err: Error) => {
+      console.error(
+        "[reward-service] Failed to enqueue gift translation job:",
+        err.message,
+      );
+    });
+}
 
 export type ListGiftsParams = {
   page: number;
@@ -194,16 +228,15 @@ export class GiftService {
   }
 
   async create(body: CreateGiftBody): Promise<GiftResponse> {
-    const sourceName =
-      body.nameVi?.trim() || body.nameEn?.trim() || body.name.trim();
+    const userNameVi = body.nameVi?.trim() || "";
+    const userNameEn = body.nameEn?.trim() || "";
+    const userDescriptionVi = body.descriptionVi?.trim() || "";
+    const userDescriptionEn = body.descriptionEn?.trim() || "";
+
+    const sourceName = userNameVi || userNameEn || body.name.trim();
     const sourceDescription =
-      body.descriptionVi?.trim() ||
-      body.descriptionEn?.trim() ||
-      body.description.trim();
-    const [nameTr, descTr] = await Promise.all([
-      translateText(sourceName, undefined),
-      translateText(sourceDescription, undefined),
-    ]);
+      userDescriptionVi || userDescriptionEn || body.description.trim();
+
     const row = await prisma.$transaction(async (tx) => {
       let mediaId: string | null = null;
       if (body.imageUrl?.trim()) {
@@ -220,12 +253,14 @@ export class GiftService {
       return tx.gift.create({
         data: {
           name: body.name.trim(),
-          nameVi: body.nameVi?.trim() || nameTr.vi,
-          nameEn: body.nameEn?.trim() || nameTr.en,
+          // Translations are filled asynchronously; until the worker runs we
+          // store the source text so the row never has empty placeholders.
+          nameVi: userNameVi || sourceName,
+          nameEn: userNameEn || sourceName,
           mediaId,
           description: body.description.trim(),
-          descriptionVi: body.descriptionVi?.trim() || descTr.vi,
-          descriptionEn: body.descriptionEn?.trim() || descTr.en,
+          descriptionVi: userDescriptionVi || sourceDescription,
+          descriptionEn: userDescriptionEn || sourceDescription,
           greenPoints: body.greenPoints,
           stockRemaining:
             body.stockRemaining === undefined ? null : body.stockRemaining,
@@ -233,6 +268,24 @@ export class GiftService {
         } as any,
       });
     });
+
+    const translations: TranslationFieldTarget[] = [];
+    if (sourceName && (!userNameVi || !userNameEn)) {
+      translations.push({
+        sourceText: sourceName,
+        viField: userNameVi ? undefined : "nameVi",
+        enField: userNameEn ? undefined : "nameEn",
+      });
+    }
+    if (sourceDescription && (!userDescriptionVi || !userDescriptionEn)) {
+      translations.push({
+        sourceText: sourceDescription,
+        viField: userDescriptionVi ? undefined : "descriptionVi",
+        enField: userDescriptionEn ? undefined : "descriptionEn",
+      });
+    }
+    enqueueGiftTranslationJob(row.id, translations);
+
     const [gift] = await this.mapGiftsWithMediaByMediaId([row]);
     return gift;
   }
@@ -240,7 +293,7 @@ export class GiftService {
   async updateById(
     id: string,
     body: UpdateGiftBody,
-    authorization?: string,
+    _authorization?: string,
   ): Promise<GiftResponse | null> {
     const existing = await prisma.gift.findFirst({
       where: { id, deletedAt: null },
@@ -249,22 +302,27 @@ export class GiftService {
       return null;
     }
 
+    const userNameVi = body.nameVi?.trim() || "";
+    const userNameEn = body.nameEn?.trim() || "";
+    const userDescriptionVi = body.descriptionVi?.trim() || "";
+    const userDescriptionEn = body.descriptionEn?.trim() || "";
+
     const sourceName =
-      body.nameVi?.trim() || body.nameEn?.trim() || body.name?.trim() || "";
+      userNameVi || userNameEn || body.name?.trim() || "";
     const sourceDescription =
-      body.descriptionVi?.trim() ||
-      body.descriptionEn?.trim() ||
+      userDescriptionVi ||
+      userDescriptionEn ||
       body.description?.trim() ||
       "";
+    // Pre-fill any missing language with the source text so the row reads back
+    // sensibly until the translation worker overwrites it.
     if (sourceName) {
-      const tr = await translateText(sourceName, authorization);
-      if (body.nameVi === undefined) body.nameVi = tr.vi;
-      if (body.nameEn === undefined) body.nameEn = tr.en;
+      if (body.nameVi === undefined) body.nameVi = sourceName;
+      if (body.nameEn === undefined) body.nameEn = sourceName;
     }
     if (sourceDescription) {
-      const tr = await translateText(sourceDescription, authorization);
-      if (body.descriptionVi === undefined) body.descriptionVi = tr.vi;
-      if (body.descriptionEn === undefined) body.descriptionEn = tr.en;
+      if (body.descriptionVi === undefined) body.descriptionVi = sourceDescription;
+      if (body.descriptionEn === undefined) body.descriptionEn = sourceDescription;
     }
 
     const data: Prisma.GiftUpdateInput = {
@@ -325,6 +383,24 @@ export class GiftService {
         data,
       });
     });
+
+    const translations: TranslationFieldTarget[] = [];
+    if (sourceName && (!userNameVi || !userNameEn)) {
+      translations.push({
+        sourceText: sourceName,
+        viField: userNameVi ? undefined : "nameVi",
+        enField: userNameEn ? undefined : "nameEn",
+      });
+    }
+    if (sourceDescription && (!userDescriptionVi || !userDescriptionEn)) {
+      translations.push({
+        sourceText: sourceDescription,
+        viField: userDescriptionVi ? undefined : "descriptionVi",
+        enField: userDescriptionEn ? undefined : "descriptionEn",
+      });
+    }
+    enqueueGiftTranslationJob(updated.id, translations);
+
     const [gift] = await this.mapGiftsWithMediaByMediaId([updated]);
     return gift;
   }

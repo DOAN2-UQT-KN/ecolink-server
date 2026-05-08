@@ -21,7 +21,11 @@ import {
 } from "../../constants/status.enum";
 import prisma from "../../config/prisma.client";
 import { randomUUID } from "node:crypto";
-import { ReportJobType } from "../../constants/job-type.enum";
+import {
+  ReportJobType,
+  TranslationFieldTarget,
+  TranslationResourceType,
+} from "../../constants/job-type.enum";
 import { backgroundJobDispatcher } from "../../queue/register";
 import { backgroundJobRepository } from "../background-job/background-job.repository";
 import { HttpError, HTTP_STATUS } from "../../constants/http-status";
@@ -35,7 +39,36 @@ import {
 import type { OrganizationOwnerResponse } from "../organization/organization.dto";
 import { rewardServiceClient } from "../reward/reward-service.client";
 import { enqueueReportStatusWebsiteNotification } from "./report-status-notify.client";
-import { translateText } from "../translation/translation.client";
+
+/**
+ * Best-effort enqueue of a TRANSLATE_TEXT job. Failure is logged but does NOT
+ * propagate so request handlers stay fast and do not roll back the primary
+ * write when SQS is unavailable.
+ */
+function enqueueReportTranslationJob(
+  resourceType: TranslationResourceType,
+  resourceId: string,
+  translations: TranslationFieldTarget[],
+): void {
+  const cleaned = translations.filter(
+    (t) => t.sourceText.trim().length > 0 && (t.viField || t.enField),
+  );
+  if (cleaned.length === 0) {
+    return;
+  }
+  backgroundJobDispatcher
+    .enqueue(ReportJobType.TRANSLATE_TEXT, {
+      resourceType,
+      resourceId,
+      translations: cleaned,
+    })
+    .catch((err: Error) => {
+      console.error(
+        "[incident-service] Failed to enqueue translation job:",
+        err.message,
+      );
+    });
+}
 
 /** Admin moderation: report is banned / hidden (`GlobalStatus._STATUS_INACTIVE`). */
 const REPORT_STATUS_BANNED = ReportStatus._STATUS_INACTIVE;
@@ -152,38 +185,39 @@ export class ReportService {
   async createReport(
     userId: string,
     request: CreateReportRequest,
-    authorization?: string,
+    _authorization?: string,
   ): Promise<ReportResponse> {
     const imageUrls = request.imageUrls
       .map((imageUrl) => imageUrl.trim())
       .filter((imageUrl) => imageUrl.length > 0);
 
+    const userTitleVi = request.titleVi?.trim() || "";
+    const userTitleEn = request.titleEn?.trim() || "";
+    const userDescriptionVi = request.descriptionVi?.trim() || "";
+    const userDescriptionEn = request.descriptionEn?.trim() || "";
+
     const sourceTitle =
-      request.titleVi?.trim() || request.titleEn?.trim() || request.title.trim();
+      userTitleVi || userTitleEn || request.title.trim();
     const sourceDescription =
-      request.descriptionVi?.trim() ||
-      request.descriptionEn?.trim() ||
+      userDescriptionVi ||
+      userDescriptionEn ||
       request.description?.trim() ||
       "";
-    const [titleTr, descTr] = await Promise.all([
-      translateText(sourceTitle, authorization),
-      sourceDescription
-        ? translateText(sourceDescription, authorization)
-        : Promise.resolve({ vi: "", en: "" }),
-    ]);
 
     const reportAndMedia = await prisma.$transaction(async (tx) => {
       const createdReport = await tx.report.create({
         data: {
           userId,
           title: request.title,
-          titleVi: request.titleVi?.trim() || titleTr.vi,
-          titleEn: request.titleEn?.trim() || titleTr.en,
+          // Translations are filled asynchronously; until the worker runs we
+          // store the source text so the row never has empty placeholders.
+          titleVi: userTitleVi || sourceTitle,
+          titleEn: userTitleEn || sourceTitle,
           description: request.description,
           descriptionVi:
-            request.descriptionVi?.trim() || (sourceDescription ? descTr.vi : null),
+            userDescriptionVi || (sourceDescription || null),
           descriptionEn:
-            request.descriptionEn?.trim() || (sourceDescription ? descTr.en : null),
+            userDescriptionEn || (sourceDescription || null),
           wasteType: request.wasteType,
           severityLevel: request.severityLevel,
           latitude: request.latitude,
@@ -236,6 +270,24 @@ export class ReportService {
       .catch((err: Error) => {
         console.error("Failed to enqueue AI analysis job:", err.message);
       });
+
+    const titleTarget: TranslationFieldTarget = {
+      sourceText: sourceTitle,
+      viField: userTitleVi ? undefined : "titleVi",
+      enField: userTitleEn ? undefined : "titleEn",
+    };
+    const descriptionTarget: TranslationFieldTarget | null = sourceDescription
+      ? {
+          sourceText: sourceDescription,
+          viField: userDescriptionVi ? undefined : "descriptionVi",
+          enField: userDescriptionEn ? undefined : "descriptionEn",
+        }
+      : null;
+    enqueueReportTranslationJob(
+      TranslationResourceType.REPORT,
+      reportAndMedia.report.id,
+      descriptionTarget ? [titleTarget, descriptionTarget] : [titleTarget],
+    );
 
     const [report] = await this.attachVotesToReports(
       [toReportResponse(reportAndMedia.report)],
@@ -456,7 +508,7 @@ export class ReportService {
     userId: string,
     role?: string,
     viewerUserId?: string | null,
-    authorization?: string,
+    _authorization?: string,
   ): Promise<ReportResponse> {
     const existing = await reportRepository.findById(id);
     if (!existing) {
@@ -465,37 +517,59 @@ export class ReportService {
 
     this.assertReporterMayEditReport(existing, userId, role);
 
+    const userTitleVi = request.titleVi?.trim() || "";
+    const userTitleEn = request.titleEn?.trim() || "";
+    const userDescriptionVi = request.descriptionVi?.trim() || "";
+    const userDescriptionEn = request.descriptionEn?.trim() || "";
+
     const sourceTitle =
-      request.titleVi?.trim() || request.titleEn?.trim() || request.title?.trim() || "";
+      userTitleVi || userTitleEn || request.title?.trim() || "";
     const sourceDescription =
-      request.descriptionVi?.trim() ||
-      request.descriptionEn?.trim() ||
+      userDescriptionVi ||
+      userDescriptionEn ||
       request.description?.trim() ||
       "";
-    if (sourceTitle) {
-      const tr = await translateText(sourceTitle, authorization);
-      if (request.titleVi === undefined) request.titleVi = tr.vi;
-      if (request.titleEn === undefined) request.titleEn = tr.en;
-    }
-    if (sourceDescription) {
-      const tr = await translateText(sourceDescription, authorization);
-      if (request.descriptionVi === undefined) request.descriptionVi = tr.vi;
-      if (request.descriptionEn === undefined) request.descriptionEn = tr.en;
-    }
 
     const report = await reportRepository.update(id, {
       title: request.title,
-      titleVi: request.titleVi,
-      titleEn: request.titleEn,
+      // For unset language fields, write the source text as a placeholder; the
+      // background worker overwrites it with the real translation when it runs.
+      titleVi: sourceTitle ? userTitleVi || sourceTitle : request.titleVi,
+      titleEn: sourceTitle ? userTitleEn || sourceTitle : request.titleEn,
       description: request.description,
-      descriptionVi: request.descriptionVi,
-      descriptionEn: request.descriptionEn,
+      descriptionVi: sourceDescription
+        ? userDescriptionVi || sourceDescription
+        : request.descriptionVi,
+      descriptionEn: sourceDescription
+        ? userDescriptionEn || sourceDescription
+        : request.descriptionEn,
       wasteType: request.wasteType,
       severityLevel: request.severityLevel,
       latitude: request.latitude,
       longitude: request.longitude,
       detailAddress: request.detailAddress,
     } as any);
+
+    const translations: TranslationFieldTarget[] = [];
+    if (sourceTitle && (!userTitleVi || !userTitleEn)) {
+      translations.push({
+        sourceText: sourceTitle,
+        viField: userTitleVi ? undefined : "titleVi",
+        enField: userTitleEn ? undefined : "titleEn",
+      });
+    }
+    if (sourceDescription && (!userDescriptionVi || !userDescriptionEn)) {
+      translations.push({
+        sourceText: sourceDescription,
+        viField: userDescriptionVi ? undefined : "descriptionVi",
+        enField: userDescriptionEn ? undefined : "descriptionEn",
+      });
+    }
+    enqueueReportTranslationJob(
+      TranslationResourceType.REPORT,
+      report.id,
+      translations,
+    );
 
     return this.withReportVote(
       toReportResponse(report),

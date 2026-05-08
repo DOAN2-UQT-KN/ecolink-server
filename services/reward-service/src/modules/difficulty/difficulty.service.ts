@@ -4,7 +4,41 @@ import {
   toDifficultyResponse,
   UpdateDifficultyBody,
 } from "./difficulty.dto";
-import { translateText } from "../translation/translation.client";
+import { backgroundJobDispatcher } from "../../queue/green-point-queue.bootstrap";
+import {
+  TRANSLATE_TEXT_JOB_TYPE,
+  TranslationFieldTarget,
+  TranslationResourceType,
+} from "../translation/translation.types";
+
+/**
+ * Best-effort enqueue of a TRANSLATE_TEXT job. Failure is logged but does NOT
+ * propagate so request handlers stay fast and do not roll back the primary
+ * write when SQS is unavailable.
+ */
+function enqueueDifficultyTranslationJob(
+  resourceId: string,
+  translations: TranslationFieldTarget[],
+): void {
+  const cleaned = translations.filter(
+    (t) => t.sourceText.trim().length > 0 && (t.viField || t.enField),
+  );
+  if (cleaned.length === 0) {
+    return;
+  }
+  backgroundJobDispatcher
+    .enqueue(TRANSLATE_TEXT_JOB_TYPE, {
+      resourceType: TranslationResourceType.DIFFICULTY,
+      resourceId,
+      translations: cleaned,
+    })
+    .catch((err: Error) => {
+      console.error(
+        "[reward-service] Failed to enqueue difficulty translation job:",
+        err.message,
+      );
+    });
+}
 
 export class DifficultyService {
   async listActive(
@@ -37,7 +71,7 @@ export class DifficultyService {
   async updateById(
     id: string,
     body: UpdateDifficultyBody,
-    authorization?: string,
+    _authorization?: string,
   ): Promise<DifficultyResponse | null> {
     const existing = await prisma.difficulty.findFirst({
       where: { id, deletedAt: null },
@@ -46,14 +80,18 @@ export class DifficultyService {
       return null;
     }
 
+    const userNameVi = body.nameVi?.trim() || "";
+    const userNameEn = body.nameEn?.trim() || "";
     const sourceText =
-      body.nameVi?.trim() || body.nameEn?.trim() || body.name?.trim() || "";
-    let nameVi = body.nameVi?.trim();
-    let nameEn = body.nameEn?.trim();
-    if (sourceText && (!nameVi || !nameEn)) {
-      const tr = await translateText(sourceText, authorization);
-      nameVi = nameVi ?? tr.vi;
-      nameEn = nameEn ?? tr.en;
+      userNameVi || userNameEn || body.name?.trim() || "";
+
+    // Pre-fill any missing language with the source text so the row reads back
+    // sensibly until the translation worker overwrites it.
+    let nameVi = userNameVi;
+    let nameEn = userNameEn;
+    if (sourceText) {
+      if (!nameVi) nameVi = sourceText;
+      if (!nameEn) nameEn = sourceText;
     }
 
     const updated = await prisma.difficulty.update({
@@ -70,6 +108,17 @@ export class DifficultyService {
           : {}),
       },
     });
+
+    if (sourceText && (!userNameVi || !userNameEn)) {
+      enqueueDifficultyTranslationJob(updated.id, [
+        {
+          sourceText,
+          viField: userNameVi ? undefined : "nameVi",
+          enField: userNameEn ? undefined : "nameEn",
+        },
+      ]);
+    }
+
     return { ...toDifficultyResponse(updated), name: null as any };
   }
 }

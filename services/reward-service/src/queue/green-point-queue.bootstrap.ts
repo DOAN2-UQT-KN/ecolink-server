@@ -1,6 +1,7 @@
 import { BackgroundJobDispatcher } from "@da2/queue";
 import { FACEBOOK_RECOGNITION_JOB_TYPE } from "../modules/facebook-recognition/facebook-recognition.types";
 import { KNOWN_GREEN_POINT_JOB_TYPES } from "../modules/green-point/green-point.types";
+import { TRANSLATE_TEXT_JOB_TYPE } from "../modules/translation/translation.types";
 import { RewardBackgroundJobStore } from "./reward-background-job-store";
 import { RewardSqsQueueFactory } from "./reward-sqs-queue-factory";
 
@@ -15,6 +16,10 @@ const facebookRecognitionQueue = sqsFactory.createQueue(
   "SQS_FACEBOOK_RECOGNITION_QUEUE_URL",
   backgroundJobStore,
 );
+const translationQueue = sqsFactory.createQueue(
+  "SQS_REWARD_TRANSLATION_QUEUE_URL",
+  backgroundJobStore,
+);
 
 export const backgroundJobDispatcher = new BackgroundJobDispatcher();
 for (const jobType of KNOWN_GREEN_POINT_JOB_TYPES) {
@@ -24,5 +29,11 @@ backgroundJobDispatcher.register(
   FACEBOOK_RECOGNITION_JOB_TYPE,
   facebookRecognitionQueue,
 );
+backgroundJobDispatcher.register(TRANSLATE_TEXT_JOB_TYPE, translationQueue);
 
-export { backgroundJobStore, facebookRecognitionQueue, greenPointQueue };
+export {
+  backgroundJobStore,
+  facebookRecognitionQueue,
+  greenPointQueue,
+  translationQueue,
+};

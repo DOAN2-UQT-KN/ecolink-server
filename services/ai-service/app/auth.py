@@ -58,3 +58,22 @@ async def get_current_user_id(
     auth: Annotated[AuthContext, Depends(get_auth_context)],
 ) -> str:
     return auth.user_id
+
+
+async def require_internal_api_key(request: Request) -> None:
+    """
+    Guards `/internal/v1/...` routes for service-to-service calls.
+
+    Callers (other backend services) send the shared secret in the
+    `x-internal-api-key` header instead of a per-user JWT, so background
+    workers can hit the AI service without a user context.
+    """
+    expected = (settings.internal_ai_api_key or "").strip()
+    if not expected:
+        raise HTTPException(
+            status_code=500,
+            detail="AI service INTERNAL_AI_API_KEY is not configured",
+        )
+    provided = request.headers.get("x-internal-api-key")
+    if not provided or provided != expected:
+        raise HTTPException(status_code=401, detail="Invalid internal API key")
