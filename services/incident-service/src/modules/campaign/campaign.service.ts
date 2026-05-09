@@ -15,6 +15,7 @@ import {
   enqueueCampaignCompletionRejectedByAdminWebsiteNotification,
   enqueueCampaignCreatedWebsiteNotification,
   enqueueCampaignDoneWebsiteNotification,
+  enqueueCampaignVerifyInviteNotification,
 } from "./notification-jobs.client";
 import { getCampaignCompletionAdminNotifyUserIds } from "./campaign-completion-admin-notify.config";
 import { campaignManagerRepository } from "./campaign_manager/campaign_manager.repository";
@@ -44,6 +45,10 @@ import type { OrganizationOwnerResponse } from "../organization/organization.dto
 import { toReportResponse } from "../report/report.entity";
 import type { ReportResponse } from "../report/report.dto";
 import { reportService } from "../report/report.service";
+import { reportRepository } from "../report/report.repository";
+
+/** Hardcoded radius for community verify invites (meters). */
+const NOTIFY_NEARBY_VERIFY_RADIUS_METERS = 5_000;
 
 export class CampaignService {
   constructor() {}
@@ -432,6 +437,21 @@ export class CampaignService {
       });
     }
 
+    if (request.notifyNearbyToVerify === true) {
+      void this.notifyNearbyCitizensToVerifyCampaign({
+        campaignId: created.id,
+        campaignTitle: request.title,
+        latitude: request.latitude,
+        longitude: request.longitude,
+        creatorUserId: userId,
+      }).catch((err) => {
+        console.warn(
+          "[campaign] failed to notify nearby citizens for community verify",
+          err,
+        );
+      });
+    }
+
     return this.toResponseWithVotes(created, viewerUserId ?? userId);
   }
 
@@ -469,6 +489,51 @@ export class CampaignService {
           campaignTitle: args.campaignTitle,
           campaignId: args.campaignId,
           organizationId: args.organizationId,
+        }),
+      ),
+    );
+  }
+
+  /**
+   * Notifies users who have report activity near the campaign point (see
+   * `reportRepository.findDistinctReporterUserIdsNearPoint`) to open the campaign and vote.
+   */
+  private async notifyNearbyCitizensToVerifyCampaign(args: {
+    campaignId: string;
+    campaignTitle: string;
+    latitude?: number;
+    longitude?: number;
+    creatorUserId: string;
+  }): Promise<void> {
+    if (args.latitude == null || args.longitude == null) {
+      console.warn(
+        "[campaign] notifyNearbyToVerify skipped: latitude/longitude required",
+        { campaignId: args.campaignId },
+      );
+      return;
+    }
+
+    const nearUserIds =
+      await reportRepository.findDistinctReporterUserIdsNearPoint(
+        args.longitude,
+        args.latitude,
+        NOTIFY_NEARBY_VERIFY_RADIUS_METERS,
+      );
+    const recipientIds = [
+      ...new Set(
+        nearUserIds.filter((id) => id && id !== args.creatorUserId),
+      ),
+    ];
+    if (recipientIds.length === 0) {
+      return;
+    }
+
+    await Promise.all(
+      recipientIds.map((uid) =>
+        enqueueCampaignVerifyInviteNotification({
+          userId: uid,
+          campaignTitle: args.campaignTitle,
+          campaignId: args.campaignId,
         }),
       ),
     );

@@ -330,6 +330,36 @@ export class ReportRepository {
       total,
     };
   }
+
+  /**
+   * Distinct `user_id` from non-deleted reports that have coordinates within
+   * `radiusMeters` of the given point (WGS84, geography distance).
+   */
+  async findDistinctReporterUserIdsNearPoint(
+    longitude: number,
+    latitude: number,
+    radiusMeters: number,
+  ): Promise<string[]> {
+    const rows = await this.prisma.$queryRawUnsafe<{ userId: string }[]>(
+      `
+            SELECT DISTINCT user_id as "userId"
+            FROM reports
+            WHERE deleted_at IS NULL
+              AND user_id IS NOT NULL
+              AND latitude IS NOT NULL
+              AND longitude IS NOT NULL
+              AND ST_DWithin(
+                  ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography,
+                  ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
+                  $3
+              )
+        `,
+      longitude,
+      latitude,
+      radiusMeters,
+    );
+    return rows.map((r) => r.userId).filter(Boolean);
+  }
 }
 
 // Singleton instance

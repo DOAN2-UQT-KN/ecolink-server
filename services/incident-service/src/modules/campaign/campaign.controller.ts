@@ -82,6 +82,10 @@ export class CampaignController {
       .optional()
       .isBoolean()
       .withMessage("notifyMembers must be a boolean"),
+    body("notifyNearbyToVerify")
+      .optional()
+      .isBoolean()
+      .withMessage("notifyNearbyToVerify must be a boolean"),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);

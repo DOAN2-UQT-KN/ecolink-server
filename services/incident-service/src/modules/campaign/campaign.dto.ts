@@ -36,6 +36,12 @@ export interface CreateCampaignRequest {
    * (except the creator). Only honored for the organization owner (same as create permission).
    */
   notifyMembers?: boolean;
+  /**
+   * When true and `latitude` / `longitude` are set, enqueue in-app invites for citizens
+   * who submitted reports within a fixed radius (currently 5 km) of the campaign point,
+   * so they can open the campaign and cast a community vote. Excludes the creator.
+   */
+  notifyNearbyToVerify?: boolean;
 }
 
 export interface UpdateCampaignRequest {
