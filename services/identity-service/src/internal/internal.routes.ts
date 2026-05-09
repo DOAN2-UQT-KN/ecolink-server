@@ -84,6 +84,50 @@ router.post(
 /**
  * Incident-service (and peers): batch-load users by id for denormalized responses (e.g. org owner).
  */
+/**
+ * Incident-service: user ids whose saved location is within `radiusMeters` of the point.
+ */
+router.post(
+  "/users/nearby-ids",
+  body("latitude").isFloat({ min: -90, max: 90 }),
+  body("longitude").isFloat({ min: -180, max: 180 }),
+  body("radiusMeters")
+    .optional()
+    .isFloat({ min: 1, max: 200_000 })
+    .withMessage("radiusMeters must be between 1 and 200000"),
+  body("excludeUserIds").optional().isArray({ max: 500 }),
+  body("excludeUserIds.*").optional().isUUID(),
+  async (req, res): Promise<void> => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
+      return;
+    }
+
+    const body = req.body as {
+      latitude: number;
+      longitude: number;
+      radiusMeters?: number;
+      excludeUserIds?: string[];
+    };
+    const radiusMeters = body.radiusMeters ?? 5000;
+    const excludeUserIds = body.excludeUserIds ?? [];
+
+    try {
+      const userIds = await userService.findUserIdsNearPointForInternal({
+        latitude: body.latitude,
+        longitude: body.longitude,
+        radiusMeters,
+        excludeUserIds,
+      });
+      sendSuccess(res, HTTP_STATUS.OK, { userIds });
+    } catch (error) {
+      console.error("Internal users nearby-ids error:", error);
+      sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+    }
+  },
+);
+
 router.post(
   "/users/by-ids",
   body("ids").isArray({ min: 1, max: 100 }),

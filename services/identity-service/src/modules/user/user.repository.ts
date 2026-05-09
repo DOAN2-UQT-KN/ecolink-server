@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import prisma from "../../config/prisma.client";
 import { UserEntity } from "./user.entity";
 
@@ -9,21 +9,8 @@ export class UserRepository {
     this.prisma = prisma;
   }
 
-  async create(
-    entity: Omit<UserEntity, "id" | "createdAt" | "updatedAt" | "deletedAt">,
-  ): Promise<UserEntity> {
-    return this.prisma.user.create({
-      data: {
-        email: entity.email,
-        name: entity.name,
-        password: entity.password,
-        avatar: entity.avatar,
-        bio: entity.bio,
-        roleId: entity.roleId,
-        emailVerified: entity.emailVerified,
-        verificationToken: entity.verificationToken,
-      },
-    });
+  async create(data: Prisma.UserCreateInput): Promise<UserEntity> {
+    return this.prisma.user.create({ data });
   }
 
   async findById(id: string): Promise<UserEntity | null> {
@@ -65,6 +52,9 @@ export class UserRepository {
     emailVerified: boolean;
     createdAt: Date;
     updatedAt: Date;
+    latitude: number | null;
+    longitude: number | null;
+    locationUpdatedAt: Date | null;
   } | null> {
     return this.prisma.user.findFirst({
       where: { id, deletedAt: null },
@@ -78,8 +68,43 @@ export class UserRepository {
         emailVerified: true,
         createdAt: true,
         updatedAt: true,
+        latitude: true,
+        longitude: true,
+        locationUpdatedAt: true,
       },
     });
+  }
+
+  /**
+   * Active users with stored coordinates within `radiusMeters` of the point (Haversine, Earth radius 6371 km).
+   * Parameters: longitude, latitude (degrees), radiusMeters.
+   */
+  async findActiveUserIdsNearPoint(
+    longitude: number,
+    latitude: number,
+    radiusMeters: number,
+  ): Promise<string[]> {
+    const rows = await this.prisma.$queryRawUnsafe<{ id: string }[]>(
+      `
+            SELECT u.id
+            FROM users u
+            WHERE u."deletedAt" IS NULL
+              AND u."latitude" IS NOT NULL
+              AND u."longitude" IS NOT NULL
+              AND (
+                6371000 * acos(
+                  LEAST(1.0, GREATEST(-1.0,
+                    cos(radians($2)) * cos(radians(u."latitude")) * cos(radians(u."longitude") - radians($1))
+                    + sin(radians($2)) * sin(radians(u."latitude"))
+                  ))
+                )
+              ) <= $3
+        `,
+      longitude,
+      latitude,
+      radiusMeters,
+    );
+    return rows.map((r) => r.id).filter(Boolean);
   }
 
   async update(id: string, entity: Partial<UserEntity>): Promise<UserEntity> {

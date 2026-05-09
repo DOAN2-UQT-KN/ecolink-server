@@ -8,7 +8,10 @@ export class UserController {
 
     getUserById = async (req: Request, res: Response): Promise<void> => {
         try {
-            const user = await userService.getUserById(req.params.id);
+            const user = await userService.getUserById(
+                req.params.id,
+                req.user?.userId,
+            );
 
             if (!user) {
                 return sendError(res, HTTP_STATUS.NOT_FOUND.withMessage('User not found'));
@@ -24,7 +27,10 @@ export class UserController {
     getUserByEmail = async (req: Request, res: Response): Promise<void> => {
         try {
             const email = req.params.email;
-            const user = await userService.getUserByEmail(email);
+            const user = await userService.getUserByEmail(
+                email,
+                req.user?.userId,
+            );
 
             if (!user) {
                 return sendError(res, HTTP_STATUS.NOT_FOUND.withMessage('User not found'));
@@ -42,6 +48,24 @@ export class UserController {
         body('avatar').optional().isURL().withMessage('Avatar must be a valid URL'),
         body('bio').optional().trim(),
         body('roleId').optional().isUUID().withMessage('Role ID must be a valid UUID'),
+        body('latitude')
+            .optional({ nullable: true })
+            .custom((value) => {
+                if (value === null) return true;
+                if (typeof value === 'number' && value >= -90 && value <= 90) {
+                    return true;
+                }
+                throw new Error('latitude must be null or between -90 and 90');
+            }),
+        body('longitude')
+            .optional({ nullable: true })
+            .custom((value) => {
+                if (value === null) return true;
+                if (typeof value === 'number' && value >= -180 && value <= 180) {
+                    return true;
+                }
+                throw new Error('longitude must be null or between -180 and 180');
+            }),
 
         async (req: Request, res: Response): Promise<void> => {
             const errors = validationResult(req);
@@ -56,6 +80,17 @@ export class UserController {
                 console.error('Update user error:', error);
                 if (error instanceof Error && error.message.includes('not found')) {
                     return sendError(res, HTTP_STATUS.NOT_FOUND.withMessage(error.message));
+                }
+                if (
+                    error instanceof Error &&
+                    (error.message.includes('latitude') ||
+                        error.message.includes('longitude') ||
+                        error.message.includes('Invalid latitude'))
+                ) {
+                    return sendError(
+                        res,
+                        HTTP_STATUS.BAD_REQUEST.withMessage(error.message),
+                    );
                 }
                 sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
             }

@@ -20,6 +20,11 @@ model User {
   emailVerified     Boolean @default(false)
   verificationToken String?
 
+  /// Last known coordinates (WGS84); set via profile update.
+  latitude          Float?
+  longitude         Float?
+  locationUpdatedAt DateTime? @map("location_updated_at")
+
   roleId String @db.Uuid
   role   Role   @relation(fields: [roleId], references: [id])
 

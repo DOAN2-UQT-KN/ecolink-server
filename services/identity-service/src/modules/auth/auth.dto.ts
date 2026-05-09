@@ -94,6 +94,9 @@ export interface CurrentUserResponse {
   emailVerified: boolean;
   createdAt: Date;
   updatedAt: Date;
+  latitude: number | null;
+  longitude: number | null;
+  locationUpdatedAt: Date | null;
 }
 
 export interface TokenPair {

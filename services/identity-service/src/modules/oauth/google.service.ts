@@ -53,7 +53,7 @@ export class GoogleOauthService
         password: syntheticPassword,
         avatar: profile.picture ?? null,
         bio: null,
-        roleId: defaultRole.id,
+        role: { connect: { id: defaultRole.id } },
         emailVerified: Boolean(profile.verified_email),
         verificationToken: null,
       });

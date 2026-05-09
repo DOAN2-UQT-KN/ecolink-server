@@ -243,3 +243,52 @@ export async function fetchOrganizationOwnersByUserIds(
   }
   return out;
 }
+
+/**
+ * Users who saved a last-known location within `radiusMeters` of the point (identity-service).
+ */
+export async function fetchUserIdsNearPoint(params: {
+  latitude: number;
+  longitude: number;
+  radiusMeters: number;
+  excludeUserIds?: string[];
+}): Promise<string[]> {
+  const baseURL = process.env.IDENTITY_SERVICE_URL?.trim();
+  const key = process.env.INTERNAL_IDENTITY_API_KEY?.trim();
+  if (!baseURL || !key) {
+    console.warn(
+      "[identity-user.client] fetchUserIdsNearPoint: IDENTITY_SERVICE_URL or INTERNAL_IDENTITY_API_KEY not set",
+    );
+    return [];
+  }
+
+  const client = axios.create({
+    baseURL: baseURL.replace(/\/$/, ""),
+    timeout: 10_000,
+    headers: { "x-internal-api-key": key },
+  });
+
+  try {
+    const { data } = await client.post<
+      SuccessEnvelope<{ userIds?: unknown }>
+    >("/internal/v1/users/nearby-ids", {
+      latitude: params.latitude,
+      longitude: params.longitude,
+      radiusMeters: params.radiusMeters,
+      excludeUserIds: params.excludeUserIds ?? [],
+    });
+
+    const inner = data?.data;
+    const raw =
+      inner && typeof inner === "object"
+        ? (inner as { userIds?: unknown }).userIds
+        : undefined;
+    if (!Array.isArray(raw)) {
+      return [];
+    }
+    return raw.filter((x): x is string => typeof x === "string" && x.length > 0);
+  } catch (e) {
+    console.error("[identity-user.client] fetchUserIdsNearPoint:", e);
+    return [];
+  }
+}

@@ -7,7 +7,10 @@ export type UserEntity = User;
 import { UserResponse } from './user.dto';
 
 // Helper function for conversion (excludes password and sensitive fields)
-export const toUserResponse = (entity: UserEntity): UserResponse => ({
+export const toUserResponse = (
+    entity: UserEntity,
+    options?: { includeLocation?: boolean },
+): UserResponse => ({
     id: entity.id,
     email: entity.email,
     name: entity.name,
@@ -17,4 +20,9 @@ export const toUserResponse = (entity: UserEntity): UserResponse => ({
     emailVerified: entity.emailVerified,
     createdAt: entity.createdAt,
     updatedAt: entity.updatedAt,
+    latitude: options?.includeLocation ? entity.latitude ?? null : null,
+    longitude: options?.includeLocation ? entity.longitude ?? null : null,
+    locationUpdatedAt: options?.includeLocation
+        ? entity.locationUpdatedAt ?? null
+        : null,
 });

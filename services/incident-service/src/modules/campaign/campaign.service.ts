@@ -38,6 +38,7 @@ import { voteService } from "../vote/vote.service";
 import {
   fetchIdentityUsersWithContactByIds,
   fetchOrganizationOwnersByUserIds,
+  fetchUserIdsNearPoint,
   getIdentityUserContact,
   getUserProfile,
 } from "../organization/identity-user.client";
@@ -495,8 +496,8 @@ export class CampaignService {
   }
 
   /**
-   * Notifies users who have report activity near the campaign point (see
-   * `reportRepository.findDistinctReporterUserIdsNearPoint`) to open the campaign and vote.
+   * Notifies citizens near the campaign point: users with a saved location (identity-service)
+   * and/or users who filed geolocated reports in the area (`reportRepository`).
    */
   private async notifyNearbyCitizensToVerifyCampaign(args: {
     campaignId: string;
@@ -513,15 +514,25 @@ export class CampaignService {
       return;
     }
 
-    const nearUserIds =
-      await reportRepository.findDistinctReporterUserIdsNearPoint(
+    const [fromSavedLocation, fromReports] = await Promise.all([
+      fetchUserIdsNearPoint({
+        latitude: args.latitude,
+        longitude: args.longitude,
+        radiusMeters: NOTIFY_NEARBY_VERIFY_RADIUS_METERS,
+        excludeUserIds: [args.creatorUserId],
+      }),
+      reportRepository.findDistinctReporterUserIdsNearPoint(
         args.longitude,
         args.latitude,
         NOTIFY_NEARBY_VERIFY_RADIUS_METERS,
-      );
+      ),
+    ]);
+
     const recipientIds = [
       ...new Set(
-        nearUserIds.filter((id) => id && id !== args.creatorUserId),
+        [...fromSavedLocation, ...fromReports].filter(
+          (id) => id && id !== args.creatorUserId,
+        ),
       ),
     ];
     if (recipientIds.length === 0) {

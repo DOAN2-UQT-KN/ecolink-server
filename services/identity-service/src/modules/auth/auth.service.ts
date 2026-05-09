@@ -72,7 +72,7 @@ export class AuthService {
       password: hashedPassword,
       avatar: null,
       bio: null,
-      roleId: roleId,
+      role: { connect: { id: roleId } },
       emailVerified: false,
       verificationToken: null,
     });
@@ -271,6 +271,9 @@ export class AuthService {
       emailVerified: user.emailVerified,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
+      latitude: user.latitude,
+      longitude: user.longitude,
+      locationUpdatedAt: user.locationUpdatedAt,
     };
   }
 
