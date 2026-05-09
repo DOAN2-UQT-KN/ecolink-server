@@ -2,6 +2,7 @@ import type { GreenPointCreditStrategy } from "./strategies/green-point-credit-s
 import { CampaignCompletionGreenPointStrategy } from "./strategies/campaign-completion-green-point.strategy";
 import { ReferralAddingGreenPointServiceStrategy } from "./strategies/referral-adding-green-point-service.strategy";
 import { ReportCompletionGreenPointStrategy } from "./strategies/report-completion-green-point.strategy";
+import { ReportVoteMilestoneGreenPointStrategy } from "./strategies/report-vote-milestone-green-point.strategy";
 import { UpvoteAddingGreenPointStrategy } from "./strategies/upvote-adding-green-point.strategy";
 
 /**
@@ -39,6 +40,7 @@ export class GreenPointFactory {
       new UpvoteAddingGreenPointStrategy(),
       new ReferralAddingGreenPointServiceStrategy(),
       new ReportCompletionGreenPointStrategy(),
+      new ReportVoteMilestoneGreenPointStrategy(),
     ]);
   }
 }

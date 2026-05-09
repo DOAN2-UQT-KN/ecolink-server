@@ -5,6 +5,7 @@ import {
 } from "../../constants/status.enum";
 import { campaignRepository } from "../campaign/campaign.repository";
 import { reportRepository } from "../report/report.repository";
+import { rewardServiceClient } from "../reward/reward-service.client";
 import {
   VoteActionBody,
   VoteActionResponse,
@@ -75,6 +76,45 @@ export class VoteService {
     throw new HttpError(HTTP_STATUS.INVALID_INPUT);
   }
 
+  private async enqueueReportVoteMilestoneIfNeeded(args: {
+    resourceType: VoteResourceType;
+    resourceId: string;
+    newValue: number;
+  }): Promise<void> {
+    // Only enqueue for report upvotes (not downvotes, not toggling off).
+    if (args.resourceType !== VoteResourceType.REPORT) return;
+    if (args.newValue !== VoteValue.UP) return;
+
+    try {
+      const report = await reportRepository.findById(args.resourceId);
+      const reportCreatorUserId = report?.userId ?? null;
+      if (!reportCreatorUserId) return;
+
+      const countsMap = await voteRepository.aggregateVoteCountsByResource(
+        VoteResourceType.REPORT,
+        [args.resourceId],
+      );
+      const counts = countsMap.get(args.resourceId) ?? {
+        upvoteCount: 0,
+        downvoteCount: 0,
+      };
+
+      await rewardServiceClient.enqueueReportVoteMilestoneGreenPoints({
+        reportId: args.resourceId,
+        reportCreatorUserId,
+        voteCount: counts.upvoteCount,
+      });
+    } catch (e) {
+      // Best-effort: do not block voting UX when reward enqueue fails.
+      if (process.env.NODE_ENV !== "production") {
+        console.warn("[incident-service] reward vote milestone enqueue failed", {
+          resourceId: args.resourceId,
+          message: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+  }
+
   private nextUpvoteValue(current: number | null): number {
     if (current === VoteValue.UP) {
       return VoteValue.NONE;
@@ -107,6 +147,14 @@ export class VoteService {
       body.resourceId,
       value,
     );
+
+    // Fire-and-forget enqueue of green point evaluation for report creators.
+    void this.enqueueReportVoteMilestoneIfNeeded({
+      resourceType: body.resourceType,
+      resourceId: body.resourceId,
+      newValue: value,
+    });
+
     return {
       resourceId: body.resourceId,
       resourceType: body.resourceType,

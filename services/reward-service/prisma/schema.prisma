@@ -63,6 +63,9 @@ model GreenPointTransaction {
 
   points Int
 
+  /// Snapshot context (rule ids, thresholds, etc.) for audit/debug; never used to recompute points.
+  metadata Json?
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
@@ -595,4 +598,24 @@ model MetricColumn {
   @@unique([tableId, key])
   @@index([tableId])
   @@map("metric_columns")
+}
+
+/// Config: when a report reaches a vote threshold, its creator earns bonus green points.
+/// Evaluated by a green-point worker job; idempotency is enforced in the ledger via resourceType encoding.
+model ReportVoteGreenPointRule {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Vote count threshold, e.g. 10 means ">= 10 votes".
+  threshold Int @unique
+
+  /// Bonus green points for report creator when threshold is reached.
+  points Int
+
+  isActive Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([isActive, threshold])
+  @@map("report_vote_green_point_rules")
 }

@@ -17,12 +17,17 @@ export const REFERRAL_ADDING_GREEN_POINT_JOB_TYPE =
 export const REPORT_COMPLETION_GREEN_POINT_JOB_TYPE =
   "REPORT_COMPLETION_GREEN_POINTS" as const;
 
+/** SQS envelope `jobType` for evaluating report vote thresholds for creator bonus credits. */
+export const REPORT_VOTE_MILESTONE_GREEN_POINT_JOB_TYPE =
+  "REPORT_VOTE_MILESTONE_GREEN_POINTS" as const;
+
 /** Allowed `type` values for POST /internal/v1/green-points/enqueue (keep in sync with factory). */
 export const KNOWN_GREEN_POINT_JOB_TYPES = [
   CAMPAIGN_COMPLETION_JOB_TYPE,
   UPVOTE_ADDING_GREEN_POINT_JOB_TYPE,
   REFERRAL_ADDING_GREEN_POINT_JOB_TYPE,
   REPORT_COMPLETION_GREEN_POINT_JOB_TYPE,
+  REPORT_VOTE_MILESTONE_GREEN_POINT_JOB_TYPE,
 ] as const;
 
 export type KnownGreenPointJobType =
@@ -60,6 +65,16 @@ export interface ReportCompletionGreenPointsPayload {
   reportId: string;
   userId: string;
   points: number;
+}
+
+/**
+ * Report creator earns bonus points when report reaches configured vote thresholds.
+ * Worker will attempt to credit for every threshold <= voteCount; idempotency prevents duplicates.
+ */
+export interface ReportVoteMilestoneGreenPointsPayload {
+  reportId: string;
+  reportCreatorUserId: string;
+  voteCount: number;
 }
 
 export interface GreenPointJobEnvelope {

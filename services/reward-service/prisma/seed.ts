@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { seedMetricMetadata } from "./seeds/metric-metadata.seed";
 
@@ -32,6 +32,30 @@ async function main() {
   }
 
   console.log("Reward-service: difficulties seeded.");
+
+  const voteMilestones = [
+    { threshold: 1, points: 1 },
+    { threshold: 2, points: 2 },
+    { threshold: 5, points: 5 },
+    { threshold: 10, points: 10 },
+  ];
+  for (const m of voteMilestones) {
+    await prisma.$executeRaw(
+      Prisma.sql`
+        INSERT INTO "report_vote_green_point_rules"
+          (id, threshold, points, "is_active")
+        VALUES
+          (${randomUUID()}::uuid, ${m.threshold}, ${m.points}, true)
+        ON CONFLICT (threshold)
+        DO UPDATE SET
+          points = EXCLUDED.points,
+          "is_active" = true
+      `,
+    );
+  }
+  console.log(
+    `Reward-service: report vote green point rules seeded (${voteMilestones.length} thresholds).`,
+  );
 
   await seedMetricMetadata(prisma);
 }

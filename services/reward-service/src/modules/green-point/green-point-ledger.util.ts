@@ -13,6 +13,7 @@ export async function applyGreenPointLedgerCredit(
     transactionType: string;
     resourceId: string;
     resourceType: string;
+    metadata?: Prisma.InputJsonValue;
   },
 ): Promise<LedgerApplyOutcome> {
   if (params.points <= 0) {
@@ -27,6 +28,7 @@ export async function applyGreenPointLedgerCredit(
         resourceId: params.resourceId,
         resourceType: params.resourceType,
         points: params.points,
+        metadata: params.metadata,
       },
     });
   } catch (e: unknown) {

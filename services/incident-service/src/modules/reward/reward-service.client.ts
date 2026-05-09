@@ -156,6 +156,10 @@ export class RewardServiceClient {
   private static readonly GREEN_POINT_JOB_REPORT_COMPLETION =
     "REPORT_COMPLETION_GREEN_POINTS" as const;
 
+  /** Same as reward-service known `jobType` for report vote milestone credits. */
+  private static readonly GREEN_POINT_JOB_REPORT_VOTE_MILESTONE =
+    "REPORT_VOTE_MILESTONE_GREEN_POINTS" as const;
+
   private static readonly FACEBOOK_RECOGNITION_JOB_TYPE =
     "CAMPAIGN_FACEBOOK_RECOGNITION" as const;
 
@@ -210,6 +214,42 @@ export class RewardServiceClient {
       });
       if (!data?.success || !data.data?.queued) {
         throw new Error("Invalid reward service enqueue green points response");
+      }
+    } catch (e) {
+      if (axios.isAxiosError(e)) {
+        const apiMsg =
+          (e.response?.data as { message?: string } | undefined)?.message ??
+          e.message;
+        throw new Error(`Reward service enqueue failed: ${apiMsg}`);
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * Queue green-point credits for report creator when reaching vote thresholds.
+   * Reward worker is idempotent per threshold; safe to enqueue multiple times.
+   */
+  async enqueueReportVoteMilestoneGreenPoints(body: {
+    reportId: string;
+    reportCreatorUserId: string;
+    voteCount: number;
+  }): Promise<void> {
+    const client = this.getClient();
+    try {
+      const { data } = await client.post<
+        SuccessEnvelope<{
+          queued: boolean;
+          type: string;
+        }>
+      >("/internal/v1/green-points/enqueue", {
+        type: RewardServiceClient.GREEN_POINT_JOB_REPORT_VOTE_MILESTONE,
+        payload: body,
+      });
+      if (!data?.success || !data.data?.queued) {
+        throw new Error(
+          "Invalid reward service enqueue report vote milestone response",
+        );
       }
     } catch (e) {
       if (axios.isAxiosError(e)) {

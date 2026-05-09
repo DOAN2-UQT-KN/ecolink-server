@@ -76,6 +76,19 @@ const REPORT_STATUS_BANNED = ReportStatus._STATUS_INACTIVE;
 export class ReportService {
   constructor() {}
 
+  /**
+   * identity-service internal `/users/by-ids` validates UUID **v4** strictly.
+   * Seed/test data may contain non-v4 UUID-like values; if we send any invalid id
+   * the whole batch fails with 400 and we lose reporter names for every report.
+   */
+  private isUuidV4(id: string): boolean {
+    const s = id.trim().toLowerCase();
+    // RFC 4122 v4: xxxxxxxx-xxxx-4xxx-[89ab]xxx-xxxxxxxxxxxx
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+      s,
+    );
+  }
+
   private reporterProfileFallback(userId: string): OrganizationOwnerResponse {
     return { id: userId, name: "", avatar: null, bio: null };
   }
@@ -89,11 +102,11 @@ export class ReportService {
     if (reports.length === 0) {
       return reports;
     }
-    const userIds = [
-      ...new Set(
-        reports.map((r) => r.userId).filter((id): id is string => id != null),
-      ),
-    ];
+    const rawUserIds = reports
+      .map((r) => r.userId)
+      .filter((id): id is string => id != null);
+    const userIds = [...new Set(rawUserIds)].filter((id) => this.isUuidV4(id));
+
     if (userIds.length === 0) {
       return reports.map((r) => ({ ...r, user: null }) as T);
     }
@@ -103,8 +116,10 @@ export class ReportService {
         ({
           ...r,
           user: r.userId
-            ? (getUserProfile(map, r.userId) ??
-              this.reporterProfileFallback(r.userId))
+            ? this.isUuidV4(r.userId)
+              ? (getUserProfile(map, r.userId) ??
+                this.reporterProfileFallback(r.userId))
+              : this.reporterProfileFallback(r.userId)
             : null,
         }) as T,
     );
