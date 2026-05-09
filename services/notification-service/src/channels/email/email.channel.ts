@@ -36,10 +36,14 @@ class EmailNotificationChannel implements NotificationChannelStrategy {
       toEmail = await fetchUserEmailById(job.userId);
     }
 
+    const locale =
+      normalizedPayload.locale?.toLowerCase() === "vi" ? "vi" : "en";
+
     const rendered = notificationTemplateEngine.renderForDelivery(
       job.kind,
       NotificationType.EMAIL,
       normalizedPayload,
+      locale,
     );
 
     const sendResult = await emailService.sendNotificationMail({

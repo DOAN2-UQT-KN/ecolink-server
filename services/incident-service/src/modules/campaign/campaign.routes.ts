@@ -147,8 +147,8 @@ router.put("/:id/verify", authenticate, campaignController.adminVerifyCampaign);
 
 /**
  * @route   PUT /api/v1/campaigns/:id/mark-done
- * @desc    Mark campaign completed (admin). Must be active; green points TBD.
- * @access  Private (Admin only)
+ * @desc    Manager: submit for final admin completion approval. Admin: finalize (completed).
+ * @access  Private
  */
 router.put("/:id/mark-done", authenticate, campaignController.markCampaignDone);
 

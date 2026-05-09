@@ -1,16 +1,14 @@
+import "dotenv/config";
 import express, { Application } from "express";
 import path from "path";
 import cors from "cors";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
-import dotenv from "dotenv";
 import { mountOpenApi, routeModulesFrom } from "@da2/express-swagger";
 import { OPENAPI_ROUTE_MODELS } from "./openapi/route-models";
 import notificationRoutes from "./modules/notification/notification.routes";
 import { errorHandler } from "./middleware/error.middleware";
 import "./worker";
-
-dotenv.config();
 
 const app: Application = express();
 const PORT = Number(process.env.PORT) || 3003;

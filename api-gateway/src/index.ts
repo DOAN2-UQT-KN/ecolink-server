@@ -16,13 +16,15 @@ const INCIDENT_SERVICE_URL =
   process.env.INCIDENT_SERVICE_URL || "http://localhost:3001";
 const REWARD_SERVICE_URL =
   process.env.REWARD_SERVICE_URL || "http://localhost:3002";
+const NOTIFICATION_SERVICE_URL =
+  process.env.NOTIFICATION_SERVICE_URL || "http://localhost:3003";
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || "http://localhost:3004";
 const GATEWAY_PUBLIC_URL =
   process.env.GATEWAY_PUBLIC_URL || `http://localhost:${port}`;
 
 console.log("🚀 API Gateway starting...");
 console.log(
-  `🔗 IDENTITY_SERVICE_URL=${IDENTITY_SERVICE_URL} INCIDENT_SERVICE_URL=${INCIDENT_SERVICE_URL} REWARD_SERVICE_URL=${REWARD_SERVICE_URL} AI_SERVICE_URL=${AI_SERVICE_URL}`,
+  `🔗 IDENTITY_SERVICE_URL=${IDENTITY_SERVICE_URL} INCIDENT_SERVICE_URL=${INCIDENT_SERVICE_URL} REWARD_SERVICE_URL=${REWARD_SERVICE_URL} NOTIFICATION_SERVICE_URL=${NOTIFICATION_SERVICE_URL} AI_SERVICE_URL=${AI_SERVICE_URL}`,
 );
 
 app.use(
@@ -189,6 +191,14 @@ app.use(
   "/api/v1/sos",
   proxy(INCIDENT_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/sos${req.url}`,
+  }),
+);
+
+// Proxy routes — Notification (in-app list, mark read; internal jobs hit service directly with API key)
+app.use(
+  "/api/v1/notifications",
+  proxy(NOTIFICATION_SERVICE_URL, {
+    proxyReqPathResolver: (req) => `/api/v1/notifications${req.url}`,
   }),
 );
 

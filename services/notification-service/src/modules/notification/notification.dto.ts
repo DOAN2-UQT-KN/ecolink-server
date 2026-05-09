@@ -23,6 +23,10 @@ export interface NotificationItemData {
   kind: string;
   title: string;
   body: string;
+  /**
+   * Template variables plus optional `locales` for in-app notifications:
+   * `{ en: { title, body }, vi: { title, body } }` (website channel).
+   */
   payload: Record<string, unknown>;
   readAt: string | null;
   createdAt: string;

@@ -20,6 +20,7 @@ import {
   fetchOrganizationOwnersByUserIds,
   getUserProfile,
 } from "./identity-user.client";
+import { enqueueVolunteerRequestWebsiteNotification } from "../campaign/notification-jobs.client";
 import { enqueueOrganizationContactVerificationEmail } from "./organization-contact-email-notify.client";
 import { buildVerifyContactEmailRequestUrl } from "./organization-contact-email-urls";
 import { organizationJoiningRequestRepository } from "./organization_joining_request.repository";
@@ -757,7 +758,42 @@ export class OrganizationService {
     const requesterById = await fetchOrganizationOwnersByUserIds([
       row.requesterId,
     ]);
+
+    void this.notifyOrganizationOwnerOfJoinRequest({
+      ownerId: org.ownerId,
+      organizationId,
+      organizationName: org.name,
+      requesterId: row.requesterId,
+      requesterById,
+    }).catch((err) => {
+      console.warn(
+        "[organization] failed to notify owner of join request",
+        err,
+      );
+    });
+
     return this.joinRequestResponseFromRow(row, requesterById);
+  }
+
+  /**
+   * Notify org owner when a user requests to join the organization.
+   */
+  private async notifyOrganizationOwnerOfJoinRequest(params: {
+    ownerId: string;
+    organizationId: string;
+    organizationName: string;
+    requesterId: string;
+    requesterById: ReadonlyMap<string, OrganizationOwnerResponse>;
+  }): Promise<void> {
+    const reqProfile = getUserProfile(params.requesterById, params.requesterId);
+    const volunteerName = reqProfile?.name?.trim() || "Someone";
+
+    await enqueueVolunteerRequestWebsiteNotification({
+      userId: params.ownerId,
+      volunteerName,
+      reportTitle: params.organizationName,
+      organizationId: params.organizationId,
+    });
   }
 
   async listJoinRequestsForOwner(

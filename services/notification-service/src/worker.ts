@@ -1,8 +1,6 @@
-import dotenv from "dotenv";
+import "dotenv/config";
 import { prisma } from "./lib/prisma";
 import { startAllQueues } from "./queue/register";
-
-dotenv.config();
 
 startAllQueues();
 

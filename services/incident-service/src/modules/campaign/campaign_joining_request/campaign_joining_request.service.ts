@@ -8,6 +8,7 @@ import { campaignJoiningRequestRepository } from "./campaign_joining_request.rep
 import { campaignAttendanceRepository } from "../campaign_attendance/campaign_attendance.repository";
 import { campaignRepository } from "../campaign.repository";
 import { campaignManagerRepository } from "../campaign_manager/campaign_manager.repository";
+import { enqueueVolunteerRequestWebsiteNotification } from "../notification-jobs.client";
 import {
   GlobalStatus,
   JoinRequestStatus,
@@ -64,7 +65,53 @@ export class CampaignJoiningRequestService {
     });
 
     const profileMap = await fetchOrganizationOwnersByUserIds([volunteerId]);
+
+    void this.notifyCampaignManagersOfVolunteerRequest({
+      campaignId,
+      campaignTitle: campaign.title,
+      volunteerId,
+      profileMap,
+    }).catch((err) => {
+      console.warn(
+        "[campaign-join-request] failed to notify campaign managers",
+        err,
+      );
+    });
+
     return this.toResponse(request, profileMap);
+  }
+
+  /**
+   * Notify campaign managers (excluding the volunteer) of a new join request.
+   */
+  private async notifyCampaignManagersOfVolunteerRequest(params: {
+    campaignId: string;
+    campaignTitle: string;
+    volunteerId: string;
+    profileMap: ReadonlyMap<string, OrganizationOwnerResponse>;
+  }): Promise<void> {
+    const managers = await campaignManagerRepository.findManagersByCampaignId(
+      params.campaignId,
+    );
+    const recipientIds = [
+      ...new Set(managers.map((m) => m.userId)),
+    ].filter((id) => id !== params.volunteerId);
+    if (recipientIds.length === 0) {
+      return;
+    }
+    const vol = getUserProfile(params.profileMap, params.volunteerId);
+    const volunteerName = vol?.name?.trim() || "A volunteer";
+
+    await Promise.all(
+      recipientIds.map((userId) =>
+        enqueueVolunteerRequestWebsiteNotification({
+          userId,
+          volunteerName,
+          reportTitle: params.campaignTitle,
+          campaignId: params.campaignId,
+        }),
+      ),
+    );
   }
 
   /**

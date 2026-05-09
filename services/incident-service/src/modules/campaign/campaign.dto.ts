@@ -31,6 +31,11 @@ export interface CreateCampaignRequest {
   /** 1 = easy … 4 = very hard; must exist in reward-service `difficulties` table. */
   difficulty: number;
   reportIds?: string[];
+  /**
+   * When true, enqueue in-app notifications for all active organization members
+   * (except the creator). Only honored for the organization owner (same as create permission).
+   */
+  notifyMembers?: boolean;
 }
 
 export interface UpdateCampaignRequest {

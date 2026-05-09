@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<html>
+  <body style="font-family: system-ui, sans-serif; line-height: 1.5; color: #111">
+    <p>Xin chào{{#if userName}} <strong>{{userName}}</strong>{{/if}},</p>
+    <p>Chúng tôi nhận được yêu cầu đặt lại mật khẩu cho <strong>{{appName}}</strong>.</p>
+    <p>
+      <a href="{{resetUrl}}" style="color: #0b57d0">Đặt lại mật khẩu</a>
+    </p>
+    <p style="font-size: 0.875rem; color: #444">Nếu liên kết không hoạt động, hãy sao chép URL sau vào trình duyệt:<br />{{resetUrl}}</p>
+    <p style="font-size: 0.875rem; color: #666">Nếu bạn không yêu cầu điều này, bạn có thể bỏ qua thông báo.</p>
+  </body>
+</html>

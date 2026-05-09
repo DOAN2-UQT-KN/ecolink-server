@@ -9,6 +9,15 @@ import {
 } from "../../constants/status.enum";
 import { HttpError, HTTP_STATUS } from "../../constants/http-status";
 import { organizationRepository } from "../organization/organization.repository";
+import { organizationMemberRepository } from "../organization/organization_member.repository";
+import {
+  enqueueCampaignCompletionPendingAdminWebsiteNotification,
+  enqueueCampaignCompletionRejectedByAdminWebsiteNotification,
+  enqueueCampaignCreatedWebsiteNotification,
+  enqueueCampaignDoneWebsiteNotification,
+} from "./notification-jobs.client";
+import { getCampaignCompletionAdminNotifyUserIds } from "./campaign-completion-admin-notify.config";
+import { campaignManagerRepository } from "./campaign_manager/campaign_manager.repository";
 import { rewardServiceClient } from "../reward/reward-service.client";
 import { campaignJoiningRequestRepository } from "./campaign_joining_request/campaign_joining_request.repository";
 import { campaignAttendanceRepository } from "./campaign_attendance/campaign_attendance.repository";
@@ -408,7 +417,61 @@ export class CampaignService {
       throw new Error("Failed to create campaign");
     }
 
+    if (request.notifyMembers === true) {
+      void this.notifyOrganizationMembersOfNewCampaign({
+        organizationId: request.organizationId,
+        organizationName: org.name,
+        campaignId: created.id,
+        campaignTitle: request.title,
+        creatorUserId: userId,
+      }).catch((err) => {
+        console.warn(
+          "[campaign] failed to notify organization members of new campaign",
+          err,
+        );
+      });
+    }
+
     return this.toResponseWithVotes(created, viewerUserId ?? userId);
+  }
+
+  private async notifyOrganizationMembersOfNewCampaign(args: {
+    organizationId: string;
+    organizationName: string;
+    campaignId: string;
+    campaignTitle: string;
+    creatorUserId: string;
+  }): Promise<void> {
+    const members =
+      await organizationMemberRepository.findAllActiveByOrganization(
+        args.organizationId,
+      );
+    const recipientIds = [
+      ...new Set(
+        members
+          .map((m) => m.userId)
+          .filter((id) => id && id !== args.creatorUserId),
+      ),
+    ];
+    if (recipientIds.length === 0) {
+      console.warn(
+        "[campaign] notify members: no recipients (only users in organization_members are notified; owner is excluded and is usually not in that table).",
+        { organizationId: args.organizationId, campaignId: args.campaignId },
+      );
+      return;
+    }
+
+    await Promise.all(
+      recipientIds.map((userId) =>
+        enqueueCampaignCreatedWebsiteNotification({
+          userId,
+          organizationName: args.organizationName,
+          campaignTitle: args.campaignTitle,
+          campaignId: args.campaignId,
+          organizationId: args.organizationId,
+        }),
+      ),
+    );
   }
 
   async getCampaignById(
@@ -903,7 +966,7 @@ export class CampaignService {
     return this.toResponseWithVotes(updated, viewerUserId ?? userId);
   }
 
-  /** Admin-only at controller: approve campaign (active). */
+  /** Admin-only at controller: first-time approve campaign (pending/draft → active). */
   async adminVerifyCampaign(
     id: string,
     adminUserId: string,
@@ -918,6 +981,17 @@ export class CampaignService {
       return this.toResponseWithVotes(existing, viewerUserId ?? adminUserId);
     }
 
+    const initialApprovalStatuses: number[] = [
+      GlobalStatus._STATUS_PENDING,
+      GlobalStatus._STATUS_DRAFT,
+      GlobalStatus._STATUS_NEW,
+    ];
+    if (!initialApprovalStatuses.includes(existing.status)) {
+      throw new Error(
+        "Campaign is not awaiting initial admin verification",
+      );
+    }
+
     const updated = await campaignRepository.update(id, {
       status: GlobalStatus._STATUS_ACTIVE,
       updatedBy: adminUserId,
@@ -925,7 +999,7 @@ export class CampaignService {
     return this.toResponseWithVotes(updated, viewerUserId ?? adminUserId);
   }
 
-  /** Admin-only: reject draft campaign — inactive and unlink in-progress reports back to pending. */
+  /** Admin-only: reject draft campaign — inactive and unlink in-progress reports back to pending; or reject completion submission → in review + notify managers. */
   async adminRejectCampaign(
     id: string,
     adminUserId: string,
@@ -942,6 +1016,27 @@ export class CampaignService {
       return this.toResponseWithVotes(existing, viewerUserId ?? adminUserId);
     }
 
+    if (existing.status === GlobalStatus._STATUS_WAITING_CONFIRMED) {
+      const updated = await campaignRepository.update(id, {
+        status: GlobalStatus._STATUS_INREVIEW,
+        updatedBy: adminUserId,
+      });
+
+      const managerUserIds = this.collectCampaignManagerUserIds(existing);
+      void this.notifyCampaignManagersCompletionRejectedByAdmin({
+        campaignId: id,
+        campaignTitle: existing.title,
+        managerUserIds,
+      }).catch((err) => {
+        console.warn(
+          "[campaign] failed to notify managers of completion rejection",
+          err,
+        );
+      });
+
+      return this.toResponseWithVotes(updated, viewerUserId ?? adminUserId);
+    }
+
     if (
       existing.status === GlobalStatus._STATUS_ACTIVE ||
       existing.status === GlobalStatus._STATUS_COMPLETED
@@ -949,6 +1044,14 @@ export class CampaignService {
       throw new HttpError(
         HTTP_STATUS.BAD_REQUEST.withMessage(
           "Cannot reject a campaign that is already active or completed",
+        ),
+      );
+    }
+
+    if (existing.status === GlobalStatus._STATUS_INREVIEW) {
+      throw new HttpError(
+        HTTP_STATUS.BAD_REQUEST.withMessage(
+          "Campaign is in review; reject only applies to drafts or to a pending completion approval",
         ),
       );
     }
@@ -999,8 +1102,70 @@ export class CampaignService {
     return this.toResponseWithVotes(updated, viewerUserId ?? adminUserId);
   }
 
-  /** Admin-only: mark campaign completed and queue green points for approved volunteers. */
-  async markCampaignDone(
+  /**
+   * Manager: campaign is in review (all tasks done) → awaiting final admin approval.
+   */
+  async submitCampaignCompletionForAdminApproval(
+    id: string,
+    userId: string,
+    viewerUserId?: string | null,
+  ): Promise<CampaignResponse> {
+    const existing = await campaignRepository.findById(id);
+    if (!existing) {
+      throw new Error("Campaign not found");
+    }
+
+    if (existing.status === GlobalStatus._STATUS_WAITING_CONFIRMED) {
+      return this.toResponseWithVotes(existing, viewerUserId ?? userId);
+    }
+
+    const isManager = await campaignManagerRepository.isManager(id, userId);
+    if (!isManager) {
+      throw new Error(
+        "Only campaign managers can submit completion for admin approval",
+      );
+    }
+
+    const incompleteTaskCount = await prisma.campaignTask.count({
+      where: {
+        campaignId: id,
+        deletedAt: null,
+        status: { not: GlobalStatus._STATUS_COMPLETED },
+      },
+    });
+    if (incompleteTaskCount > 0) {
+      throw new Error("Some tasks is not completed");
+    }
+
+    const canSubmitFromStatus =
+      existing.status === GlobalStatus._STATUS_INREVIEW ||
+      existing.status === GlobalStatus._STATUS_ACTIVE;
+    if (!canSubmitFromStatus) {
+      throw new Error(
+        "Campaign must be active or in review before requesting completion approval",
+      );
+    }
+
+    const updated = await campaignRepository.update(id, {
+      status: GlobalStatus._STATUS_WAITING_CONFIRMED,
+      updatedBy: userId,
+    });
+
+    void this.notifyAdminsCampaignCompletionPendingApproval({
+      campaignId: id,
+      campaignTitle: existing.title,
+    }).catch((err) => {
+      console.warn(
+        "[campaign] failed to notify admins of pending campaign completion",
+        err,
+      );
+    });
+
+    return this.toResponseWithVotes(updated, viewerUserId ?? userId);
+  }
+
+  /** Admin-only: finalize completion (waiting admin confirmation → completed). */
+  async adminFinalizeCampaignCompletion(
     id: string,
     userId: string,
     viewerUserId?: string | null,
@@ -1014,9 +1179,9 @@ export class CampaignService {
       return this.toResponseWithVotes(existing, viewerUserId ?? userId);
     }
 
-    if (existing.status !== GlobalStatus._STATUS_ACTIVE) {
+    if (existing.status !== GlobalStatus._STATUS_WAITING_CONFIRMED) {
       throw new Error(
-        "Campaign must be active (admin-approved) before it can be marked done",
+        "Campaign must await admin completion approval before it can be finalized",
       );
     }
 
@@ -1128,7 +1293,7 @@ export class CampaignService {
           await tx.campaign.update({
             where: { id },
             data: {
-              status: GlobalStatus._STATUS_ACTIVE,
+              status: GlobalStatus._STATUS_WAITING_CONFIRMED,
               updatedBy: userId,
             },
           });
@@ -1151,11 +1316,96 @@ export class CampaignService {
       throw e;
     }
 
+    void this.notifyApprovedVolunteersCampaignDone({
+      volunteerIds: approvedVolunteerIds,
+      campaignId: id,
+      campaignName: existing.title,
+    }).catch((err) => {
+      console.warn(
+        "[campaign] failed to notify volunteers of campaign completion",
+        err,
+      );
+    });
+
     const updated = await campaignRepository.findById(id);
     if (!updated) {
       throw new Error("Campaign not found");
     }
     return this.toResponseWithVotes(updated, viewerUserId ?? userId);
+  }
+
+  private async notifyApprovedVolunteersCampaignDone(args: {
+    volunteerIds: string[];
+    campaignId: string;
+    campaignName: string;
+  }): Promise<void> {
+    if (args.volunteerIds.length === 0) {
+      return;
+    }
+    await Promise.all(
+      args.volunteerIds.map((uid) =>
+        enqueueCampaignDoneWebsiteNotification({
+          userId: uid,
+          campaignId: args.campaignId,
+          campaignName: args.campaignName,
+        }),
+      ),
+    );
+  }
+
+  private async notifyAdminsCampaignCompletionPendingApproval(args: {
+    campaignId: string;
+    campaignTitle: string;
+  }): Promise<void> {
+    const adminIds = getCampaignCompletionAdminNotifyUserIds();
+    if (adminIds.length === 0) {
+      console.warn(
+        "[campaign] CAMPAIGN_COMPLETION_ADMIN_NOTIFY_USER_IDS empty; skipping admin completion-pending notifications",
+        { campaignId: args.campaignId },
+      );
+      return;
+    }
+    await Promise.all(
+      adminIds.map((userId) =>
+        enqueueCampaignCompletionPendingAdminWebsiteNotification({
+          userId,
+          campaignId: args.campaignId,
+          campaignTitle: args.campaignTitle,
+        }),
+      ),
+    );
+  }
+
+  private collectCampaignManagerUserIds(entity: CampaignWithReports): string[] {
+    const ids = new Set<string>();
+    if (entity.createdBy) {
+      ids.add(entity.createdBy);
+    }
+    for (const m of entity.campaignManagers) {
+      if (m.userId) {
+        ids.add(m.userId);
+      }
+    }
+    return [...ids];
+  }
+
+  private async notifyCampaignManagersCompletionRejectedByAdmin(args: {
+    campaignId: string;
+    campaignTitle: string;
+    managerUserIds: string[];
+  }): Promise<void> {
+    if (args.managerUserIds.length === 0) {
+      return;
+    }
+    await Promise.all(
+      args.managerUserIds.map((userId) =>
+        enqueueCampaignCompletionRejectedByAdminWebsiteNotification({
+          userId,
+          campaignId: args.campaignId,
+          campaignTitle: args.campaignTitle,
+        }),
+      ),
+    );
   }
 
   async deleteCampaign(id: string, userId: string): Promise<void> {

@@ -78,6 +78,10 @@ export class CampaignController {
       .optional()
       .isUUID()
       .withMessage("Each reportId must be a valid UUID"),
+    body("notifyMembers")
+      .optional()
+      .isBoolean()
+      .withMessage("notifyMembers must be a boolean"),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -437,6 +441,12 @@ export class CampaignController {
               HTTP_STATUS.NOT_FOUND.withMessage("Campaign not found"),
             );
           }
+          if (error.message.includes("not awaiting initial admin verification")) {
+            return sendError(
+              res,
+              HTTP_STATUS.BAD_REQUEST.withMessage(error.message),
+            );
+          }
         }
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
@@ -562,7 +572,8 @@ export class CampaignController {
   ];
 
   /**
-   * Mark campaign as completed (admin only). Campaign must already be active.
+   * Manager: submit campaign for final admin completion approval (in review → awaiting admin).
+   * Admin: finalize completion (awaiting admin → completed).
    */
   markCampaignDone = [
     param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
@@ -581,27 +592,30 @@ export class CampaignController {
           return sendError(res, HTTP_STATUS.UNAUTHORIZED);
         }
 
-        // const role = req.user?.role?.toLowerCase();
-        // if (role !== "admin") {
-        //   return sendError(
-        //     res,
-        //     HTTP_STATUS.FORBIDDEN.withMessage(
-        //       "Only admin can mark a campaign as done",
-        //     ),
-        //   );
-        // }
+        const role = req.user?.role?.toLowerCase();
+        const isAdmin = role === "admin";
 
-        const campaign = await campaignService.markCampaignDone(
-          req.params.id,
-          userId,
-        );
+        const campaign = isAdmin
+          ? await campaignService.adminFinalizeCampaignCompletion(
+              req.params.id,
+              userId,
+            )
+          : await campaignService.submitCampaignCompletionForAdminApproval(
+              req.params.id,
+              userId,
+            );
+
         sendSuccess(
           res,
-          HTTP_STATUS.OK.withMessage("Campaign marked as done successfully"),
+          HTTP_STATUS.OK.withMessage(
+            isAdmin
+              ? "Campaign marked as done successfully"
+              : "Campaign submitted for admin approval",
+          ),
           { campaign },
         );
       } catch (error) {
-        console.error("Admin mark campaign done error:", error);
+        console.error("Mark campaign done error:", error);
         if (error instanceof Error) {
           if (error.message.includes("not found")) {
             return sendError(
@@ -609,7 +623,12 @@ export class CampaignController {
               HTTP_STATUS.NOT_FOUND.withMessage("Campaign not found"),
             );
           }
-          if (error.message.includes("must be active")) {
+          if (
+            error.message.includes("must be in review") ||
+            error.message.includes("must await admin completion") ||
+            error.message.includes("not awaiting initial admin verification") ||
+            error.message.includes("Only campaign managers")
+          ) {
             return sendError(
               res,
               HTTP_STATUS.BAD_REQUEST.withMessage(error.message),
@@ -1424,6 +1443,11 @@ export class CampaignController {
     body("result.description").optional().isString(),
     body("result.file").optional().isArray(),
     body("result.file.*").optional().isString().trim(),
+    body("result.fileKinds").optional().isArray(),
+    body("result.fileKinds.*")
+      .optional()
+      .isIn(["image", "video", "file"])
+      .withMessage("result.fileKinds values must be image, video, or file"),
     body("scheduledDate")
       .optional()
       .isISO8601()
@@ -1459,6 +1483,7 @@ export class CampaignController {
           result?: {
             description?: string;
             file?: string[];
+            fileKinds?: Array<"image" | "video" | "file">;
           };
         } = {};
         if (b.title !== undefined) updateData.title = b.title as string;
@@ -1485,6 +1510,11 @@ export class CampaignController {
           }
           if (result.file !== undefined) {
             updateData.result.file = result.file as string[];
+          }
+          if (result.fileKinds !== undefined) {
+            updateData.result.fileKinds = result.fileKinds as Array<
+              "image" | "video" | "file"
+            >;
           }
         }
 
