@@ -61,7 +61,7 @@ def exact_hash(
             )
         except Exception:  # noqa: BLE001
             logger.exception("SHA256 corpus lookup failed")
-            return None
+            raise
         if hit is None:
             continue
         if winning_report_id is None:
@@ -100,7 +100,7 @@ def phash_similarity(
         )
     except Exception:  # noqa: BLE001
         logger.exception("PHASH corpus list failed")
-        return None
+        raise
 
     if not corpus:
         return None

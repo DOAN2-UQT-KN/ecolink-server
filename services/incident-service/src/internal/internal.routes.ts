@@ -79,7 +79,7 @@ router.patch(
     }
 
     try {
-      const reportId = req.params.id;
+      const reportId = req.params?.id;
       if (!reportId) {
         sendError(res, HTTP_STATUS.BAD_REQUEST.withMessage("Missing report id"));
         return;

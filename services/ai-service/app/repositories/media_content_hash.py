@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
 from dataclasses import dataclass
@@ -11,6 +10,7 @@ from typing import Optional, Sequence
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
+from app.db.async_bridge import run_coro
 from app.db.models import AiMediaContentHash
 from app.db.session import SessionLocal
 from app.verification.hash_compute import ALG_PHASH, ALG_SHA256, ComputedMediaHashes
@@ -121,6 +121,11 @@ async def _upsert_computed_hashes(
             rows.append({**base, "algorithm": ALG_PHASH, "hash": rec.phash})
 
     if not rows:
+        logger.warning(
+            "skip upsert: no hash rows report_id=%s records=%s",
+            report_id,
+            len(records),
+        )
         return
 
     async with SessionLocal() as session:
@@ -136,12 +141,17 @@ async def _upsert_computed_hashes(
         )
         await session.execute(stmt)
         await session.commit()
+        logger.info(
+            "upserted media content hashes report_id=%s rows=%s",
+            report_id,
+            len(rows),
+        )
 
 
 def find_sha256_match_sync(
     sha256: str, *, user_id: str, exclude_report_id: str
 ) -> Optional[CorpusHashHit]:
-    return asyncio.run(
+    return run_coro(
         _find_sha256_match(
             sha256, user_id=user_id, exclude_report_id=exclude_report_id
         )
@@ -151,7 +161,7 @@ def find_sha256_match_sync(
 def list_phash_corpus_sync(
     *, user_id: str, exclude_report_id: str
 ) -> list[CorpusHashHit]:
-    return asyncio.run(
+    return run_coro(
         _list_phash_corpus(user_id=user_id, exclude_report_id=exclude_report_id)
     )
 
@@ -162,7 +172,7 @@ def upsert_computed_hashes_sync(
     user_id: str,
     records: Sequence[ComputedMediaHashes],
 ) -> None:
-    asyncio.run(
+    run_coro(
         _upsert_computed_hashes(
             report_id=report_id, user_id=user_id, records=records
         )

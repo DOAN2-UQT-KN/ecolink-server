@@ -100,14 +100,23 @@ export type ReportSearchWithScope = ReportSearchQuery & {
 };
 
 export interface DuplicateMediaMatch {
+  /** Media.id on the report that was just submitted. */
   mediaId: string;
+  /** Media.id on the older duplicate report. */
   duplicateMediaId: string;
 }
 
-/** Null on GET until ai-service writes back after REPORT_SUBMITTED. */
+/**
+ * Result of SHA-256 / pHash duplicate verification for a report.
+ * `null` on the parent report until ai-service writes back after REPORT_SUBMITTED.
+ * No hit: `duplicateReportId` is null and `reasons` / `matches` are empty arrays.
+ */
 export interface DuplicateVerification {
+  /** Older report id that matched; null when unique or not yet checked is represented via parent null. */
   duplicateReportId: string | null;
+  /** Reason codes, e.g. EXACT_HASH_MATCH, HIGH_IMAGE_SIMILARITY. */
   reasons: string[];
+  /** Media pairs that caused the match on the winning duplicate report. */
   matches: DuplicateMediaMatch[];
 }
 

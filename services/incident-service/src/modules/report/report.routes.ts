@@ -13,14 +13,14 @@ router.post("/", authenticate, reportController.createReport);
 
 /**
  * @route   GET /api/v1/reports/search
- * @desc    Search and discover reports with filters and sorting. Optional `statuses` (comma-separated or repeated ints) filters `status IN statuses`.
+ * @desc    Search and discover reports with filters and sorting. Optional `statuses` (comma-separated or repeated ints) filters `status IN statuses`. Each report includes duplicate_verification.
  * @access  Private
  */
 router.get("/search", authenticate, reportController.searchReports);
 
 /**
  * @route   GET /api/v1/reports/my
- * @desc    Current user's reports: same filters/sort as /search, plus page & limit (default page=1, limit=10). Response includes total, total_pages.
+ * @desc    Current user's reports: same filters/sort as /search, plus page & limit (default page=1, limit=10). Response includes total, total_pages, and duplicate_verification per report.
  * @access  Private
  */
 router.get("/my", authenticate, reportController.getMyReports);
@@ -65,7 +65,7 @@ router.get(
 
 /**
  * @route   GET /api/v1/reports/:id
- * @desc    Get report with full details. Banned (inactive) reports return 404.
+ * @desc    Get report with full details including duplicate_verification (null until AI writes back). Banned (inactive) reports return 404.
  * @access  Private
  */
 router.get("/:id", authenticate, reportController.getReportDetail);

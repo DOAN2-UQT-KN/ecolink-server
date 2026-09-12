@@ -113,6 +113,78 @@ def test_pipeline_returns_duplicate_result_skips_authenticity_risk() -> None:
     risk_mock.assert_not_called()
 
 
+def test_pipeline_preserves_caller_empty_context() -> None:
+    """Empty `{}` must not be replaced — hashes need to reach the handler upsert."""
+    from app.verification.hash_compute import ComputedMediaHashes
+
+    prepared = [
+        ComputedMediaHashes(
+            report_media_file_id="rmf1",
+            media_id="m1",
+            url="https://cdn.example/m1.jpg",
+            sha256="abc",
+            phash="1111111111111111",
+        )
+    ]
+    context: dict = {}
+    with patch(
+        "app.verification.duplicate.prepare_media_hashes", return_value=prepared
+    ), patch(
+        "app.verification.duplicate.hash_repo.find_sha256_match_sync",
+        return_value=None,
+    ), patch(
+        "app.verification.duplicate.hash_repo.list_phash_corpus_sync",
+        return_value=[],
+    ):
+        VerificationPipeline().run(
+            ReportSubmittedPayload("r1", "u1", ["rmf1"]),
+            context=context,
+        )
+    assert context.get("media_hashes") is prepared
+
+
+def test_handle_report_submitted_upserts_hashes_from_context() -> None:
+    from app.verification.hash_compute import ComputedMediaHashes
+
+    prepared = [
+        ComputedMediaHashes(
+            report_media_file_id="rmf1",
+            media_id="m1",
+            url="https://cdn.example/m1.jpg",
+            sha256="abc",
+            phash=None,
+        )
+    ]
+    with patch(
+        "app.verification.duplicate.prepare_media_hashes", return_value=prepared
+    ), patch(
+        "app.verification.duplicate.hash_repo.find_sha256_match_sync",
+        return_value=None,
+    ), patch(
+        "app.verification.duplicate.hash_repo.list_phash_corpus_sync",
+        return_value=[],
+    ), patch(
+        "app.queue.handlers.report_submitted.upsert_computed_hashes_sync"
+    ) as upsert_mock, patch(
+        "app.queue.handlers.report_submitted.patch_duplicate_verification_sync"
+    ):
+        envelope = BackgroundJobEnvelope(
+            job_id="job-1",
+            job_type="REPORT_SUBMITTED",
+            payload={
+                "reportId": "r1",
+                "userId": "u1",
+                "reportMediaFileIds": ["rmf1"],
+            },
+        )
+        handle_report_submitted(envelope)
+        upsert_mock.assert_called_once()
+        kwargs = upsert_mock.call_args.kwargs
+        assert kwargs["report_id"] == "r1"
+        assert kwargs["user_id"] == "u1"
+        assert kwargs["records"] is prepared
+
+
 def test_handle_report_submitted() -> None:
     with patch(
         "app.verification.duplicate.prepare_media_hashes", return_value=[]

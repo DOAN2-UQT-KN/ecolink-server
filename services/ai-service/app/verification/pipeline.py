@@ -31,7 +31,9 @@ class VerificationPipeline:
         context: Optional[dict[str, Any]] = None,
         job_id: Optional[str] = None,
     ) -> DuplicateReportResult:
-        ctx = context or {}
+        # Must not use `context or {}` — empty `{}` is falsy and would drop
+        # caller-owned context (hashes never reach the REPORT_SUBMITTED upsert).
+        ctx = context if context is not None else {}
         logger.info(
             "VerificationPipeline start report_id=%s job_id=%s media_count=%s",
             payload.report_id,

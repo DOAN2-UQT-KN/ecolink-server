@@ -6,9 +6,9 @@ Run:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
+from app.db.async_bridge import run_coro
 from app.db.session import init_db
 from app.queue.sqs_worker import run_worker
 
@@ -21,7 +21,8 @@ def main() -> None:
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
     )
     try:
-        asyncio.run(init_db())
+        # Must share the worker loop with sync DB helpers (media hash upsert/lookup).
+        run_coro(init_db())
     except Exception:  # noqa: BLE001
         logger.exception("init_db failed; continuing (tables may already exist)")
     run_worker()
