@@ -403,9 +403,27 @@ export class ReportService {
     if (!existing) {
       throw new HttpError(HTTP_STATUS.REPORT_NOT_FOUND);
     }
-    await reportRepository.update(reportId, {
+
+    const isDuplicate = Boolean(verification.duplicateReportId);
+    const updateData: Prisma.ReportUpdateInput = {
       duplicateVerification: toDuplicateVerificationJson(verification),
-    });
+    };
+
+    if (isDuplicate) {
+      const banReason = verification.reason?.trim() || "DUPLICATE_IMAGE";
+      updateData.status = REPORT_STATUS_BANNED;
+      updateData.rejectReason = banReason;
+    }
+
+    const updated = await reportRepository.update(reportId, updateData);
+
+    if (isDuplicate && existing.status !== REPORT_STATUS_BANNED) {
+      this.notifyOwnerOfReportModeration(
+        updated,
+        "banned",
+        updateData.rejectReason as string,
+      );
+    }
   }
 
   async getReportBackgroundJobsStatus(

@@ -6,7 +6,7 @@
 
 **Song song sau commit (không `await` queue):** kick-off `ANALYZE_REPORT` và `TRANSLATE_TEXT` rồi chạy `attachVotesToReports`. HTTP **không** đợi SQS / worker / duplicate. Trong `attachVotesToReports`, votes và saved chạy `Promise.all`; profile identity chạy sau khi hai query đó xong.
 
-**Ngoài HTTP (sau commit):** `OutboxRelay` đẩy `REPORT_SUBMITTED` sang SQS AI. `ai-service` cascade SHA-256 → pHash (cùng `userId`, exclude report hiện tại), upsert corpus hash, rồi `PATCH /internal/v1/reports/:id/duplicate-verification`. Không chạy authenticity / risk. Duplicate **không** rollback report đã tạo. GET report trả `duplicate_verification` (null trước khi worker ghi).
+**Ngoài HTTP (sau commit):** `OutboxRelay` đẩy `REPORT_SUBMITTED` sang SQS AI. `ai-service` cascade SHA-256 → pHash (cùng `userId`, exclude report hiện tại), upsert corpus hash, rồi `PATCH /internal/v1/reports/:id/duplicate-verification`. Không chạy authenticity / risk. Duplicate **không** rollback report đã tạo. Nếu phát hiện trùng lặp (`duplicateReportId != null`), `incident-service` tự động đặt `status = BANNED` (`_STATUS_INACTIVE`), lưu `rejectReason` (lý do duplicate) và gửi thông báo cho chủ sở hữu báo cáo. GET report trả `duplicate_verification` (null trước khi worker ghi).
 
 ```mermaid
 flowchart TD
@@ -70,5 +70,10 @@ flowchart TD
   HIT2 --> UPSERT
   MISS --> UPSERT
   UPSERT --> PATCH["PATCH incident duplicate-verification"]
-  PATCH --> LOG["log DuplicateReportResult"]
+  PATCH --> SAVE["saveDuplicateVerification"]
+  SAVE --> DUP{"duplicateReportId != null?"}
+  DUP -->|yes| BAN["status = BANNED (INACTIVE) + reject_reason + notifyOwner"]
+  DUP -->|no| KEEP_ST["giữ nguyên status"]
+  BAN --> LOG["log DuplicateReportResult"]
+  KEEP_ST --> LOG
 ```

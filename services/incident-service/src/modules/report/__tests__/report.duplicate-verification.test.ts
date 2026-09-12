@@ -64,6 +64,16 @@ jest.mock("../report.entity", () => ({
   toDuplicateVerificationJson: (v: unknown) => v,
 }));
 
+const notifyRejectedMock = jest.fn().mockResolvedValue(undefined);
+const notifyApprovedMock = jest.fn().mockResolvedValue(undefined);
+
+jest.mock("../report-status-notify.client", () => ({
+  enqueueReportApprovedWebsiteNotification: (...args: unknown[]) =>
+    notifyApprovedMock(...args),
+  enqueueReportRejectedWebsiteNotification: (...args: unknown[]) =>
+    notifyRejectedMock(...args),
+}));
+
 import { Prisma } from "@prisma/client";
 import { HTTP_STATUS } from "../../../constants/http-status";
 import { reportService } from "../report.service";
@@ -87,9 +97,20 @@ describe("saveDuplicateVerification", () => {
     expect(updateMock).not.toHaveBeenCalled();
   });
 
-  it("overwrites JSON on an existing report", async () => {
-    findByIdMock.mockResolvedValue({ id: "r-new" });
-    updateMock.mockResolvedValue({ id: "r-new" });
+  it("sets status to Banned with reason when duplicate is detected", async () => {
+    findByIdMock.mockResolvedValue({
+      id: "r-new",
+      userId: "u-owner",
+      title: "Garbage pile",
+      status: 12,
+    });
+    updateMock.mockResolvedValue({
+      id: "r-new",
+      userId: "u-owner",
+      title: "Garbage pile",
+      status: 2,
+      rejectReason: "DUPLICATE_IMAGE",
+    });
     const verification = {
       duplicateReportId: "r-old",
       reason: "DUPLICATE_IMAGE",
@@ -104,7 +125,64 @@ describe("saveDuplicateVerification", () => {
     await reportService.saveDuplicateVerification("r-new", verification);
     expect(updateMock).toHaveBeenCalledWith("r-new", {
       duplicateVerification: verification,
+      status: 2,
+      rejectReason: "DUPLICATE_IMAGE",
     });
+    expect(notifyRejectedMock).toHaveBeenCalledWith({
+      userId: "u-owner",
+      reportId: "r-new",
+      reportTitle: "Garbage pile",
+      rejectReason: "DUPLICATE_IMAGE",
+    });
+  });
+
+  it("falls back to DUPLICATE_IMAGE if reason is empty on hit", async () => {
+    findByIdMock.mockResolvedValue({
+      id: "r-new",
+      userId: "u-owner",
+      status: 12,
+    });
+    updateMock.mockResolvedValue({
+      id: "r-new",
+      userId: "u-owner",
+      status: 2,
+      rejectReason: "DUPLICATE_IMAGE",
+    });
+    const verification = {
+      duplicateReportId: "r-old",
+      reason: null,
+      matches: [],
+    };
+    await reportService.saveDuplicateVerification("r-new", verification);
+    expect(updateMock).toHaveBeenCalledWith("r-new", {
+      duplicateVerification: verification,
+      status: 2,
+      rejectReason: "DUPLICATE_IMAGE",
+    });
+  });
+
+  it("does not change status or rejectReason when unique (no duplicate)", async () => {
+    findByIdMock.mockResolvedValue({
+      id: "r-new",
+      userId: "u-owner",
+      status: 12,
+      rejectReason: null,
+    });
+    updateMock.mockResolvedValue({
+      id: "r-new",
+      userId: "u-owner",
+      status: 12,
+    });
+    const verification = {
+      duplicateReportId: null,
+      reason: null,
+      matches: [],
+    };
+    await reportService.saveDuplicateVerification("r-new", verification);
+    expect(updateMock).toHaveBeenCalledWith("r-new", {
+      duplicateVerification: verification,
+    });
+    expect(notifyRejectedMock).not.toHaveBeenCalled();
   });
 });
 

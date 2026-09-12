@@ -101,7 +101,7 @@ export function toDuplicateVerificationJson(
   return {
     duplicateReportId: verification.duplicateReportId,
     reason: verification.reason,
-    matches: verification.matches.map((m) => ({
+    matches: (verification.matches || []).map((m) => ({
       mediaId: m.mediaId,
       duplicateMediaId: m.duplicateMediaId,
       reason: m.reason,
