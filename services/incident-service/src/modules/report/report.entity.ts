@@ -9,11 +9,46 @@ import type {
 // Type-based entity
 export type ReportEntity = Report;
 
+const LEGACY_DETECT_TO_FINAL: Record<string, string> = {
+  EXACT_HASH_MATCH: "DUPLICATE_IMAGE",
+  HIGH_IMAGE_SIMILARITY: "DUPLICATE_IMAGE",
+};
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (value == null || typeof value !== "object" || Array.isArray(value)) {
     return null;
   }
   return value as Record<string, unknown>;
+}
+
+function parseFinalReason(obj: Record<string, unknown>): string | null {
+  const reasonRaw = obj.reason;
+  if (typeof reasonRaw === "string" && reasonRaw) {
+    return reasonRaw;
+  }
+
+  // Legacy rows stored detect codes in `reasons[]`.
+  const reasonsRaw = obj.reasons;
+  if (Array.isArray(reasonsRaw)) {
+    const first = reasonsRaw.find(
+      (item): item is string => typeof item === "string" && item.length > 0,
+    );
+    if (first) {
+      return LEGACY_DETECT_TO_FINAL[first] ?? first;
+    }
+  }
+
+  return null;
+}
+
+function reasonFromMatches(matches: DuplicateMediaMatch[]): string | null {
+  for (const match of matches) {
+    const mapped = LEGACY_DETECT_TO_FINAL[match.reason];
+    if (mapped) {
+      return mapped;
+    }
+  }
+  return null;
 }
 
 export function toDuplicateVerification(
@@ -31,11 +66,6 @@ export function toDuplicateVerification(
       ? duplicateReportIdRaw
       : null;
 
-  const reasonsRaw = obj.reasons;
-  const reasons = Array.isArray(reasonsRaw)
-    ? reasonsRaw.filter((item): item is string => typeof item === "string")
-    : [];
-
   const matches: DuplicateMediaMatch[] = [];
   const matchesRaw = obj.matches;
   if (Array.isArray(matchesRaw)) {
@@ -47,13 +77,22 @@ export function toDuplicateVerification(
       const mediaId = match.mediaId ?? match.media_id;
       const duplicateMediaId =
         match.duplicateMediaId ?? match.duplicate_media_id;
+      const matchReasonRaw = match.reason;
+      const matchReason =
+        typeof matchReasonRaw === "string" && matchReasonRaw
+          ? matchReasonRaw
+          : "";
       if (typeof mediaId === "string" && typeof duplicateMediaId === "string") {
-        matches.push({ mediaId, duplicateMediaId });
+        matches.push({ mediaId, duplicateMediaId, reason: matchReason });
       }
     }
   }
 
-  return { duplicateReportId, reasons, matches };
+  const reason =
+    parseFinalReason(obj) ??
+    (duplicateReportId != null ? reasonFromMatches(matches) : null);
+
+  return { duplicateReportId, reason, matches };
 }
 
 export function toDuplicateVerificationJson(
@@ -61,10 +100,11 @@ export function toDuplicateVerificationJson(
 ): Prisma.InputJsonValue {
   return {
     duplicateReportId: verification.duplicateReportId,
-    reasons: verification.reasons,
+    reason: verification.reason,
     matches: verification.matches.map((m) => ({
       mediaId: m.mediaId,
       duplicateMediaId: m.duplicateMediaId,
+      reason: m.reason,
     })),
   };
 }

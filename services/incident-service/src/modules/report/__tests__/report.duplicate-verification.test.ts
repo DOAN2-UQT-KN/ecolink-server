@@ -78,7 +78,7 @@ describe("saveDuplicateVerification", () => {
     await expect(
       reportService.saveDuplicateVerification("r-missing", {
         duplicateReportId: null,
-        reasons: [],
+        reason: null,
         matches: [],
       }),
     ).rejects.toMatchObject({
@@ -92,8 +92,14 @@ describe("saveDuplicateVerification", () => {
     updateMock.mockResolvedValue({ id: "r-new" });
     const verification = {
       duplicateReportId: "r-old",
-      reasons: ["EXACT_HASH_MATCH"],
-      matches: [{ mediaId: "m1", duplicateMediaId: "m-old" }],
+      reason: "DUPLICATE_IMAGE",
+      matches: [
+        {
+          mediaId: "m1",
+          duplicateMediaId: "m-old",
+          reason: "EXACT_HASH_MATCH",
+        },
+      ],
     };
     await reportService.saveDuplicateVerification("r-new", verification);
     expect(updateMock).toHaveBeenCalledWith("r-new", {

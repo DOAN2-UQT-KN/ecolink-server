@@ -65,7 +65,7 @@ def test_duplicate_cascade_empty_when_no_hashes() -> None:
         assert isinstance(result, DuplicateReportResult)
         assert result.report_id == "r1"
         assert result.duplicate_report_id is None
-        assert result.reasons == []
+        assert result.reason is None
         assert result.matches == []
         ph_mock.assert_not_called()
 
@@ -101,12 +101,12 @@ def test_pipeline_returns_duplicate_result_skips_authenticity_risk() -> None:
     assert isinstance(result, DuplicateReportResult)
     assert result.report_id == "r1"
     assert result.duplicate_report_id is None
-    assert result.reasons == []
+    assert result.reason is None
     assert result.matches == []
     assert result.to_dict() == {
         "report_id": "r1",
         "duplicate_report_id": None,
-        "reasons": [],
+        "reason": None,
         "matches": [],
     }
     auth_mock.assert_not_called()
@@ -209,7 +209,7 @@ def test_handle_report_submitted() -> None:
         assert "report_id" not in payload
         assert payload == {
             "duplicate_report_id": None,
-            "reasons": [],
+            "reason": None,
             "matches": [],
         }
 

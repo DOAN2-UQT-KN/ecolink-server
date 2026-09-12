@@ -104,18 +104,20 @@ export interface DuplicateMediaMatch {
   mediaId: string;
   /** Media.id on the older duplicate report. */
   duplicateMediaId: string;
+  /** Detect method, e.g. EXACT_HASH_MATCH, HIGH_IMAGE_SIMILARITY. */
+  reason: string;
 }
 
 /**
  * Result of SHA-256 / pHash duplicate verification for a report.
  * `null` on the parent report until ai-service writes back after REPORT_SUBMITTED.
- * No hit: `duplicateReportId` is null and `reasons` / `matches` are empty arrays.
+ * No hit: `duplicateReportId` and `reason` are null and `matches` is empty.
  */
 export interface DuplicateVerification {
   /** Older report id that matched; null when unique or not yet checked is represented via parent null. */
   duplicateReportId: string | null;
-  /** Reason codes, e.g. EXACT_HASH_MATCH, HIGH_IMAGE_SIMILARITY. */
-  reasons: string[];
+  /** Final verdict after verification, e.g. DUPLICATE_IMAGE, SAME_PLACE. */
+  reason: string | null;
   /** Media pairs that caused the match on the winning duplicate report. */
   matches: DuplicateMediaMatch[];
 }
@@ -150,7 +152,7 @@ export interface ReportResponse {
   aiRecommendation?: string | null;
   /**
    * Duplicate verification (SHA-256 / pHash). Null until the AI worker writes back.
-   * After a check with no hit: duplicateReportId is null and reasons/matches are empty.
+   * After a check with no hit: duplicateReportId and reason are null; matches is empty.
    */
   duplicateVerification: DuplicateVerification | null;
   createdAt: Date;

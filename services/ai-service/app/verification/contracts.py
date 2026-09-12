@@ -21,11 +21,20 @@ RISK_FLAG_REVIEW_MAX = 0.70
 
 
 class ReasonCode(str, Enum):
+    """Final report-level verdict after verification, plus detect / authenticity codes."""
+
+    # Final duplicate verdict (top-level DuplicateReportResult.reason)
+    DUPLICATE_IMAGE = "DUPLICATE_IMAGE"
+    SAME_PLACE = "SAME_PLACE"
+
+    # Per-match detect methods (DuplicateMediaMatch.reason)
     HIGH_IMAGE_SIMILARITY = "HIGH_IMAGE_SIMILARITY"
+    EXACT_HASH_MATCH = "EXACT_HASH_MATCH"
+
+    # Reserved / authenticity (not produced by duplicate cascade yet)
     NEARBY_EXISTING_REPORT = "NEARBY_EXISTING_REPORT"
     EXIF_TIME_MISMATCH = "EXIF_TIME_MISMATCH"
     LIVE_CAMERA_PRESENT = "LIVE_CAMERA_PRESENT"
-    EXACT_HASH_MATCH = "EXACT_HASH_MATCH"
 
 
 @dataclass
@@ -155,11 +164,13 @@ class ReportSubmittedPayload:
 class DuplicateMediaMatch:
     media_id: str  # Media.id vừa gửi
     duplicate_media_id: str  # Media.id cũ bị trùng
+    reason: str  # Detect method, e.g. EXACT_HASH_MATCH / HIGH_IMAGE_SIMILARITY
 
     def to_dict(self) -> dict[str, str]:
         return {
             "media_id": self.media_id,
             "duplicate_media_id": self.duplicate_media_id,
+            "reason": self.reason,
         }
 
 
@@ -169,14 +180,14 @@ class DuplicateReportResult:
 
     report_id: str
     duplicate_report_id: Optional[str] = None
-    reasons: list[str] = field(default_factory=list)
+    reason: Optional[str] = None  # Final verdict, e.g. DUPLICATE_IMAGE / SAME_PLACE
     matches: list[DuplicateMediaMatch] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "report_id": self.report_id,
             "duplicate_report_id": self.duplicate_report_id,
-            "reasons": list(self.reasons),
+            "reason": self.reason,
             "matches": [m.to_dict() for m in self.matches],
         }
 
@@ -184,7 +195,7 @@ class DuplicateReportResult:
         """Body for incident PATCH — omit report_id (path param)."""
         return {
             "duplicate_report_id": self.duplicate_report_id,
-            "reasons": list(self.reasons),
+            "reason": self.reason,
             "matches": [m.to_dict() for m in self.matches],
         }
 

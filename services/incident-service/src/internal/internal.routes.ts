@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { body, param, validationResult } from "express-validator";
+import type { Prisma } from "@prisma/client";
 import {
   HTTP_STATUS,
   sendError,
@@ -8,10 +9,8 @@ import {
 } from "../constants/http-status";
 import { requireInternalAiApiKey } from "../middleware/internal-ai-auth.middleware";
 import { reportService } from "../modules/report/report.service";
-import type {
-  DuplicateMediaMatch,
-  DuplicateVerification,
-} from "../modules/report/report.dto";
+import { toDuplicateVerification } from "../modules/report/report.entity";
+import type { DuplicateVerification } from "../modules/report/report.dto";
 
 const router = Router();
 
@@ -20,34 +19,11 @@ router.use(requireInternalAiApiKey);
 function parseDuplicateVerificationBody(
   body: Record<string, unknown>,
 ): DuplicateVerification {
-  const duplicateReportIdRaw = body.duplicateReportId;
-  const duplicateReportId =
-    typeof duplicateReportIdRaw === "string" && duplicateReportIdRaw
-      ? duplicateReportIdRaw
-      : null;
-
-  const reasonsRaw = body.reasons;
-  const reasons = Array.isArray(reasonsRaw)
-    ? reasonsRaw.filter((item): item is string => typeof item === "string")
-    : [];
-
-  const matches: DuplicateMediaMatch[] = [];
-  const matchesRaw = body.matches;
-  if (Array.isArray(matchesRaw)) {
-    for (const item of matchesRaw) {
-      if (!item || typeof item !== "object" || Array.isArray(item)) {
-        continue;
-      }
-      const match = item as Record<string, unknown>;
-      const mediaId = match.mediaId;
-      const duplicateMediaId = match.duplicateMediaId;
-      if (typeof mediaId === "string" && typeof duplicateMediaId === "string") {
-        matches.push({ mediaId, duplicateMediaId });
-      }
-    }
+  const parsed = toDuplicateVerification(body as Prisma.JsonValue);
+  if (parsed != null) {
+    return parsed;
   }
-
-  return { duplicateReportId, reasons, matches };
+  return { duplicateReportId: null, reason: null, matches: [] };
 }
 
 router.patch(
@@ -57,17 +33,28 @@ router.patch(
     .optional({ nullable: true })
     .custom((value) => value === null || typeof value === "string")
     .withMessage("duplicate_report_id must be a string or null"),
+  body("reason")
+    .optional({ nullable: true })
+    .custom((value) => value === null || typeof value === "string")
+    .withMessage("reason must be a string or null"),
+  // Legacy AI payloads sent detect codes as `reasons: string[]`.
   body("reasons").optional().isArray().withMessage("reasons must be an array"),
   body("reasons.*").optional().isString(),
   body("matches").optional().isArray().withMessage("matches must be an array"),
   body("matches.*.mediaId")
+    .optional()
     .isString()
     .notEmpty()
     .withMessage("matches.media_id is required"),
   body("matches.*.duplicateMediaId")
+    .optional()
     .isString()
     .notEmpty()
     .withMessage("matches.duplicate_media_id is required"),
+  body("matches.*.reason")
+    .optional({ nullable: true })
+    .isString()
+    .withMessage("matches.reason must be a string"),
 
   async (req, res): Promise<void> => {
     const errors = validationResult(req);

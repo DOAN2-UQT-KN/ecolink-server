@@ -67,10 +67,25 @@ def compute_phash_hex(buffer: bytes) -> Optional[str]:
         return None
 
 
+# Browser-like UA: some CDNs reject default python-httpx clients.
+_DOWNLOAD_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (compatible; EcoLinkAI/1.0; +https://ecolink.local) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+    ),
+    "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+}
+
+
 def download_image_bytes(url: str) -> Optional[bytes]:
     try:
+        # trust_env=False: ignore HTTP(S)_PROXY from the process env. Cursor /
+        # sandbox proxies often return 403 on CONNECT to CDNs like Cloudinary.
         with httpx.Client(
-            timeout=DOWNLOAD_TIMEOUT_S, follow_redirects=True
+            timeout=DOWNLOAD_TIMEOUT_S,
+            follow_redirects=True,
+            trust_env=False,
+            headers=_DOWNLOAD_HEADERS,
         ) as client:
             response = client.get(url)
             response.raise_for_status()

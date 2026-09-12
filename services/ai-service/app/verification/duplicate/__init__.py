@@ -72,6 +72,7 @@ def exact_hash(
             DuplicateMediaMatch(
                 media_id=rec.media_id,
                 duplicate_media_id=hit.media_id,
+                reason=ReasonCode.EXACT_HASH_MATCH.value,
             )
         )
 
@@ -80,7 +81,7 @@ def exact_hash(
     return DuplicateReportResult(
         report_id=payload.report_id,
         duplicate_report_id=winning_report_id,
-        reasons=[ReasonCode.EXACT_HASH_MATCH.value],
+        reason=ReasonCode.DUPLICATE_IMAGE.value,
         matches=matches,
     )
 
@@ -125,6 +126,7 @@ def phash_similarity(
                     DuplicateMediaMatch(
                         media_id=rec.media_id,
                         duplicate_media_id=candidate.media_id,
+                        reason=ReasonCode.HIGH_IMAGE_SIMILARITY.value,
                     ),
                     candidate.report_id,
                 )
@@ -144,7 +146,7 @@ def phash_similarity(
     return DuplicateReportResult(
         report_id=payload.report_id,
         duplicate_report_id=winning_report_id,
-        reasons=[ReasonCode.HIGH_IMAGE_SIMILARITY.value],
+        reason=ReasonCode.DUPLICATE_IMAGE.value,
         matches=matches,
     )
 

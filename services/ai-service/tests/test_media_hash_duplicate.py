@@ -104,10 +104,11 @@ def test_exact_hash_hit_short_circuits() -> None:
         assert isinstance(result, DuplicateReportResult)
         assert result.report_id == "r-new"
         assert result.duplicate_report_id == "r-old"
-        assert result.reasons == [ReasonCode.EXACT_HASH_MATCH.value]
+        assert result.reason == ReasonCode.DUPLICATE_IMAGE.value
         assert len(result.matches) == 1
         assert result.matches[0].media_id == "m1"
         assert result.matches[0].duplicate_media_id == "m-old"
+        assert result.matches[0].reason == ReasonCode.EXACT_HASH_MATCH.value
         sha_mock.assert_called_with(
             "abc", user_id="u1", exclude_report_id="r-new"
         )
@@ -186,9 +187,10 @@ def test_phash_hit_when_sha_misses() -> None:
         result = run_duplicate_cascade(payload, context)
         assert result.report_id == "r-new"
         assert result.duplicate_report_id == "r-old"
-        assert result.reasons == [ReasonCode.HIGH_IMAGE_SIMILARITY.value]
+        assert result.reason == ReasonCode.DUPLICATE_IMAGE.value
         assert result.matches[0].media_id == "m1"
         assert result.matches[0].duplicate_media_id == "m-old"
+        assert result.matches[0].reason == ReasonCode.HIGH_IMAGE_SIMILARITY.value
         sha_mock.assert_called_with(
             "abc", user_id="u1", exclude_report_id="r-new"
         )
@@ -223,12 +225,12 @@ def test_cascade_no_hit_returns_empty_result() -> None:
     assert isinstance(result, DuplicateReportResult)
     assert result.report_id == "r-new"
     assert result.duplicate_report_id is None
-    assert result.reasons == []
+    assert result.reason is None
     assert result.matches == []
     assert result.to_dict() == {
         "report_id": "r-new",
         "duplicate_report_id": None,
-        "reasons": [],
+        "reason": None,
         "matches": [],
     }
 
@@ -245,15 +247,25 @@ def test_incident_payload_omits_report_id() -> None:
     result = DuplicateReportResult(
         report_id="r-new",
         duplicate_report_id="r-old",
-        reasons=[ReasonCode.EXACT_HASH_MATCH.value],
+        reason=ReasonCode.DUPLICATE_IMAGE.value,
         matches=[
-            DuplicateMediaMatch(media_id="m1", duplicate_media_id="m-old")
+            DuplicateMediaMatch(
+                media_id="m1",
+                duplicate_media_id="m-old",
+                reason=ReasonCode.EXACT_HASH_MATCH.value,
+            )
         ],
     )
     payload = result.to_incident_payload()
     assert "report_id" not in payload
     assert payload == {
         "duplicate_report_id": "r-old",
-        "reasons": ["EXACT_HASH_MATCH"],
-        "matches": [{"media_id": "m1", "duplicate_media_id": "m-old"}],
+        "reason": "DUPLICATE_IMAGE",
+        "matches": [
+            {
+                "media_id": "m1",
+                "duplicate_media_id": "m-old",
+                "reason": "EXACT_HASH_MATCH",
+            }
+        ],
     }

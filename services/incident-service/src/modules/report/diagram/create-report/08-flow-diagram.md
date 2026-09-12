@@ -62,10 +62,10 @@ flowchart TD
   SQS --> AI["ai-service handle REPORT_SUBMITTED"]
   AI --> HASH["download media + SHA256 + pHash"]
   HASH --> SHA{"exact SHA-256 cùng user?"}
-  SHA -->|yes| HIT1["EXACT_HASH_MATCH + matches"]
+  SHA -->|yes| HIT1["DUPLICATE_IMAGE + matches EXACT_HASH_MATCH"]
   SHA -->|no| PH{"pHash Hamming <= 10 cùng user?"}
-  PH -->|yes| HIT2["HIGH_IMAGE_SIMILARITY + matches"]
-  PH -->|no| MISS["duplicate_report_id null"]
+  PH -->|yes| HIT2["DUPLICATE_IMAGE + matches HIGH_IMAGE_SIMILARITY"]
+  PH -->|no| MISS["duplicate_report_id null, reason null"]
   HIT1 --> UPSERT["upsert corpus hashes"]
   HIT2 --> UPSERT
   MISS --> UPSERT

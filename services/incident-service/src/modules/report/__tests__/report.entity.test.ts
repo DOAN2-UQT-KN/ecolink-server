@@ -46,13 +46,25 @@ describe("toDuplicateVerification", () => {
     expect(
       toDuplicateVerification({
         duplicateReportId: "r-old",
-        reasons: ["EXACT_HASH_MATCH"],
-        matches: [{ mediaId: "m1", duplicateMediaId: "m-old" }],
+        reason: "DUPLICATE_IMAGE",
+        matches: [
+          {
+            mediaId: "m1",
+            duplicateMediaId: "m-old",
+            reason: "EXACT_HASH_MATCH",
+          },
+        ],
       }),
     ).toEqual({
       duplicateReportId: "r-old",
-      reasons: ["EXACT_HASH_MATCH"],
-      matches: [{ mediaId: "m1", duplicateMediaId: "m-old" }],
+      reason: "DUPLICATE_IMAGE",
+      matches: [
+        {
+          mediaId: "m1",
+          duplicateMediaId: "m-old",
+          reason: "EXACT_HASH_MATCH",
+        },
+      ],
     });
   });
 
@@ -60,13 +72,52 @@ describe("toDuplicateVerification", () => {
     expect(
       toDuplicateVerification({
         duplicate_report_id: null,
-        reasons: [],
+        reason: null,
         matches: [],
       }),
     ).toEqual({
       duplicateReportId: null,
-      reasons: [],
+      reason: null,
       matches: [],
+    });
+  });
+
+  it("maps legacy reasons[] detect codes to final DUPLICATE_IMAGE", () => {
+    expect(
+      toDuplicateVerification({
+        duplicateReportId: "r-old",
+        reasons: ["EXACT_HASH_MATCH"],
+        matches: [{ mediaId: "m1", duplicateMediaId: "m-old" }],
+      }),
+    ).toEqual({
+      duplicateReportId: "r-old",
+      reason: "DUPLICATE_IMAGE",
+      matches: [{ mediaId: "m1", duplicateMediaId: "m-old", reason: "" }],
+    });
+  });
+
+  it("derives final reason from match detect reasons when top-level reason is missing", () => {
+    expect(
+      toDuplicateVerification({
+        duplicate_report_id: "r-old",
+        matches: [
+          {
+            media_id: "m1",
+            duplicate_media_id: "m-old",
+            reason: "HIGH_IMAGE_SIMILARITY",
+          },
+        ],
+      }),
+    ).toEqual({
+      duplicateReportId: "r-old",
+      reason: "DUPLICATE_IMAGE",
+      matches: [
+        {
+          mediaId: "m1",
+          duplicateMediaId: "m-old",
+          reason: "HIGH_IMAGE_SIMILARITY",
+        },
+      ],
     });
   });
 });
@@ -80,16 +131,28 @@ describe("toReportResponse", () => {
   it("exposes hit after write-back", () => {
     const stored = toDuplicateVerificationJson({
       duplicateReportId: "r-old",
-      reasons: ["HIGH_IMAGE_SIMILARITY"],
-      matches: [{ mediaId: "m1", duplicateMediaId: "m-old" }],
+      reason: "DUPLICATE_IMAGE",
+      matches: [
+        {
+          mediaId: "m1",
+          duplicateMediaId: "m-old",
+          reason: "HIGH_IMAGE_SIMILARITY",
+        },
+      ],
     });
     const response = toReportResponse(
       baseReport({ duplicateVerification: stored as Report["duplicateVerification"] }),
     );
     expect(response.duplicateVerification).toEqual({
       duplicateReportId: "r-old",
-      reasons: ["HIGH_IMAGE_SIMILARITY"],
-      matches: [{ mediaId: "m1", duplicateMediaId: "m-old" }],
+      reason: "DUPLICATE_IMAGE",
+      matches: [
+        {
+          mediaId: "m1",
+          duplicateMediaId: "m-old",
+          reason: "HIGH_IMAGE_SIMILARITY",
+        },
+      ],
     });
   });
 });
