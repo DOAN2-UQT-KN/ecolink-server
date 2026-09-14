@@ -7,7 +7,13 @@ from unittest.mock import patch
 from app.queue.envelope import BackgroundJobEnvelope
 from app.queue.handlers import dispatch
 from app.queue.handlers.report_submitted import handle_report_submitted
-from app.verification.contracts import DuplicateReportResult, ReportSubmittedPayload, RiskAssessment
+from app.verification.contracts import (
+    DuplicateMediaMatch,
+    DuplicateReportResult,
+    ReportSubmittedPayload,
+    RiskAssessment,
+)
+from app.verification.hash_compute import ComputedMediaHashes
 from app.verification.duplicate import (
     embedding_similarity,
     exact_hash,
@@ -182,7 +188,7 @@ def test_handle_report_submitted_upserts_hashes_from_context() -> None:
         kwargs = upsert_mock.call_args.kwargs
         assert kwargs["report_id"] == "r1"
         assert kwargs["user_id"] == "u1"
-        assert kwargs["records"] is prepared
+        assert kwargs["records"] == prepared
 
 
 def test_handle_report_submitted() -> None:
@@ -212,6 +218,121 @@ def test_handle_report_submitted() -> None:
             "reason": None,
             "matches": [],
         }
+
+
+def test_handle_report_submitted_with_partial_duplicate() -> None:
+    rec1 = ComputedMediaHashes(
+        report_media_file_id="rmf1",
+        media_id="m1",
+        url="https://cdn.example/m1.jpg",
+        sha256="abc",
+        phash=None,
+    )
+    rec2 = ComputedMediaHashes(
+        report_media_file_id="rmf2",
+        media_id="m2",
+        url="https://cdn.example/m2.jpg",
+        sha256="def",
+        phash=None,
+    )
+    dup_result = DuplicateReportResult(
+        report_id="r1",
+        duplicate_report_id="r0",
+        reason="DUPLICATE_IMAGE",
+        matches=[
+            DuplicateMediaMatch(
+                media_id="m1",
+                duplicate_media_id="m0",
+                reason="EXACT_HASH_MATCH",
+            )
+        ],
+    )
+
+    def fake_run(payload, context=None, job_id=None):
+        if context is not None:
+            context["media_hashes"] = [rec1, rec2]
+        return dup_result
+
+    with patch(
+        "app.queue.handlers.report_submitted._pipeline.run",
+        side_effect=fake_run,
+    ), patch(
+        "app.queue.handlers.report_submitted.delete_hashes_by_media_ids_sync"
+    ) as delete_mock, patch(
+        "app.queue.handlers.report_submitted.upsert_computed_hashes_sync"
+    ) as upsert_mock, patch(
+        "app.queue.handlers.report_submitted.patch_duplicate_verification_sync"
+    ) as patch_mock:
+        envelope = BackgroundJobEnvelope(
+            job_id="job-1",
+            job_type="REPORT_SUBMITTED",
+            payload={
+                "reportId": "r1",
+                "userId": "u1",
+                "reportMediaFileIds": ["rmf1", "rmf2"],
+            },
+        )
+        handle_report_submitted(envelope)
+
+        delete_mock.assert_called_once_with(["m1"])
+        upsert_mock.assert_called_once()
+        kwargs = upsert_mock.call_args.kwargs
+        assert kwargs["report_id"] == "r1"
+        assert kwargs["user_id"] == "u1"
+        assert kwargs["records"] == [rec2]
+        patch_mock.assert_called_once()
+
+
+def test_handle_report_submitted_all_duplicate_skips_upsert() -> None:
+    rec1 = ComputedMediaHashes(
+        report_media_file_id="rmf1",
+        media_id="m1",
+        url="https://cdn.example/m1.jpg",
+        sha256="abc",
+        phash=None,
+    )
+    dup_result = DuplicateReportResult(
+        report_id="r1",
+        duplicate_report_id="r0",
+        reason="DUPLICATE_IMAGE",
+        matches=[
+            DuplicateMediaMatch(
+                media_id="m1",
+                duplicate_media_id="m0",
+                reason="EXACT_HASH_MATCH",
+            )
+        ],
+    )
+
+    def fake_run(payload, context=None, job_id=None):
+        if context is not None:
+            context["media_hashes"] = [rec1]
+        return dup_result
+
+    with patch(
+        "app.queue.handlers.report_submitted._pipeline.run",
+        side_effect=fake_run,
+    ), patch(
+        "app.queue.handlers.report_submitted.delete_hashes_by_media_ids_sync"
+    ) as delete_mock, patch(
+        "app.queue.handlers.report_submitted.upsert_computed_hashes_sync"
+    ) as upsert_mock, patch(
+        "app.queue.handlers.report_submitted.patch_duplicate_verification_sync"
+    ) as patch_mock:
+        envelope = BackgroundJobEnvelope(
+            job_id="job-1",
+            job_type="REPORT_SUBMITTED",
+            payload={
+                "reportId": "r1",
+                "userId": "u1",
+                "reportMediaFileIds": ["rmf1"],
+            },
+        )
+        handle_report_submitted(envelope)
+
+        delete_mock.assert_called_once_with(["m1"])
+        upsert_mock.assert_not_called()
+        patch_mock.assert_called_once()
 
 
 def test_dispatch_unknown_job_type() -> None:

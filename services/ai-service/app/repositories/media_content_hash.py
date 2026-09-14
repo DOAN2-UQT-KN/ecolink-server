@@ -7,7 +7,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Optional, Sequence
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
 
 from app.db.async_bridge import run_coro
@@ -148,6 +148,30 @@ async def _upsert_computed_hashes(
         )
 
 
+async def _delete_hashes_by_media_ids(media_ids: Sequence[str]) -> int:
+    uuids: list[uuid.UUID] = []
+    for mid in media_ids:
+        u = _parse_uuid(mid)
+        if u is not None:
+            uuids.append(u)
+    if not uuids:
+        return 0
+
+    async with SessionLocal() as session:
+        stmt = delete(AiMediaContentHash).where(
+            AiMediaContentHash.media_id.in_(uuids)
+        )
+        result = await session.execute(stmt)
+        await session.commit()
+        deleted_count = result.rowcount or 0
+        logger.info(
+            "deleted media content hashes count=%s media_ids=%s",
+            deleted_count,
+            [str(u) for u in uuids],
+        )
+        return deleted_count
+
+
 def find_sha256_match_sync(
     sha256: str, *, user_id: str, exclude_report_id: str
 ) -> Optional[CorpusHashHit]:
@@ -177,3 +201,7 @@ def upsert_computed_hashes_sync(
             report_id=report_id, user_id=user_id, records=records
         )
     )
+
+
+def delete_hashes_by_media_ids_sync(media_ids: Sequence[str]) -> int:
+    return run_coro(_delete_hashes_by_media_ids(media_ids))

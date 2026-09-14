@@ -6,7 +6,7 @@
 
 **Song song sau commit (không `await` queue):** kick-off `ANALYZE_REPORT` và `TRANSLATE_TEXT` rồi chạy `attachVotesToReports`. HTTP **không** đợi SQS / worker / duplicate. Trong `attachVotesToReports`, votes và saved chạy `Promise.all`; profile identity chạy sau khi hai query đó xong.
 
-**Ngoài HTTP (sau commit):** `OutboxRelay` đẩy `REPORT_SUBMITTED` sang SQS AI. `ai-service` cascade SHA-256 → pHash (cùng `userId`, exclude report hiện tại), upsert corpus hash, rồi `PATCH /internal/v1/reports/:id/duplicate-verification`. Không chạy authenticity / risk. Duplicate **không** rollback report đã tạo. Nếu phát hiện trùng lặp (`duplicateReportId != null`), `incident-service` tự động đặt `status = BANNED` (`_STATUS_INACTIVE`), lưu `rejectReason` (lý do duplicate) và gửi thông báo cho chủ sở hữu báo cáo. GET report trả `duplicate_verification` (null trước khi worker ghi).
+**Ngoài HTTP (sau commit):** `OutboxRelay` đẩy `REPORT_SUBMITTED` sang SQS AI. `ai-service` cascade SHA-256 → pHash (cùng `userId`, exclude report hiện tại). Nếu có ảnh trùng lặp, xóa hash của các ảnh duplicate khỏi `ai_media_content_hashes`, chỉ upsert các ảnh không trùng lặp còn lại (nếu có), rồi `PATCH /internal/v1/reports/:id/duplicate-verification`. Không chạy authenticity / risk. Duplicate **không** rollback report đã tạo. Nếu phát hiện trùng lặp (`duplicateReportId != null`), `incident-service` tự động đặt `status = BANNED` (`_STATUS_INACTIVE`), lưu `rejectReason` (lý do duplicate) và gửi thông báo cho chủ sở hữu báo cáo. GET report trả `duplicate_verification` (null trước khi worker ghi).
 
 ```mermaid
 flowchart TD
@@ -66,10 +66,15 @@ flowchart TD
   SHA -->|no| PH{"pHash Hamming <= 10 cùng user?"}
   PH -->|yes| HIT2["DUPLICATE_IMAGE + matches HIGH_IMAGE_SIMILARITY"]
   PH -->|no| MISS["duplicate_report_id null, reason null"]
-  HIT1 --> UPSERT["upsert corpus hashes"]
-  HIT2 --> UPSERT
-  MISS --> UPSERT
-  UPSERT --> PATCH["PATCH incident duplicate-verification"]
+  HIT1 --> DEL["delete duplicate media hashes"]
+  HIT2 --> DEL
+  DEL --> FILTER["loại bỏ duplicate media"]
+  FILTER --> REM{"còn ảnh hợp lệ?"}
+  REM -->|yes| UPSERT["upsert non-duplicate hashes"]
+  REM -->|no| PATCH["PATCH incident duplicate-verification"]
+  MISS --> UPSERT_ALL["upsert all hashes"]
+  UPSERT_ALL --> PATCH
+  UPSERT --> PATCH
   PATCH --> SAVE["saveDuplicateVerification"]
   SAVE --> DUP{"duplicateReportId != null?"}
   DUP -->|yes| BAN["status = BANNED (INACTIVE) + reject_reason + notifyOwner"]

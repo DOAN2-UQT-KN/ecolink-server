@@ -269,3 +269,10 @@ def test_incident_payload_omits_report_id() -> None:
             }
         ],
     }
+
+
+def test_delete_hashes_by_media_ids_empty_or_invalid() -> None:
+    from app.repositories.media_content_hash import delete_hashes_by_media_ids_sync
+
+    assert delete_hashes_by_media_ids_sync([]) == 0
+    assert delete_hashes_by_media_ids_sync(["not-a-uuid", "also-invalid"]) == 0
