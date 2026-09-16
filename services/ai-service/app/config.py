@@ -25,5 +25,12 @@ class Settings(BaseSettings):
     aws_access_key_id: str = "test"
     aws_secret_access_key: str = "test"
 
+    # ORB feature matching (duplicate cascade, after SHA-256 / pHash miss).
+    orb_ratio_threshold: float = 0.75
+    orb_min_good_matches: int = 8
+    orb_min_inlier_count: int = 15
+    orb_min_inlier_ratio: float = 0.30
+    orb_ransac_reproj_threshold: float = 5.0
+
 
 settings = Settings()

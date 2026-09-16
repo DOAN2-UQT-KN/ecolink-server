@@ -104,22 +104,38 @@ export interface DuplicateMediaMatch {
   mediaId: string;
   /** Media.id on the older duplicate report. */
   duplicateMediaId: string;
-  /** Detect method, e.g. EXACT_HASH_MATCH, HIGH_IMAGE_SIMILARITY. */
-  reason: string;
 }
 
-/**
- * Result of SHA-256 / pHash duplicate verification for a report.
- * `null` on the parent report until ai-service writes back after REPORT_SUBMITTED.
- * No hit: `duplicateReportId` and `reason` are null and `matches` is empty.
- */
-export interface DuplicateVerification {
-  /** Older report id that matched; null when unique or not yet checked is represented via parent null. */
-  duplicateReportId: string | null;
-  /** Final verdict after verification, e.g. DUPLICATE_IMAGE, SAME_PLACE. */
-  reason: string | null;
-  /** Media pairs that caused the match on the winning duplicate report. */
+/** One older report and the media pairs that matched it. Stored JSON only. */
+export interface DuplicateVerificationGroup {
+  duplicateReportId: string;
   matches: DuplicateMediaMatch[];
+}
+
+/** Current-report image shown in a duplicate match. Not stored. */
+export interface DuplicateNewMedia {
+  mediaId: string;
+  url: string | null;
+}
+
+/** Older-report image shown in a duplicate match. Not stored. */
+export interface DuplicateOldMedia {
+  duplicateMediaId: string;
+  duplicateUrl: string | null;
+}
+
+export interface DuplicateVerificationMatchView {
+  newMedia: DuplicateNewMedia;
+  duplicateMedia: DuplicateOldMedia;
+}
+
+/** Group plus report/media summary filled when a report is loaded. */
+export interface DuplicateVerificationGroupView {
+  duplicateReportId: string;
+  title: string | null;
+  detailAddress: string | null;
+  status: number | null;
+  matches: DuplicateVerificationMatchView[];
 }
 
 // Response DTOs
@@ -151,10 +167,11 @@ export interface ReportResponse {
   /** LLM recommendation after image/object analysis (nullable until analysis completes). */
   aiRecommendation?: string | null;
   /**
-   * Duplicate verification (SHA-256 / pHash). Null until the AI worker writes back.
-   * After a check with no hit: duplicateReportId and reason are null; matches is empty.
+   * Duplicate verification grouped by older report. Null until the AI worker writes back.
+   * After a check with no hit: an empty array. Title, address, status, and media URLs
+   * are filled when the report is loaded; they are not stored.
    */
-  duplicateVerification: DuplicateVerification | null;
+  duplicateVerification: DuplicateVerificationGroupView[] | null;
   createdAt: Date;
   updatedAt: Date;
   distance?: number; // Distance in meters (when searching with location)

@@ -6,7 +6,7 @@ import hashlib
 import io
 import logging
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 import imagehash
@@ -31,6 +31,10 @@ class ComputedMediaHashes:
     url: str
     sha256: Optional[str] = None
     phash: Optional[str] = None
+    # Kept so ORB can run without a second download. Not persisted.
+    image_bytes: Optional[bytes] = None
+    # Populated by extract_orb after a successful download. Not a DB column.
+    orb: Optional[Any] = None
 
 
 def hamming_distance_hex(a: str, b: str) -> int:
@@ -108,8 +112,17 @@ def compute_hashes_for_media(item: ReportSubmittedMedia) -> ComputedMediaHashes:
     buffer = download_image_bytes(item.url)
     if not buffer:
         return result
+    result.image_bytes = buffer
     result.sha256 = compute_sha256(buffer)
     result.phash = compute_phash_hex(buffer)
+    try:
+        from app.verification.duplicate.orb import extract_orb
+
+        features = extract_orb(buffer)
+        features.media_id = item.media_id
+        result.orb = features if features.keypoint_count else None
+    except Exception as err:  # noqa: BLE001 — hash cascade must still run
+        logger.warning("ORB extract failed media_id=%s err=%s", item.media_id, err)
     return result
 
 

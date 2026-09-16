@@ -9,6 +9,10 @@ from app.repositories.media_content_hash import (
     delete_hashes_by_media_ids_sync,
     upsert_computed_hashes_sync,
 )
+from app.repositories.media_orb_feature import (
+    delete_orb_features_by_media_ids_sync,
+    upsert_orb_features_sync,
+)
 from app.clients.incident_internal import patch_duplicate_verification_sync
 from app.verification.contracts import ReportSubmittedPayload
 from app.verification.duplicate import CONTEXT_MEDIA_HASHES
@@ -37,6 +41,7 @@ def handle_report_submitted(envelope: BackgroundJobEnvelope) -> None:
     if duplicate_media_ids:
         try:
             delete_hashes_by_media_ids_sync(list(duplicate_media_ids))
+            delete_orb_features_by_media_ids_sync(list(duplicate_media_ids))
         except Exception:  # noqa: BLE001
             logger.exception(
                 "Failed to delete duplicate media content hashes report_id=%s media_ids=%s",
@@ -59,6 +64,20 @@ def handle_report_submitted(envelope: BackgroundJobEnvelope) -> None:
         except Exception:  # noqa: BLE001
             logger.exception(
                 "Failed to upsert media content hashes report_id=%s",
+                payload.report_id,
+            )
+            raise
+
+    if records_to_upsert:
+        try:
+            upsert_orb_features_sync(
+                report_id=payload.report_id,
+                user_id=payload.user_id,
+                records=records_to_upsert,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "Failed to upsert ORB features report_id=%s",
                 payload.report_id,
             )
             raise

@@ -30,6 +30,7 @@ class ReasonCode(str, Enum):
     # Per-match detect methods (DuplicateMediaMatch.reason)
     HIGH_IMAGE_SIMILARITY = "HIGH_IMAGE_SIMILARITY"
     EXACT_HASH_MATCH = "EXACT_HASH_MATCH"
+    FEATURE_MATCH = "FEATURE_MATCH"
 
     # Reserved / authenticity (not produced by duplicate cascade yet)
     NEARBY_EXISTING_REPORT = "NEARBY_EXISTING_REPORT"
@@ -165,39 +166,67 @@ class DuplicateMediaMatch:
     media_id: str  # Media.id vừa gửi
     duplicate_media_id: str  # Media.id cũ bị trùng
     reason: str  # Detect method, e.g. EXACT_HASH_MATCH / HIGH_IMAGE_SIMILARITY
+    duplicate_report_id: str = ""  # Older report that owns duplicate_media_id
 
     def to_dict(self) -> dict[str, str]:
         return {
             "media_id": self.media_id,
             "duplicate_media_id": self.duplicate_media_id,
+            "duplicate_report_id": self.duplicate_report_id,
             "reason": self.reason,
         }
 
 
 @dataclass
 class DuplicateReportResult:
-    """Report-level duplicate result after SHA-256 / pHash."""
+    """Report-level duplicate result after SHA-256 / pHash / ORB."""
 
     report_id: str
-    duplicate_report_id: Optional[str] = None
+    duplicate_report_ids: list[str] = field(default_factory=list)
     reason: Optional[str] = None  # Final verdict, e.g. DUPLICATE_IMAGE / SAME_PLACE
     matches: list[DuplicateMediaMatch] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "report_id": self.report_id,
-            "duplicate_report_id": self.duplicate_report_id,
+            "duplicate_report_ids": list(self.duplicate_report_ids),
             "reason": self.reason,
             "matches": [m.to_dict() for m in self.matches],
         }
 
-    def to_incident_payload(self) -> dict[str, Any]:
-        """Body for incident PATCH — omit report_id (path param)."""
-        return {
-            "duplicate_report_id": self.duplicate_report_id,
-            "reason": self.reason,
-            "matches": [m.to_dict() for m in self.matches],
-        }
+    def to_incident_payload(self) -> list[dict[str, Any]]:
+        """Body for incident PATCH: groups of {duplicate_report_id, matches}."""
+        order: list[str] = []
+        grouped: dict[str, list[dict[str, str]]] = {}
+        fallback = (
+            self.duplicate_report_ids[0]
+            if len(self.duplicate_report_ids) == 1
+            else ""
+        )
+        for match in self.matches:
+            report_id = match.duplicate_report_id or fallback
+            if not report_id:
+                continue
+            if report_id not in grouped:
+                grouped[report_id] = []
+                order.append(report_id)
+            grouped[report_id].append(
+                {
+                    "media_id": match.media_id,
+                    "duplicate_media_id": match.duplicate_media_id,
+                }
+            )
+        for report_id in self.duplicate_report_ids:
+            if report_id not in grouped:
+                grouped[report_id] = []
+                order.append(report_id)
+        return [
+            {
+                "duplicate_report_id": report_id,
+                "matches": grouped[report_id],
+            }
+            for report_id in order
+        ]
 
 
 @dataclass

@@ -57,8 +57,8 @@ def test_duplicate_cascade_empty_when_no_hashes() -> None:
     with patch(
         "app.verification.duplicate.prepare_media_hashes", return_value=[]
     ), patch(
-        "app.verification.duplicate.hash_repo.find_sha256_match_sync",
-        return_value=None,
+        "app.verification.duplicate.hash_repo.find_sha256_matches_sync",
+        return_value=[],
     ), patch(
         "app.verification.duplicate.hash_repo.list_phash_corpus_sync",
         return_value=[],
@@ -70,7 +70,7 @@ def test_duplicate_cascade_empty_when_no_hashes() -> None:
         result = run_duplicate_cascade(payload, {})
         assert isinstance(result, DuplicateReportResult)
         assert result.report_id == "r1"
-        assert result.duplicate_report_id is None
+        assert result.duplicate_report_ids == []
         assert result.reason is None
         assert result.matches == []
         ph_mock.assert_not_called()
@@ -106,12 +106,12 @@ def test_pipeline_returns_duplicate_result_skips_authenticity_risk() -> None:
         )
     assert isinstance(result, DuplicateReportResult)
     assert result.report_id == "r1"
-    assert result.duplicate_report_id is None
+    assert result.duplicate_report_ids == []
     assert result.reason is None
     assert result.matches == []
     assert result.to_dict() == {
         "report_id": "r1",
-        "duplicate_report_id": None,
+        "duplicate_report_ids": [],
         "reason": None,
         "matches": [],
     }
@@ -136,8 +136,8 @@ def test_pipeline_preserves_caller_empty_context() -> None:
     with patch(
         "app.verification.duplicate.prepare_media_hashes", return_value=prepared
     ), patch(
-        "app.verification.duplicate.hash_repo.find_sha256_match_sync",
-        return_value=None,
+        "app.verification.duplicate.hash_repo.find_sha256_matches_sync",
+        return_value=[],
     ), patch(
         "app.verification.duplicate.hash_repo.list_phash_corpus_sync",
         return_value=[],
@@ -164,8 +164,8 @@ def test_handle_report_submitted_upserts_hashes_from_context() -> None:
     with patch(
         "app.verification.duplicate.prepare_media_hashes", return_value=prepared
     ), patch(
-        "app.verification.duplicate.hash_repo.find_sha256_match_sync",
-        return_value=None,
+        "app.verification.duplicate.hash_repo.find_sha256_matches_sync",
+        return_value=[],
     ), patch(
         "app.verification.duplicate.hash_repo.list_phash_corpus_sync",
         return_value=[],
@@ -212,12 +212,8 @@ def test_handle_report_submitted() -> None:
         patch_mock.assert_called_once()
         report_id, payload = patch_mock.call_args[0]
         assert report_id == "r1"
-        assert "report_id" not in payload
-        assert payload == {
-            "duplicate_report_id": None,
-            "reason": None,
-            "matches": [],
-        }
+        assert isinstance(payload, list)
+        assert payload == []
 
 
 def test_handle_report_submitted_with_partial_duplicate() -> None:
@@ -237,7 +233,7 @@ def test_handle_report_submitted_with_partial_duplicate() -> None:
     )
     dup_result = DuplicateReportResult(
         report_id="r1",
-        duplicate_report_id="r0",
+        duplicate_report_ids=["r0"],
         reason="DUPLICATE_IMAGE",
         matches=[
             DuplicateMediaMatch(
@@ -259,6 +255,8 @@ def test_handle_report_submitted_with_partial_duplicate() -> None:
     ), patch(
         "app.queue.handlers.report_submitted.delete_hashes_by_media_ids_sync"
     ) as delete_mock, patch(
+        "app.queue.handlers.report_submitted.delete_orb_features_by_media_ids_sync"
+    ) as delete_orb_mock, patch(
         "app.queue.handlers.report_submitted.upsert_computed_hashes_sync"
     ) as upsert_mock, patch(
         "app.queue.handlers.report_submitted.patch_duplicate_verification_sync"
@@ -275,6 +273,7 @@ def test_handle_report_submitted_with_partial_duplicate() -> None:
         handle_report_submitted(envelope)
 
         delete_mock.assert_called_once_with(["m1"])
+        delete_orb_mock.assert_called_once_with(["m1"])
         upsert_mock.assert_called_once()
         kwargs = upsert_mock.call_args.kwargs
         assert kwargs["report_id"] == "r1"
@@ -293,7 +292,7 @@ def test_handle_report_submitted_all_duplicate_skips_upsert() -> None:
     )
     dup_result = DuplicateReportResult(
         report_id="r1",
-        duplicate_report_id="r0",
+        duplicate_report_ids=["r0"],
         reason="DUPLICATE_IMAGE",
         matches=[
             DuplicateMediaMatch(
@@ -315,6 +314,8 @@ def test_handle_report_submitted_all_duplicate_skips_upsert() -> None:
     ), patch(
         "app.queue.handlers.report_submitted.delete_hashes_by_media_ids_sync"
     ) as delete_mock, patch(
+        "app.queue.handlers.report_submitted.delete_orb_features_by_media_ids_sync"
+    ) as delete_orb_mock, patch(
         "app.queue.handlers.report_submitted.upsert_computed_hashes_sync"
     ) as upsert_mock, patch(
         "app.queue.handlers.report_submitted.patch_duplicate_verification_sync"
@@ -331,6 +332,7 @@ def test_handle_report_submitted_all_duplicate_skips_upsert() -> None:
         handle_report_submitted(envelope)
 
         delete_mock.assert_called_once_with(["m1"])
+        delete_orb_mock.assert_called_once_with(["m1"])
         upsert_mock.assert_not_called()
         patch_mock.assert_called_once()
 

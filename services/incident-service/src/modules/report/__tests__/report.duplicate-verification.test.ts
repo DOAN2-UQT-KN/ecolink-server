@@ -86,11 +86,7 @@ describe("saveDuplicateVerification", () => {
   it("throws REPORT_NOT_FOUND when the report is missing", async () => {
     findByIdMock.mockResolvedValue(null);
     await expect(
-      reportService.saveDuplicateVerification("r-missing", {
-        duplicateReportId: null,
-        reason: null,
-        matches: [],
-      }),
+      reportService.saveDuplicateVerification("r-missing", []),
     ).rejects.toMatchObject({
       statusResponse: HTTP_STATUS.REPORT_NOT_FOUND,
     });
@@ -111,17 +107,12 @@ describe("saveDuplicateVerification", () => {
       status: 2,
       rejectReason: "DUPLICATE_IMAGE",
     });
-    const verification = {
-      duplicateReportId: "r-old",
-      reason: "DUPLICATE_IMAGE",
-      matches: [
-        {
-          mediaId: "m1",
-          duplicateMediaId: "m-old",
-          reason: "EXACT_HASH_MATCH",
-        },
-      ],
-    };
+    const verification = [
+      {
+        duplicateReportId: "r-old",
+        matches: [{ mediaId: "m1", duplicateMediaId: "m-old" }],
+      },
+    ];
     await reportService.saveDuplicateVerification("r-new", verification);
     expect(updateMock).toHaveBeenCalledWith("r-new", {
       duplicateVerification: verification,
@@ -136,7 +127,7 @@ describe("saveDuplicateVerification", () => {
     });
   });
 
-  it("falls back to DUPLICATE_IMAGE if reason is empty on hit", async () => {
+  it("bans with DUPLICATE_IMAGE when the group array is non-empty", async () => {
     findByIdMock.mockResolvedValue({
       id: "r-new",
       userId: "u-owner",
@@ -148,11 +139,10 @@ describe("saveDuplicateVerification", () => {
       status: 2,
       rejectReason: "DUPLICATE_IMAGE",
     });
-    const verification = {
-      duplicateReportId: "r-old",
-      reason: null,
-      matches: [],
-    };
+    const verification = [
+      { duplicateReportId: "r-a", matches: [] },
+      { duplicateReportId: "r-b", matches: [] },
+    ];
     await reportService.saveDuplicateVerification("r-new", verification);
     expect(updateMock).toHaveBeenCalledWith("r-new", {
       duplicateVerification: verification,
@@ -173,11 +163,7 @@ describe("saveDuplicateVerification", () => {
       userId: "u-owner",
       status: 12,
     });
-    const verification = {
-      duplicateReportId: null,
-      reason: null,
-      matches: [],
-    };
+    const verification: never[] = [];
     await reportService.saveDuplicateVerification("r-new", verification);
     expect(updateMock).toHaveBeenCalledWith("r-new", {
       duplicateVerification: verification,

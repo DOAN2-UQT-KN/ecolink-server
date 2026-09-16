@@ -1,5 +1,5 @@
 import { reportRepository, ReportWithMediaFiles } from "./report.repository";
-import { toReportResponse, toDuplicateVerificationJson } from "./report.entity";
+import { toReportResponse, toDuplicateVerificationJson, embedDuplicateVerification, omitInactiveDuplicateGroups } from "./report.entity";
 import {
   CreateReportRequest,
   UpdateReportRequest,
@@ -12,7 +12,7 @@ import {
   PaginatedReportsResponse,
   ReportBackgroundJobsStatusResponse,
   ReportMediaFileByIdResponse,
-  DuplicateVerification,
+  DuplicateVerificationGroup,
 } from "./report.dto";
 import { reportMediaRepository } from "./report_media.repository";
 import {
@@ -397,22 +397,21 @@ export class ReportService {
 
   async saveDuplicateVerification(
     reportId: string,
-    verification: DuplicateVerification,
+    verification: DuplicateVerificationGroup[],
   ): Promise<void> {
     const existing = await reportRepository.findById(reportId);
     if (!existing) {
       throw new HttpError(HTTP_STATUS.REPORT_NOT_FOUND);
     }
 
-    const isDuplicate = Boolean(verification.duplicateReportId);
+    const isDuplicate = verification.length > 0;
     const updateData: Prisma.ReportUpdateInput = {
       duplicateVerification: toDuplicateVerificationJson(verification),
     };
 
     if (isDuplicate) {
-      const banReason = verification.reason?.trim() || "DUPLICATE_IMAGE";
       updateData.status = REPORT_STATUS_BANNED;
-      updateData.rejectReason = banReason;
+      updateData.rejectReason = "DUPLICATE_IMAGE";
     }
 
     const updated = await reportRepository.update(reportId, updateData);
@@ -424,6 +423,28 @@ export class ReportService {
         updateData.rejectReason as string,
       );
     }
+  }
+
+  /**
+   * Report ids the duplicate cascade must ignore: banned (`_STATUS_INACTIVE`)
+   * or soft-deleted. Missing ids are not included.
+   */
+  async findInactiveReportIds(reportIds: string[]): Promise<string[]> {
+    const ids = [...new Set(reportIds.filter((id) => id))];
+    if (ids.length === 0) {
+      return [];
+    }
+    const rows = await prisma.report.findMany({
+      where: {
+        id: { in: ids },
+        OR: [
+          { status: REPORT_STATUS_BANNED },
+          { deletedAt: { not: null } },
+        ],
+      },
+      select: { id: true },
+    });
+    return rows.map((row) => row.id);
   }
 
   async getReportBackgroundJobsStatus(
@@ -662,7 +683,81 @@ export class ReportService {
     const details = reports.map((r) =>
       this.toReportDetailFromLoaded(r, mediaMap, aiAnalysisUrlMap),
     );
-    return this.attachHandledBy(reports, details);
+    const withHandledBy = await this.attachHandledBy(reports, details);
+    return this.attachDuplicateSummaries(withHandledBy, mediaMap);
+  }
+
+  private async attachDuplicateSummaries(
+    details: ReportDetailResponse[],
+    mediaMap: Map<string, { url: string }>,
+  ): Promise<ReportDetailResponse[]> {
+    const reportIds = new Set<string>();
+    const extraMediaIds = new Set<string>();
+    for (const detail of details) {
+      for (const group of detail.duplicateVerification ?? []) {
+        reportIds.add(group.duplicateReportId);
+        for (const match of group.matches) {
+          if (!mediaMap.has(match.newMedia.mediaId)) {
+            extraMediaIds.add(match.newMedia.mediaId);
+          }
+          if (!mediaMap.has(match.duplicateMedia.duplicateMediaId)) {
+            extraMediaIds.add(match.duplicateMedia.duplicateMediaId);
+          }
+        }
+      }
+    }
+
+    const urlByMediaId = new Map<string, string>();
+    for (const [id, media] of mediaMap) {
+      urlByMediaId.set(id, media.url);
+    }
+
+    const [reportRows, mediaRows] = await Promise.all([
+      reportIds.size === 0
+        ? Promise.resolve([])
+        : prisma.report.findMany({
+            where: { id: { in: [...reportIds] }, deletedAt: null },
+            select: {
+              id: true,
+              title: true,
+              titleVi: true,
+              detailAddress: true,
+              status: true,
+            },
+          }),
+      extraMediaIds.size === 0
+        ? Promise.resolve([])
+        : prisma.media.findMany({
+            where: { id: { in: [...extraMediaIds] }, deletedAt: null },
+            select: { id: true, url: true },
+          }),
+    ]);
+
+    for (const media of mediaRows) {
+      urlByMediaId.set(media.id, media.url);
+    }
+    const reportsById = new Map(reportRows.map((row) => [row.id, row]));
+
+    return details.map((detail) => ({
+      ...detail,
+      duplicateVerification:
+        detail.duplicateVerification == null
+          ? null
+          : embedDuplicateVerification(
+              omitInactiveDuplicateGroups(
+                detail.duplicateVerification.map((group) => ({
+                  duplicateReportId: group.duplicateReportId,
+                  matches: group.matches.map((match) => ({
+                    mediaId: match.newMedia.mediaId,
+                    duplicateMediaId: match.duplicateMedia.duplicateMediaId,
+                  })),
+                })),
+                reportsById,
+              ),
+              reportsById,
+              urlByMediaId,
+            ),
+    }));
   }
 
   private async getAiAnalysisUrlMap(

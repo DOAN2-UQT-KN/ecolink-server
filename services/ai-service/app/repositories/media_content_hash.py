@@ -34,13 +34,13 @@ def _parse_uuid(value: str) -> Optional[uuid.UUID]:
         return None
 
 
-async def _find_sha256_match(
+async def _find_sha256_matches(
     sha256: str, *, user_id: str, exclude_report_id: str
-) -> Optional[CorpusHashHit]:
+) -> list[CorpusHashHit]:
     exclude = _parse_uuid(exclude_report_id)
     owner = _parse_uuid(user_id)
     if owner is None:
-        return None
+        return []
     async with SessionLocal() as session:
         stmt = select(AiMediaContentHash).where(
             AiMediaContentHash.algorithm == ALG_SHA256,
@@ -49,18 +49,19 @@ async def _find_sha256_match(
         )
         if exclude is not None:
             stmt = stmt.where(AiMediaContentHash.report_id != exclude)
-        stmt = stmt.order_by(AiMediaContentHash.created_at.asc()).limit(1)
+        stmt = stmt.order_by(AiMediaContentHash.created_at.asc())
         result = await session.execute(stmt)
-        row = result.scalar_one_or_none()
-        if row is None:
-            return None
-        return CorpusHashHit(
-            report_id=str(row.report_id),
-            user_id=str(row.user_id) if row.user_id else None,
-            media_id=str(row.media_id),
-            hash=row.hash,
-            algorithm=row.algorithm,
-        )
+        rows = list(result.scalars().all())
+        return [
+            CorpusHashHit(
+                report_id=str(row.report_id),
+                user_id=str(row.user_id) if row.user_id else None,
+                media_id=str(row.media_id),
+                hash=row.hash,
+                algorithm=row.algorithm,
+            )
+            for row in rows
+        ]
 
 
 async def _list_phash_corpus(
@@ -172,11 +173,11 @@ async def _delete_hashes_by_media_ids(media_ids: Sequence[str]) -> int:
         return deleted_count
 
 
-def find_sha256_match_sync(
+def find_sha256_matches_sync(
     sha256: str, *, user_id: str, exclude_report_id: str
-) -> Optional[CorpusHashHit]:
+) -> list[CorpusHashHit]:
     return run_coro(
-        _find_sha256_match(
+        _find_sha256_matches(
             sha256, user_id=user_id, exclude_report_id=exclude_report_id
         )
     )

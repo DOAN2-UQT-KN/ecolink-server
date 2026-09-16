@@ -10,51 +10,72 @@ import {
 import { requireInternalAiApiKey } from "../middleware/internal-ai-auth.middleware";
 import { reportService } from "../modules/report/report.service";
 import { toDuplicateVerification } from "../modules/report/report.entity";
-import type { DuplicateVerification } from "../modules/report/report.dto";
+import type { DuplicateVerificationGroup } from "../modules/report/report.dto";
 
 const router = Router();
 
 router.use(requireInternalAiApiKey);
 
-function parseDuplicateVerificationBody(
-  body: Record<string, unknown>,
-): DuplicateVerification {
-  const parsed = toDuplicateVerification(body as Prisma.JsonValue);
-  if (parsed != null) {
-    return parsed;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === "object" && !Array.isArray(value);
+}
+
+function stringField(
+  obj: Record<string, unknown>,
+  camel: string,
+  snake: string,
+): string | null {
+  const raw = obj[camel] ?? obj[snake];
+  return typeof raw === "string" && raw ? raw : null;
+}
+
+/**
+ * New workers send a JSON array. A process that has not reloaded still sends
+ * the legacy object; `toDuplicateVerification` groups that on write.
+ */
+function validateDuplicateVerificationBody(body: unknown): string | null {
+  if (isRecord(body)) {
+    return null;
   }
-  return { duplicateReportId: null, reason: null, matches: [] };
+  if (!Array.isArray(body)) {
+    return "duplicate_verification must be an array";
+  }
+  for (const item of body) {
+    if (!isRecord(item) || !stringField(item, "duplicateReportId", "duplicate_report_id")) {
+      return "duplicate_report_id is required";
+    }
+    if (!Array.isArray(item.matches)) {
+      return "matches must be an array";
+    }
+    for (const match of item.matches) {
+      if (!isRecord(match) || !stringField(match, "mediaId", "media_id")) {
+        return "matches.media_id is required";
+      }
+      if (!stringField(match, "duplicateMediaId", "duplicate_media_id")) {
+        return "matches.duplicate_media_id is required";
+      }
+    }
+  }
+  return null;
+}
+
+function parseDuplicateVerificationBody(
+  body: unknown,
+): DuplicateVerificationGroup[] {
+  const parsed = toDuplicateVerification(body as Prisma.JsonValue);
+  return parsed ?? [];
 }
 
 router.patch(
   "/reports/:id/duplicate-verification",
   param("id").isUUID().withMessage("Report ID must be a valid UUID"),
-  body("duplicateReportId")
-    .optional({ nullable: true })
-    .custom((value) => value === null || typeof value === "string")
-    .withMessage("duplicate_report_id must be a string or null"),
-  body("reason")
-    .optional({ nullable: true })
-    .custom((value) => value === null || typeof value === "string")
-    .withMessage("reason must be a string or null"),
-  // Legacy AI payloads sent detect codes as `reasons: string[]`.
-  body("reasons").optional().isArray().withMessage("reasons must be an array"),
-  body("reasons.*").optional().isString(),
-  body("matches").optional().isArray().withMessage("matches must be an array"),
-  body("matches.*.mediaId")
-    .optional()
-    .isString()
-    .notEmpty()
-    .withMessage("matches.media_id is required"),
-  body("matches.*.duplicateMediaId")
-    .optional()
-    .isString()
-    .notEmpty()
-    .withMessage("matches.duplicate_media_id is required"),
-  body("matches.*.reason")
-    .optional({ nullable: true })
-    .isString()
-    .withMessage("matches.reason must be a string"),
+  body().custom((value) => {
+    const message = validateDuplicateVerificationBody(value);
+    if (message) {
+      throw new Error(message);
+    }
+    return true;
+  }),
 
   async (req, res): Promise<void> => {
     const errors = validationResult(req);
@@ -73,7 +94,7 @@ router.patch(
       }
       await reportService.saveDuplicateVerification(
         reportId,
-        parseDuplicateVerificationBody(req.body as Record<string, unknown>),
+        parseDuplicateVerificationBody(req.body),
       );
       sendSuccess(res, HTTP_STATUS.OK);
     } catch (error) {
@@ -81,6 +102,38 @@ router.patch(
         return;
       }
       console.error("Save duplicate verification error:", error);
+      sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+    }
+  },
+);
+
+router.post(
+  "/reports/inactive-ids",
+  body("reportIds")
+    .isArray()
+    .withMessage("report_ids must be an array"),
+  body("reportIds.*")
+    .isUUID()
+    .withMessage("report_ids items must be UUIDs"),
+
+  async (req, res): Promise<void> => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+        errors: errors.array(),
+      });
+      return;
+    }
+
+    try {
+      const reportIds = (req.body as { reportIds?: string[] }).reportIds ?? [];
+      const inactiveIds = await reportService.findInactiveReportIds(reportIds);
+      sendSuccess(res, HTTP_STATUS.OK, { reportIds: inactiveIds });
+    } catch (error) {
+      if (sendHttpErrorResponse(res, error)) {
+        return;
+      }
+      console.error("Inactive report ids lookup error:", error);
       sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
     }
   },

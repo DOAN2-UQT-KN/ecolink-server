@@ -16,7 +16,7 @@ logger = logging.getLogger("ai-service.verification")
 
 class VerificationPipeline:
     """
-    Duplicate (SHA-256 → pHash) then return.
+    Duplicate (SHA-256 → pHash → ORB) then return.
 
     Authenticity + risk engines — implement later.
     """

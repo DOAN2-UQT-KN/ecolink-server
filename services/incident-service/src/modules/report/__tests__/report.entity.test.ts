@@ -1,5 +1,7 @@
 import type { Report } from "@prisma/client";
 import {
+  embedDuplicateVerification,
+  omitInactiveDuplicateGroups,
   toDuplicateVerification,
   toDuplicateVerificationJson,
   toReportResponse,
@@ -42,7 +44,27 @@ describe("toDuplicateVerification", () => {
     expect(toDuplicateVerification(undefined)).toBeNull();
   });
 
-  it("maps a hit (camelCase)", () => {
+  it("returns an empty array for a unique check", () => {
+    expect(toDuplicateVerification([])).toEqual([]);
+  });
+
+  it("maps a stored group array", () => {
+    expect(
+      toDuplicateVerification([
+        {
+          duplicateReportId: "r-a",
+          matches: [{ mediaId: "m-new", duplicateMediaId: "m-old" }],
+        },
+      ]),
+    ).toEqual([
+      {
+        duplicateReportId: "r-a",
+        matches: [{ mediaId: "m-new", duplicateMediaId: "m-old" }],
+      },
+    ]);
+  });
+
+  it("groups a legacy singular-id object and drops reason", () => {
     expect(
       toDuplicateVerification({
         duplicateReportId: "r-old",
@@ -55,70 +77,53 @@ describe("toDuplicateVerification", () => {
           },
         ],
       }),
-    ).toEqual({
-      duplicateReportId: "r-old",
-      reason: "DUPLICATE_IMAGE",
-      matches: [
-        {
-          mediaId: "m1",
-          duplicateMediaId: "m-old",
-          reason: "EXACT_HASH_MATCH",
-        },
-      ],
-    });
+    ).toEqual([
+      {
+        duplicateReportId: "r-old",
+        matches: [{ mediaId: "m1", duplicateMediaId: "m-old" }],
+      },
+    ]);
   });
 
-  it("maps a miss (snake_case)", () => {
+  it("groups a legacy id list by match report id", () => {
+    expect(
+      toDuplicateVerification({
+        duplicate_report_ids: ["r-a", "r-b"],
+        reason: "DUPLICATE_IMAGE",
+        matches: [
+          {
+            media_id: "m-new-1",
+            duplicate_media_id: "m-old-a",
+            duplicate_report_id: "r-a",
+            reason: "EXACT_HASH_MATCH",
+          },
+          {
+            media_id: "m-new-2",
+            duplicate_media_id: "m-old-b",
+            duplicate_report_id: "r-b",
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        duplicateReportId: "r-a",
+        matches: [{ mediaId: "m-new-1", duplicateMediaId: "m-old-a" }],
+      },
+      {
+        duplicateReportId: "r-b",
+        matches: [{ mediaId: "m-new-2", duplicateMediaId: "m-old-b" }],
+      },
+    ]);
+  });
+
+  it("maps a legacy unique object to an empty array", () => {
     expect(
       toDuplicateVerification({
         duplicate_report_id: null,
         reason: null,
         matches: [],
       }),
-    ).toEqual({
-      duplicateReportId: null,
-      reason: null,
-      matches: [],
-    });
-  });
-
-  it("maps legacy reasons[] detect codes to final DUPLICATE_IMAGE", () => {
-    expect(
-      toDuplicateVerification({
-        duplicateReportId: "r-old",
-        reasons: ["EXACT_HASH_MATCH"],
-        matches: [{ mediaId: "m1", duplicateMediaId: "m-old" }],
-      }),
-    ).toEqual({
-      duplicateReportId: "r-old",
-      reason: "DUPLICATE_IMAGE",
-      matches: [{ mediaId: "m1", duplicateMediaId: "m-old", reason: "" }],
-    });
-  });
-
-  it("derives final reason from match detect reasons when top-level reason is missing", () => {
-    expect(
-      toDuplicateVerification({
-        duplicate_report_id: "r-old",
-        matches: [
-          {
-            media_id: "m1",
-            duplicate_media_id: "m-old",
-            reason: "HIGH_IMAGE_SIMILARITY",
-          },
-        ],
-      }),
-    ).toEqual({
-      duplicateReportId: "r-old",
-      reason: "DUPLICATE_IMAGE",
-      matches: [
-        {
-          mediaId: "m1",
-          duplicateMediaId: "m-old",
-          reason: "HIGH_IMAGE_SIMILARITY",
-        },
-      ],
-    });
+    ).toEqual([]);
   });
 });
 
@@ -129,30 +134,134 @@ describe("toReportResponse", () => {
   });
 
   it("exposes hit after write-back", () => {
-    const stored = toDuplicateVerificationJson({
-      duplicateReportId: "r-old",
-      reason: "DUPLICATE_IMAGE",
-      matches: [
-        {
-          mediaId: "m1",
-          duplicateMediaId: "m-old",
-          reason: "HIGH_IMAGE_SIMILARITY",
-        },
-      ],
-    });
+    const stored = toDuplicateVerificationJson([
+      {
+        duplicateReportId: "r-old",
+        matches: [{ mediaId: "m1", duplicateMediaId: "m-old" }],
+      },
+    ]);
     const response = toReportResponse(
       baseReport({ duplicateVerification: stored as Report["duplicateVerification"] }),
     );
-    expect(response.duplicateVerification).toEqual({
-      duplicateReportId: "r-old",
-      reason: "DUPLICATE_IMAGE",
-      matches: [
-        {
-          mediaId: "m1",
-          duplicateMediaId: "m-old",
-          reason: "HIGH_IMAGE_SIMILARITY",
-        },
-      ],
-    });
+    expect(response.duplicateVerification).toEqual([
+      {
+        duplicateReportId: "r-old",
+        title: null,
+        detailAddress: null,
+        status: null,
+        matches: [
+          {
+            newMedia: { mediaId: "m1", url: null },
+            duplicateMedia: { duplicateMediaId: "m-old", duplicateUrl: null },
+          },
+        ],
+      },
+    ]);
+  });
+});
+
+describe("omitInactiveDuplicateGroups", () => {
+  const groups = [
+    {
+      duplicateReportId: "r-live",
+      matches: [{ mediaId: "m-new", duplicateMediaId: "m-live" }],
+    },
+    {
+      duplicateReportId: "r-banned",
+      matches: [{ mediaId: "m-new", duplicateMediaId: "m-banned" }],
+    },
+    {
+      duplicateReportId: "r-missing",
+      matches: [{ mediaId: "m-new", duplicateMediaId: "m-gone" }],
+    },
+  ];
+
+  it("keeps a live report and drops banned or missing reports", () => {
+    expect(
+      omitInactiveDuplicateGroups(
+        groups,
+        new Map([
+          ["r-live", { status: 12 }],
+          ["r-banned", { status: 2 }],
+        ]),
+      ),
+    ).toEqual([groups[0]]);
+  });
+});
+
+describe("embedDuplicateVerification", () => {
+  it("attaches report summary and media urls without changing stored ids", () => {
+    expect(
+      embedDuplicateVerification(
+        [
+          {
+            duplicateReportId: "r-a",
+            matches: [{ mediaId: "m-new", duplicateMediaId: "m-old" }],
+          },
+        ],
+        new Map([
+          [
+            "r-a",
+            {
+              title: "fallback",
+              titleVi: "Older pile",
+              detailAddress: "12 Street",
+              status: 2,
+            },
+          ],
+        ]),
+        new Map([
+          ["m-new", "https://cdn.example/new.jpg"],
+          ["m-old", "https://cdn.example/old.jpg"],
+        ]),
+      ),
+    ).toEqual([
+      {
+        duplicateReportId: "r-a",
+        title: "Older pile",
+        detailAddress: "12 Street",
+        status: 2,
+        matches: [
+          {
+            newMedia: {
+              mediaId: "m-new",
+              url: "https://cdn.example/new.jpg",
+            },
+            duplicateMedia: {
+              duplicateMediaId: "m-old",
+              duplicateUrl: "https://cdn.example/old.jpg",
+            },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("returns null fields when the older report or media is missing", () => {
+    expect(
+      embedDuplicateVerification(
+        [
+          {
+            duplicateReportId: "missing",
+            matches: [{ mediaId: "m-new", duplicateMediaId: "gone" }],
+          },
+        ],
+        new Map(),
+        new Map([["m-new", "https://cdn.example/new.jpg"]]),
+      ),
+    ).toEqual([
+      {
+        duplicateReportId: "missing",
+        title: null,
+        detailAddress: null,
+        status: null,
+        matches: [
+          {
+            newMedia: { mediaId: "m-new", url: "https://cdn.example/new.jpg" },
+            duplicateMedia: { duplicateMediaId: "gone", duplicateUrl: null },
+          },
+        ],
+      },
+    ]);
   });
 });

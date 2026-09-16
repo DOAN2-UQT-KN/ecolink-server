@@ -39,8 +39,8 @@ flowchart LR
   PUB --> AISQS["SQS_AI_ANALYSIS_QUEUE"]
   AISQS --> AIH["handle_report_submitted"]
   AIH --> PIPE["VerificationPipeline"]
-  PIPE --> DUP["run_duplicate_cascade SHA256 then pHash"]
-  AIH --> DEL["delete_hashes_by_media_ids_sync (nếu có duplicate media)"]
-  AIH --> UPS["upsert_computed_hashes_sync (chỉ non-duplicate)"]
+  PIPE --> DUP["run_duplicate_cascade SHA256 then pHash then ORB"]
+  AIH --> DEL["delete hash and ORB rows (nếu có duplicate media)"]
+  AIH --> UPS["upsert hashes and ORB (chỉ non-duplicate)"]
   AIH --> PATCH["PATCH duplicate-verification"]
 ```
