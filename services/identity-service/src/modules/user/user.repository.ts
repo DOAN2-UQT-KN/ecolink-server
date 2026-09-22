@@ -46,6 +46,15 @@ export class UserRepository {
     });
   }
 
+  /** Lookup that makes org-account provisioning idempotent across relay retries. */
+  async findByProvisionedApplicationId(
+    applicationId: string,
+  ): Promise<UserEntity | null> {
+    return this.prisma.user.findFirst({
+      where: { provisionedFromApplicationId: applicationId, deletedAt: null },
+    });
+  }
+
   async findByEmail(email: string): Promise<UserEntity | null> {
     return this.prisma.user.findFirst({
       where: { email, deletedAt: null },

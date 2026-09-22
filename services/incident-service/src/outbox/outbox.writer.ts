@@ -3,7 +3,7 @@ import { GlobalStatus } from "../constants/status.enum";
 import type { OutboxEventType } from "./outbox.types";
 
 export interface OutboxEventInput {
-  aggregateType: "report" | "campaign" | "vote";
+  aggregateType: "report" | "campaign" | "vote" | "organization_application";
   aggregateId: string;
   eventType: OutboxEventType;
   payload: Prisma.InputJsonValue;

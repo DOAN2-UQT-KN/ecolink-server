@@ -168,6 +168,21 @@ app.use(
 );
 
 app.use(
+  "/api/v1/organization-applications",
+  proxy(INCIDENT_SERVICE_URL, {
+    proxyReqPathResolver: (req) => `/api/v1/organization-applications${req.url}`,
+  }),
+);
+
+app.use(
+  "/api/v1/admin/organization-applications",
+  proxy(INCIDENT_SERVICE_URL, {
+    proxyReqPathResolver: (req) =>
+      `/api/v1/admin/organization-applications${req.url}`,
+  }),
+);
+
+app.use(
   "/api/v1/admin/media",
   proxy(INCIDENT_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/admin/media${req.url}`,

@@ -1,5 +1,9 @@
-import { NotificationKind, NotificationType } from "@prisma/client";
+import { NotificationType } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
+import {
+  KINDS_ALLOWING_DIRECT_TO_EMAIL,
+  allowsDirectToEmail,
+} from "../../modules/notification/direct-email-kinds";
 import { fetchUserEmailById } from "../../lib/identity-user.client";
 import { notificationTemplateEngine } from "../../modules/templates/notification-template.engine";
 import type {
@@ -23,9 +27,11 @@ class EmailNotificationChannel implements NotificationChannelStrategy {
     const directTo = normalizedPayload.toEmail?.trim();
     let toEmail: string;
     if (directTo) {
-      if (job.kind !== NotificationKind.ORGANIZATION_CONTACT_VERIFY) {
+      if (!allowsDirectToEmail(job.kind)) {
         throw new Error(
-          "payload.toEmail is only supported for ORGANIZATION_CONTACT_VERIFY",
+          `payload.toEmail is not supported for ${job.kind}; it is limited to ${[
+            ...KINDS_ALLOWING_DIRECT_TO_EMAIL,
+          ].join(", ")}`,
         );
       }
       toEmail = directTo;

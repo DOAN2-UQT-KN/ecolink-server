@@ -103,6 +103,9 @@ export class OrganizationService {
   private async withOwner(
     core: OrganizationCore,
   ): Promise<OrganizationResponse> {
+    if (!core.ownerId) {
+      return { ...core, owner: null };
+    }
     const map = await fetchOrganizationOwnersByUserIds([core.ownerId]);
     return {
       ...core,
@@ -115,11 +118,13 @@ export class OrganizationService {
     cores: OrganizationCore[],
   ): Promise<OrganizationResponse[]> {
     const map = await fetchOrganizationOwnersByUserIds(
-      cores.map((c) => c.ownerId),
+      cores.map((c) => c.ownerId).filter((id): id is string => Boolean(id)),
     );
     return cores.map((c) => ({
       ...c,
-      owner: getUserProfile(map, c.ownerId) ?? this.ownerFallback(c.ownerId),
+      owner: c.ownerId
+        ? (getUserProfile(map, c.ownerId) ?? this.ownerFallback(c.ownerId))
+        : null,
     }));
   }
 
@@ -445,16 +450,21 @@ export class OrganizationService {
     outcome: "approved" | "banned",
     rejectReason?: string,
   ): void {
+    const ownerId = org.ownerId;
+    if (!ownerId) {
+      // Provisioning has not attached the ORG account yet; nobody to notify in-app.
+      return;
+    }
     const run =
       outcome === "approved"
         ? enqueueOrganizationApprovedWebsiteNotification({
-            userId: org.ownerId,
+            userId: ownerId,
             organizationName: org.name,
             organizationId: org.id,
             organizationSlug: org.slug,
           })
         : enqueueOrganizationRejectedWebsiteNotification({
-            userId: org.ownerId,
+            userId: ownerId,
             organizationName: org.name,
             organizationId: org.id,
             organizationSlug: org.slug,
@@ -956,19 +966,21 @@ export class OrganizationService {
       row.requesterId,
     ]);
 
-    void this.notifyOrganizationOwnerOfJoinRequest({
-      ownerId: org.ownerId,
-      organizationId,
-      organizationSlug: org.slug,
-      organizationName: org.name,
-      requesterId: row.requesterId,
-      requesterById,
-    }).catch((err) => {
-      console.warn(
-        "[organization] failed to notify owner of join request",
-        err,
-      );
-    });
+    if (org.ownerId) {
+      void this.notifyOrganizationOwnerOfJoinRequest({
+        ownerId: org.ownerId,
+        organizationId,
+        organizationSlug: org.slug,
+        organizationName: org.name,
+        requesterId: row.requesterId,
+        requesterById,
+      }).catch((err) => {
+        console.warn(
+          "[organization] failed to notify owner of join request",
+          err,
+        );
+      });
+    }
 
     return this.joinRequestResponseFromRow(row, requesterById);
   }

@@ -148,6 +148,11 @@ export class OrganizationController {
       .isLength({ max: 320 })
       .isEmail()
       .withMessage("contact_email is required and must be a valid email"),
+    // Internal callers carry no JWT, so the owner has to be named explicitly.
+    body("ownerId")
+      .notEmpty()
+      .isUUID()
+      .withMessage("owner_id is required and must be a uuid"),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -157,7 +162,7 @@ export class OrganizationController {
         });
       }
 
-      const userId = req.user?.userId;
+      const userId = (req.body as { ownerId?: string }).ownerId;
       if (!userId) {
         return sendError(res, HTTP_STATUS.UNAUTHORIZED);
       }

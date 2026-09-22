@@ -181,6 +181,55 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
     responseData: "SaveResourceEnvelopeData",
   },
 
+  "POST /api/v1/organization-applications/email-otp": {
+    requestBody: "RequestApplicationOtpBody",
+    responseData: "RequestApplicationOtpResponse",
+  },
+  "POST /api/v1/organization-applications/email-otp/verify": {
+    requestBody: "VerifyApplicationOtpBody",
+    responseData: "VerifyApplicationOtpResponse",
+  },
+  "POST /api/v1/organization-applications/documents/presign": {
+    requestBody: "PresignApplicationDocumentBody",
+    responseData: "PresignApplicationDocumentResponse",
+  },
+  "POST /api/v1/organization-applications": {
+    requestBody: "CreateApplicationBody",
+    responseData: "ApplicationOneEnvelopeData",
+  },
+  "GET /api/v1/organization-applications/:id": {
+    responseData: "ApplicationOneEnvelopeData",
+  },
+  "PUT /api/v1/organization-applications/:id": {
+    requestBody: "UpdateApplicationBody",
+    responseData: "ApplicationOneEnvelopeData",
+  },
+  "POST /api/v1/organization-applications/:id/withdraw": {
+    responseData: "ApplicationOneEnvelopeData",
+  },
+
+  "GET /api/v1/admin/organization-applications": {
+    query: "AdminApplicationListQuery",
+    responseData: "PaginatedApplicationsEnvelopeData",
+  },
+  "GET /api/v1/admin/organization-applications/:id": {
+    responseData: "ApplicationAdminOneEnvelopeData",
+  },
+  "GET /api/v1/admin/organization-applications/:id/documents/:docId/file": {
+    omitData: true,
+  },
+  "PUT /api/v1/admin/organization-applications/:id/claim": {
+    responseData: "ApplicationAdminOneEnvelopeData",
+  },
+  "PUT /api/v1/admin/organization-applications/:id/request-info": {
+    requestBody: "RequestMoreInfoBody",
+    responseData: "ApplicationAdminOneEnvelopeData",
+  },
+  "PUT /api/v1/admin/organization-applications/:id/decision": {
+    requestBody: "ApplicationDecisionBody",
+    responseData: "ApplicationAdminOneEnvelopeData",
+  },
+
   "POST /api/v1/organizations": {
     requestBody: "CreateOrganizationBody",
     responseData: "OrganizationOneEnvelopeData",

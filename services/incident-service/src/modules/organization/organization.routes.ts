@@ -1,15 +1,24 @@
 import { Router } from "express";
 import { authenticate } from "../../middleware/auth.middleware";
+import { requireInternalIncidentApiKey } from "../../middleware/internal-auth.middleware";
 import { organizationController } from "./organization.controller";
 
 const router = Router();
 
 /**
  * @route   POST /api/v1/organizations
- * @desc    Create an organization; current user becomes the sole owner.
- * @access  Private
+ * @desc    Create an organization directly, bypassing the application pipeline.
+ *          No longer reachable by end users: organizations may only come into existence
+ *          through an approved application, so this is kept for internal tooling and
+ *          fixtures and requires `x-internal-api-key`.
+ * @access  Internal (`x-internal-api-key`)
+ * @body    { owner_id, name, logo_url, contact_email, ... }
  */
-router.post("/", authenticate, organizationController.createOrganization);
+router.post(
+  "/",
+  requireInternalIncidentApiKey,
+  organizationController.createOrganization,
+);
 
 /**
  * @route   GET /api/v1/organizations/verify-contact-email

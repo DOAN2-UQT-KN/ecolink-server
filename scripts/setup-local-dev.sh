@@ -19,27 +19,25 @@ if ! docker info > /dev/null 2>&1; then
     exit 1
 fi
 
-# Start PostgreSQL databases
-echo "📦 Starting PostgreSQL databases..."
-
-# Shared PostgreSQL instance
-if [ "$(docker ps -aq -f name=postgres-shared)" ]; then
-    echo "  ♻️  postgres-shared already exists, starting..."
-    docker start postgres-shared
-else
-    echo "  🆕 Creating postgres-shared..."
-    docker run -d \
-        --name postgres-shared \
-        -e POSTGRES_USER=postgres \
-        -e POSTGRES_PASSWORD=password \
-        -v "$SCRIPT_DIR/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql" \
-        -p 5432:5432 \
-        postgres:16-alpine
-fi
+# Start PostgreSQL (PostGIS) + localstack via docker compose
+echo "📦 Starting PostgreSQL (PostGIS) on port 5433..."
+cd "$PROJECT_ROOT"
+docker compose up -d postgres localstack
 
 echo ""
-echo "⏳ Waiting for databases to be ready..."
-sleep 3
+echo "⏳ Waiting for the database to be ready..."
+for i in $(seq 1 30); do
+    if docker compose exec -T postgres pg_isready -U postgres > /dev/null 2>&1; then
+        echo "  ✅ postgres is ready"
+        break
+    fi
+    if [ "$i" -eq 30 ]; then
+        echo "  ❌ postgres did not become ready in time"
+        docker compose logs --tail 30 postgres
+        exit 1
+    fi
+    sleep 2
+done
 
 # Discover all services
 echo ""
@@ -127,7 +125,8 @@ echo ""
 echo "✅ Setup complete!"
 echo ""
 echo "📋 Database info (Shared Instance):"
-echo "   Identity DB:  postgresql://postgres:password@localhost:5432/identitydb"
+echo "   Identity DB:  postgresql://postgres:password@localhost:5433/identitydb"
+echo "   (same instance also hosts incidentdb / notificationdb / rewarddb / aidb)"
 echo ""
 echo "🚀 To start services manually:"
 for service in "${SERVICES[@]}"; do
@@ -135,4 +134,4 @@ for service in "${SERVICES[@]}"; do
 done
 echo ""
 echo "🛑 To stop databases:"
-echo "   docker stop postgres-shared"
+echo "   docker compose stop postgres localstack"

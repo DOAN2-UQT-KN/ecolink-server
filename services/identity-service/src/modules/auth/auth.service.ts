@@ -1,6 +1,6 @@
 import bcrypt from "bcryptjs";
 import { AuthTokenType } from "../../constants/auth-token-type";
-import { UserStatus } from "../../constants/user-status";
+import { AccountType, UserStatus } from "../../constants/user-status";
 import {
   generateOpaqueToken,
   hashOpaqueToken,
@@ -34,6 +34,18 @@ const PASSWORD_RESET_TTL_MS = (() => {
   }
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? n : 3_600_000;
+})();
+
+/** Role every provisioned organization account is given. */
+const ORG_OWNER_ROLE_NAME = "ORG_OWNER";
+
+const ORG_ACCOUNT_ACTIVATION_TTL_MS = (() => {
+  const raw = process.env.ORG_ACCOUNT_ACTIVATION_TTL_MS;
+  if (raw == null || raw === "") {
+    return 72 * 3_600_000;
+  }
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 72 * 3_600_000;
 })();
 
 const ORG_CONTACT_EMAIL_TTL_MS = (() => {
@@ -100,6 +112,16 @@ export class AuthService {
 
     if (user.status === UserStatus.INACTIVE) {
       throw new Error("ACCOUNT_BANNED");
+    }
+
+    if (user.status === UserStatus.PENDING_ACTIVATION) {
+      throw new Error("ACCOUNT_PENDING_ACTIVATION");
+    }
+
+    // Provisioned org accounts have no password until the activation link is redeemed;
+    // bcrypt.compare would throw on a null hash.
+    if (!user.password) {
+      return null;
     }
 
     const isValid = await bcrypt.compare(request.password, user.password);
@@ -195,7 +217,7 @@ export class AuthService {
 
   async updatePassword(request: UpdatePasswordRequest): Promise<boolean> {
     const user = await userRepository.findById(request.userId);
-    if (!user) {
+    if (!user || !user.password) {
       return false;
     }
 
@@ -332,6 +354,127 @@ export class AuthService {
     });
 
     return plainToken;
+  }
+
+  /**
+   * Server-to-server: create (or return) the single login that operates an organization.
+   *
+   * Idempotent on `applicationId`, not on the email. incident-service reaches this through the
+   * outbox relay, which retries whenever identity is unreachable, so a second call for the
+   * same application must hand back the account the first one made instead of creating a
+   * duplicate. The account starts with no password and status PENDING_ACTIVATION; only the
+   * activation link can turn it into something that can log in.
+   */
+  async provisionOrgAccount(params: {
+    applicationId: string;
+    organizationId: string;
+    email: string;
+    displayName: string;
+  }): Promise<{
+    userId: string;
+    activationToken: string | null;
+    alreadyProvisioned: boolean;
+  }> {
+    const email = params.email.trim().toLowerCase();
+
+    const existing = await userRepository.findByProvisionedApplicationId(
+      params.applicationId,
+    );
+    if (existing) {
+      return {
+        userId: existing.id,
+        activationToken: null,
+        alreadyProvisioned: true,
+      };
+    }
+
+    const emailTaken = await userRepository.findByEmail(email);
+    if (emailTaken) {
+      throw new Error("ORG_ACCOUNT_EMAIL_TAKEN");
+    }
+
+    const role = await roleRepository.findRoleByName(ORG_OWNER_ROLE_NAME);
+    if (!role) {
+      throw new Error(`${ORG_OWNER_ROLE_NAME} role not found`);
+    }
+
+    const user = await userRepository.create({
+      email,
+      name: params.displayName,
+      password: null,
+      accountType: AccountType.ORG,
+      provisionedFromApplicationId: params.applicationId,
+      status: UserStatus.PENDING_ACTIVATION,
+      emailVerified: true,
+      role: { connect: { id: role.id } },
+    });
+
+    const activationToken = await this.issueOrgActivationToken(user.id, {
+      organizationId: params.organizationId,
+      applicationId: params.applicationId,
+    });
+
+    return { userId: user.id, activationToken, alreadyProvisioned: false };
+  }
+
+  /** Single-use link that lets an org account set its first password. */
+  async issueOrgActivationToken(
+    userId: string,
+    metadata: { organizationId: string; applicationId: string },
+  ): Promise<string> {
+    await authTokenRepository.revokeAllForUser(
+      userId,
+      AuthTokenType.ORG_ACCOUNT_ACTIVATION,
+    );
+
+    const plainToken = generateOpaqueToken();
+    await authTokenRepository.create({
+      userId,
+      type: AuthTokenType.ORG_ACCOUNT_ACTIVATION,
+      tokenHash: hashOpaqueToken(plainToken),
+      expiresAt: new Date(Date.now() + ORG_ACCOUNT_ACTIVATION_TTL_MS),
+      metadata,
+    });
+    return plainToken;
+  }
+
+  /**
+   * Redeems an activation link: sets the first password and lifts the account out of
+   * PENDING_ACTIVATION. Deliberately a link rather than a temporary password — a password
+   * mailed in plain text stays readable in that inbox forever.
+   */
+  async activateOrgAccount(
+    plainToken: string,
+    newPassword: string,
+  ): Promise<boolean> {
+    const trimmed = plainToken.trim();
+    if (!trimmed) {
+      return false;
+    }
+
+    const stored = await authTokenRepository.findActiveByHashAndType(
+      hashOpaqueToken(trimmed),
+      AuthTokenType.ORG_ACCOUNT_ACTIVATION,
+    );
+    if (!stored) {
+      return false;
+    }
+
+    const user = await userRepository.findById(stored.userId);
+    if (!user) {
+      return false;
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    await userRepository.update(user.id, {
+      password: hashedPassword,
+      status: UserStatus.ACTIVE,
+    });
+
+    await authTokenRepository.markUsed(stored.id);
+    await authTokenRepository.revokeAllForUser(user.id, AuthTokenType.REFRESH);
+
+    return true;
   }
 
   /**

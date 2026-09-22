@@ -13,13 +13,13 @@ datasource db {
 }
 
 model Report {
-  id         String  @id @default(uuid()) @db.Uuid
-  campaignId String? @map("campaign_id") @db.Uuid
-  userId     String? @map("user_id") @db.Uuid
-  title      String? @db.VarChar(200)
-  titleVi    String? @map("title_vi") @db.VarChar(200)
-  titleEn    String? @map("title_en") @db.VarChar(200)
-  description String?
+  id            String  @id @default(uuid()) @db.Uuid
+  campaignId    String? @map("campaign_id") @db.Uuid
+  userId        String? @map("user_id") @db.Uuid
+  title         String? @db.VarChar(200)
+  titleVi       String? @map("title_vi") @db.VarChar(200)
+  titleEn       String? @map("title_en") @db.VarChar(200)
+  description   String?
   descriptionVi String? @map("description_vi")
   descriptionEn String? @map("description_en")
 
@@ -30,19 +30,27 @@ model Report {
   latitude  Float?
   longitude Float?
 
-  /** Human-readable location text (e.g. street / place name from reverse geocoding). */
+  /**
+   * Human-readable location text (e.g. street / place name from reverse geocoding).
+   */
   detailAddress String? @map("detail_address")
 
   status Int? @default(12)
 
-  /** Admin moderation: only admins can set true (see verify endpoint). */
-  isVerify Boolean @default(false) @map("is_verify")
-  /** Admin-provided reason when the report is banned; cleared on verify. */
+  /**
+   * Admin moderation: only admins can set true (see verify endpoint).
+   */
+  isVerify     Boolean @default(false) @map("is_verify")
+  /**
+   * Admin-provided reason when the report is banned; cleared on verify.
+   */
   rejectReason String? @map("reject_reason")
 
   aiVerified Boolean @default(false) @map("ai_verified")
 
-  /** LLM recommendation after image/object analysis. */
+  /**
+   * LLM recommendation after image/object analysis.
+   */
   aiRecommendation String? @map("ai_recommendation")
 
   createdBy String? @map("created_by") @db.Uuid
@@ -66,28 +74,32 @@ model Report {
 }
 
 model Campaign {
-  id          String  @id @default(uuid()) @db.Uuid
-  title       String  @db.VarChar(200)
-  titleVi     String? @map("title_vi") @db.VarChar(200)
-  titleEn     String? @map("title_en") @db.VarChar(200)
-  banner      String? @db.VarChar(2048)
-  description String?
-  descriptionVi String? @map("description_vi")
-  descriptionEn String? @map("description_en")
-  status      Int     @default(12)
-  /** Admin-provided reason when the campaign is banned; cleared on verify. */
-  rejectReason String? @map("reject_reason")
-  startDate   DateTime? @map("start_date")
-  endDate     DateTime? @map("end_date")
-  detailAddress String? @map("detail_address") @db.VarChar(255)
-  latitude    Float?
-  longitude   Float?
-  radiusKm    Float? @map("radius_km")
+  id            String    @id @default(uuid()) @db.Uuid
+  title         String    @db.VarChar(200)
+  titleVi       String?   @map("title_vi") @db.VarChar(200)
+  titleEn       String?   @map("title_en") @db.VarChar(200)
+  banner        String?   @db.VarChar(2048)
+  description   String?
+  descriptionVi String?   @map("description_vi")
+  descriptionEn String?   @map("description_en")
+  status        Int       @default(12)
+  /**
+   * Admin-provided reason when the campaign is banned; cleared on verify.
+   */
+  rejectReason  String?   @map("reject_reason")
+  startDate     DateTime? @map("start_date")
+  endDate       DateTime? @map("end_date")
+  detailAddress String?   @map("detail_address") @db.VarChar(255)
+  latitude      Float?
+  longitude     Float?
+  radiusKm      Float?    @map("radius_km")
 
-  /** Level key into reward-service `difficulties` (volunteer cap, green points). */
+  /**
+   * Level key into reward-service `difficulties` (volunteer cap, green points).
+   */
   difficulty Int @default(1)
 
-  organizationId String @map("organization_id") @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
   organization   Organization @relation(fields: [organizationId], references: [id])
 
   createdBy String? @map("created_by") @db.Uuid
@@ -97,15 +109,15 @@ model Campaign {
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
-  reports                 Report[]
-  campaignManagers        CampaignManager[]
-  campaignJoiningRequests CampaignJoiningRequest[]
-  campaignAttendanceCheckIns CampaignAttendanceCheckIn[]
-  campaignTasks           CampaignTask[]
-  campaignSubmissions     CampaignSubmission[]
-  campaignResults         CampaignResult[]
+  reports                         Report[]
+  campaignManagers                CampaignManager[]
+  campaignJoiningRequests         CampaignJoiningRequest[]
+  campaignAttendanceCheckIns      CampaignAttendanceCheckIn[]
+  campaignTasks                   CampaignTask[]
+  campaignSubmissions             CampaignSubmission[]
+  campaignResults                 CampaignResult[]
   campaignCompletionVerifications CampaignCompletionVerification[]
-  sosList                 Sos[]
+  sosList                         Sos[]
 
   @@index([status])
   @@index([createdBy])
@@ -160,13 +172,13 @@ model CampaignTask {
   id         String  @id @default(uuid()) @db.Uuid
   campaignId String? @map("campaign_id") @db.Uuid
 
-  title       String? @db.VarChar(200)
-  titleVi     String? @map("title_vi") @db.VarChar(200)
-  titleEn     String? @map("title_en") @db.VarChar(200)
-  description String?
+  title         String? @db.VarChar(200)
+  titleVi       String? @map("title_vi") @db.VarChar(200)
+  titleEn       String? @map("title_en") @db.VarChar(200)
+  description   String?
   descriptionVi String? @map("description_vi")
   descriptionEn String? @map("description_en")
-  priority    Int     @default(2)
+  priority      Int     @default(2)
 
   status Int @default(12)
 
@@ -190,7 +202,9 @@ model CampaignTask {
   @@map("campaign_tasks")
 }
 
-/** Optional evidence / notes submitted for a campaign task (one row per task). */
+/**
+ * Optional evidence / notes submitted for a campaign task (one row per task).
+ */
 model CampaignTaskResult {
   id             String  @id @default(uuid()) @db.Uuid
   campaignTaskId String  @unique @map("campaign_task_id") @db.Uuid
@@ -204,7 +218,7 @@ model CampaignTaskResult {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  campaignTask CampaignTask               @relation(fields: [campaignTaskId], references: [id], onDelete: Cascade)
+  campaignTask CampaignTask             @relation(fields: [campaignTaskId], references: [id], onDelete: Cascade)
   files        CampaignTaskResultFile[]
 
   @@map("campaign_task_results")
@@ -293,14 +307,14 @@ model CampaignAttendanceCheckIn {
 // A submission is created by a campaign manager to document cleanup work.
 // One campaign can have multiple submissions over time.
 model CampaignSubmission {
-  id          String  @id @default(uuid()) @db.Uuid
-  campaignId  String  @map("campaign_id") @db.Uuid
-  submittedBy String  @map("submitted_by") @db.Uuid // manager who submitted
+  id          String @id @default(uuid()) @db.Uuid
+  campaignId  String @map("campaign_id") @db.Uuid
+  submittedBy String @map("submitted_by") @db.Uuid // manager who submitted
 
-  title       String? @db.VarChar(200)
-  titleVi     String? @map("title_vi") @db.VarChar(200)
-  titleEn     String? @map("title_en") @db.VarChar(200)
-  description String?
+  title         String? @db.VarChar(200)
+  titleVi       String? @map("title_vi") @db.VarChar(200)
+  titleEn       String? @map("title_en") @db.VarChar(200)
+  description   String?
   descriptionVi String? @map("description_vi")
   descriptionEn String? @map("description_en")
 
@@ -330,10 +344,10 @@ model CampaignResult {
   campaignId           String  @map("campaign_id") @db.Uuid
   campaignSubmissionId String? @map("campaign_submission_id") @db.Uuid
 
-  title       String  @db.VarChar(200)
-  titleVi     String? @map("title_vi") @db.VarChar(200)
-  titleEn     String? @map("title_en") @db.VarChar(200)
-  description String?
+  title         String  @db.VarChar(200)
+  titleVi       String? @map("title_vi") @db.VarChar(200)
+  titleEn       String? @map("title_en") @db.VarChar(200)
+  description   String?
   descriptionVi String? @map("description_vi")
   descriptionEn String? @map("description_en")
 
@@ -345,9 +359,9 @@ model CampaignResult {
   deletedAt DateTime? @map("deleted_at")
 
   // Relations
-  campaign             Campaign              @relation(fields: [campaignId], references: [id])
-  campaignSubmission   CampaignSubmission?   @relation(fields: [campaignSubmissionId], references: [id])
-  campaignResultFiles  CampaignResultFile[]
+  campaign            Campaign             @relation(fields: [campaignId], references: [id])
+  campaignSubmission  CampaignSubmission?  @relation(fields: [campaignSubmissionId], references: [id])
+  campaignResultFiles CampaignResultFile[]
 
   @@index([campaignId])
   @@index([campaignSubmissionId])
@@ -380,11 +394,11 @@ model ReportIssue {
   reportId   String? @map("report_id") @db.Uuid
   reporterId String? @map("reporter_id") @db.Uuid
 
-  issueType    String? @map("issue_type") @db.VarChar(50)
-  description  String?
+  issueType     String? @map("issue_type") @db.VarChar(50)
+  description   String?
   descriptionVi String? @map("description_vi")
   descriptionEn String? @map("description_en")
-  mediaFileUrl String? @map("media_file_url")
+  mediaFileUrl  String? @map("media_file_url")
 
   createdBy String? @map("created_by") @db.Uuid
   updatedBy String? @map("updated_by") @db.Uuid
@@ -497,12 +511,14 @@ model OutboxEvent {
 }
 
 model Vote {
-  id             String    @id @default(uuid()) @db.Uuid
-  userId         String    @map("user_id") @db.Uuid
-  /** 1 = upvote, -1 = downvote, 0 = cancelled / neutral */
-  value          Int
-  resourceType   String    @map("resource_type") @db.VarChar(32)
-  resourceId     String    @map("resource_id") @db.Uuid
+  id           String @id @default(uuid()) @db.Uuid
+  userId       String @map("user_id") @db.Uuid
+  /**
+   * 1 = upvote, -1 = downvote, 0 = cancelled / neutral
+   */
+  value        Int
+  resourceType String @map("resource_type") @db.VarChar(32)
+  resourceId   String @map("resource_id") @db.Uuid
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -516,10 +532,12 @@ model Vote {
 
 /// Community verification after campaign completion (clean / not clean). Separate from votes.
 model CampaignCompletionVerification {
-  id         String   @id @default(uuid()) @db.Uuid
-  campaignId String   @map("campaign_id") @db.Uuid
-  userId     String   @map("user_id") @db.Uuid
-  /** 1 = clean, -1 = not clean, 0 = cleared */
+  id         String @id @default(uuid()) @db.Uuid
+  campaignId String @map("campaign_id") @db.Uuid
+  userId     String @map("user_id") @db.Uuid
+  /**
+   * 1 = clean, -1 = not clean, 0 = cleared
+   */
   value      Int
 
   createdAt DateTime  @default(now()) @map("created_at")
@@ -549,30 +567,108 @@ model SavedResource {
   @@map("saved_resources")
 }
 
-/** A group with exactly one owner (`ownerId`). Other users join via `OrganizationJoiningRequest`. */
+/**
+ * A group with exactly one owner (`ownerId`). Other users join via `OrganizationJoiningRequest`.
+ */
 model Organization {
-  id          String  @id @default(uuid()) @db.Uuid
-  name        String  @db.VarChar(200)
-  /** URL-stable identifier generated from `name` on create; not changed on rename. */
-  slug        String  @unique @db.VarChar(220)
-  description String?
+  id            String  @id @default(uuid()) @db.Uuid
+  name          String  @db.VarChar(200)
+  /**
+   * URL-stable identifier generated from `name` on create; not changed on rename.
+   */
+  slug          String  @unique @db.VarChar(220)
+  description   String?
   descriptionVi String? @map("description_vi")
   descriptionEn String? @map("description_en")
 
-  /** Public logo image URL (required on create). */
-  logoUrl String @map("logo_url") @db.VarChar(2048)
-  /** Optional public background / banner image URL. */
+  /**
+   * Public logo image URL (required on create).
+   */
+  logoUrl       String  @map("logo_url") @db.VarChar(2048)
+  /**
+   * Optional public background / banner image URL.
+   */
   backgroundUrl String? @map("background_url") @db.VarChar(2048)
-  contactEmail String? @map("contact_email") @db.VarChar(320)
+  contactEmail  String? @map("contact_email") @db.VarChar(320)
 
-  /** Whether `contactEmail` has been confirmed (e.g. OTP); not set by create body. */
+  /**
+   * Public postal address, shown on the organization page.
+   */
+  address String? @db.VarChar(500)
+
+  /**
+   * Point the applicant picked on the map; null when they skipped that step.
+   */
+  latitude  Float?
+  longitude Float?
+
+  /**
+   * Inherited from the OTP the applicant passed before submitting; no second verification.
+   */
   isEmailVerified Boolean @default(false) @map("is_email_verified")
-  /** Lifecycle: `GlobalStatus._STATUS_PENDING` until admin verifies (`ACTIVE`) or bans (`INACTIVE`). */
-  status Int @default(12)
-  /** Admin-provided reason when the organization is banned; cleared on verify unless sent. */
-  rejectReason String? @map("reject_reason")
+  /**
+   * Lifecycle. Rows only exist once an admin approved the application, so the default is
+   * `GlobalStatus._STATUS_ACTIVE`; admins move it to `INACTIVE` to ban.
+   */
+  status          Int     @default(1)
+  /**
+   * Admin-provided reason when the organization is banned; cleared on verify unless sent.
+   */
+  rejectReason    String? @map("reject_reason")
 
-  ownerId String @map("owner_id") @db.Uuid
+  /**
+   * `OrgType` — kind of legal entity, declared by the applicant and confirmed by an admin.
+   */
+  orgType               String?   @map("org_type") @db.VarChar(32)
+  /**
+   * `KycStatus` — verdict on the legal paperwork.
+   */
+  kycStatus             String    @default("NOT_SUBMITTED") @map("kyc_status") @db.VarChar(20)
+  /**
+   * `TrustTier` — Blue Tick privilege level; independent of `kycStatus`.
+   */
+  trustTier             String    @default("NONE") @map("trust_tier") @db.VarChar(10)
+  /**
+   * Set while a violation is being handled: the tick stops granting privileges.
+   */
+  tickSuspended         Boolean   @default(false) @map("tick_suspended")
+  /**
+   * Lane A only: an admin confirmed the contact email uses the entity's official domain.
+   */
+  domainVerified        Boolean   @default(false) @map("domain_verified")
+  verifiedAt            DateTime? @map("verified_at")
+  verifiedBy            String?   @map("verified_by") @db.Uuid
+  /**
+   * Lane B tick expires and must be re-assessed; NULL for lane A.
+   */
+  verificationExpiresAt DateTime? @map("verification_expires_at")
+  tickRevokedReason     String?   @map("tick_revoked_reason")
+
+  /**
+   * 0–100, recomputed on every profile update; an input of the Blue Tick rules.
+   */
+  profileCompleteness     Int @default(0) @map("profile_completeness")
+  /**
+   * Denormalized counters feeding the (later) eligibility rule engine.
+   */
+  successfulCampaignCount Int @default(0) @map("successful_campaign_count")
+  violationCount          Int @default(0) @map("violation_count")
+
+  /**
+   * NULL = use `DEFAULT_LEGAL_REP_ORG_LIMIT`; an admin may raise it for one organization.
+   */
+  legalRepLimitOverride Int? @map("legal_rep_limit_override")
+
+  /**
+   * The dedicated `accountType = ORG` login. NULLABLE on purpose: provisioning writes the
+   * organization first and fills this in a second step, so queries must tolerate NULL.
+   */
+  ownerId String? @map("owner_id") @db.Uuid
+
+  /**
+   * Application this organization was created from; kept for traceability.
+   */
+  applicationId String? @unique @map("application_id") @db.Uuid
 
   createdBy String? @map("created_by") @db.Uuid
   updatedBy String? @map("updated_by") @db.Uuid
@@ -584,13 +680,20 @@ model Organization {
   members      OrganizationMember[]
   joinRequests OrganizationJoiningRequest[]
   campaigns    Campaign[]
+  channels     OrganizationChannel[]
+  violations   OrganizationViolation[]
+  application  OrganizationApplication?     @relation(fields: [applicationId], references: [id])
 
   @@index([ownerId])
   @@index([deletedAt])
+  @@index([trustTier, status])
+  @@index([kycStatus, verificationExpiresAt])
   @@map("organizations")
 }
 
-/** Approved members (owner is not duplicated here; use `Organization.ownerId`). */
+/**
+ * Approved members (owner is not duplicated here; use `Organization.ownerId`).
+ */
 model OrganizationMember {
   organizationId String @map("organization_id") @db.Uuid
   userId         String @map("user_id") @db.Uuid
@@ -642,9 +745,9 @@ model Sos {
 }
 
 model OrganizationJoiningRequest {
-  id             String  @id @default(uuid()) @db.Uuid
-  organizationId String  @map("organization_id") @db.Uuid
-  requesterId    String  @map("requester_id") @db.Uuid
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+  requesterId    String @map("requester_id") @db.Uuid
 
   status Int @default(12)
 
@@ -661,4 +764,283 @@ model OrganizationJoiningRequest {
   @@index([requesterId])
   @@index([status])
   @@map("organization_joining_requests")
+}
+
+/**
+ * A request to found an organization. This is a first-class entity, NOT an organization in a
+ * draft state: `organizations` only ever holds approved rows, so rejected and abandoned
+ * submissions never pollute it.
+ */
+model OrganizationApplication {
+  id   String @id @default(uuid()) @db.Uuid
+  /**
+   * Short human-readable code the applicant uses to look the submission up.
+   */
+  code String @unique @db.VarChar(16)
+
+  /**
+   * `OrgType` declared by the applicant.
+   */
+  orgType               String  @map("org_type") @db.VarChar(32)
+  /**
+   * `ApplicationStatus`.
+   */
+  status                String  @default("SUBMITTED") @db.VarChar(20)
+  /**
+   * `ApplicationLane`. NULL while the application is open — the system never guesses the lane
+   * from the email domain; only an admin sets it when deciding.
+   */
+  lane                  String? @db.VarChar(1)
+  /**
+   * Admins may waive the document requirement (typically lane A); the reason is mandatory.
+   */
+  documentsWaived       Boolean @default(false) @map("documents_waived")
+  documentsWaivedReason String? @map("documents_waived_reason")
+
+  /**
+   * Public-facing profile proposed for the organization: name, contactEmail, logoUrl, …
+   */
+  profile  Json
+  /**
+   * Proposed public channels: `[{ type, url, isPrimary }]`.
+   */
+  channels Json @default("[]")
+
+  /**
+   * Normalized copy of `profile.contactEmail`, used for the one-open-application rule.
+   */
+  contactEmail String @map("contact_email") @db.VarChar(320)
+
+  /**
+   * Legal representative — review data, never displayed publicly and never copied onto the
+   * organization. The raw ID number is NOT stored: only a hash (for the per-person org cap)
+   * and the last 4 characters (to confirm identity during a dispute).
+   */
+  legalRepName     String? @map("legal_rep_name") @db.VarChar(200)
+  legalRepPhone    String? @map("legal_rep_phone") @db.VarChar(32)
+  legalRepEmail    String? @map("legal_rep_email") @db.VarChar(320)
+  legalRepPosition String? @map("legal_rep_position") @db.VarChar(200)
+  legalRepIdType   String? @map("legal_rep_id_type") @db.VarChar(20)
+  legalRepIdHash   String? @map("legal_rep_id_hash") @db.VarChar(64)
+  legalRepIdLast4  String? @map("legal_rep_id_last4") @db.VarChar(4)
+
+  /**
+   * NULL when submitted anonymously (the common case — the form needs no login).
+   */
+  submittedByUserId String?   @map("submitted_by_user_id") @db.Uuid
+  /**
+   * When the OTP on `contactEmail` passed; inherited by `organizations.isEmailVerified`.
+   */
+  emailVerifiedAt   DateTime? @map("email_verified_at")
+  /**
+   * Timestamp of the personal-data consent checkbox.
+   */
+  consentedAt       DateTime? @map("consented_at")
+
+  /**
+   * Set by `claim` so two admins never review the same submission.
+   */
+  reviewerId   String?   @map("reviewer_id") @db.Uuid
+  claimedAt    DateTime? @map("claimed_at")
+  reviewedAt   DateTime? @map("reviewed_at")
+  /**
+   * Message sent with `request-info`, or the rejection reason.
+   */
+  reviewNote   String?   @map("review_note")
+  rejectReason String?   @map("reject_reason")
+
+  /**
+   * Filled once the approval saga created the organization.
+   */
+  organizationId       String?   @map("organization_id") @db.Uuid
+  /**
+   * NULL while the ORG login has not been created yet — the relay retries until it is.
+   */
+  accountProvisionedAt DateTime? @map("account_provisioned_at")
+  /**
+   * Set by the retention job once documents and `legalRep*` have been erased.
+   */
+  purgedAt             DateTime? @map("purged_at")
+
+  createdBy String? @map("created_by") @db.Uuid
+  updatedBy String? @map("updated_by") @db.Uuid
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  documents    OrganizationApplicationDocument[]
+  events       OrganizationApplicationEvent[]
+  organization Organization?
+
+  @@index([status])
+  @@index([contactEmail])
+  @@index([legalRepIdHash])
+  @@index([reviewerId])
+  @@index([deletedAt])
+  @@map("organization_applications")
+}
+
+/**
+ * A legal document attached to an application. The file itself lives in private storage.
+ */
+model OrganizationApplicationDocument {
+  id              String  @id @default(uuid()) @db.Uuid
+  /**
+   * NULL between the presign call and the submit call: the form uploads paperwork before the
+   * application row exists. `submissionEmail` scopes an orphan to the mailbox that uploaded it.
+   */
+  applicationId   String? @map("application_id") @db.Uuid
+  /**
+   * Verified mailbox of the uploader, copied from the submission token.
+   */
+  submissionEmail String  @map("submission_email") @db.VarChar(320)
+
+  /**
+   * `ApplicationDocType`.
+   */
+  docType    String  @map("doc_type") @db.VarChar(32)
+  /**
+   * Opaque handle from `DocumentStorage`; never a publicly reachable URL.
+   */
+  storageKey String  @map("storage_key") @db.VarChar(512)
+  /**
+   * Normalized extension (`pdf` | `jpg` | `png`), needed to read the file back.
+   */
+  format     String  @db.VarChar(8)
+  mimeType   String  @map("mime_type") @db.VarChar(100)
+  sizeBytes  Int     @map("size_bytes")
+  fileName   String? @map("file_name") @db.VarChar(255)
+
+  /**
+   * Set by the retention job after the file has been deleted from storage.
+   */
+  purgedAt DateTime? @map("purged_at")
+
+  createdBy String?   @map("created_by") @db.Uuid
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  application OrganizationApplication? @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId])
+  @@index([submissionEmail])
+  @@index([deletedAt])
+  @@map("organization_application_documents")
+}
+
+/**
+ * Audit trail. Kept after the purge job erases the documents, because it is the only
+ * remaining evidence that a review actually happened and who waived what.
+ */
+model OrganizationApplicationEvent {
+  id            String @id @default(uuid()) @db.Uuid
+  applicationId String @map("application_id") @db.Uuid
+
+  /**
+   * `ApplicationEventType`.
+   */
+  eventType String  @map("event_type") @db.VarChar(40)
+  /**
+   * NULL for actions taken by the anonymous applicant.
+   */
+  actorId   String? @map("actor_id") @db.Uuid
+  payload   Json    @default("{}")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  application OrganizationApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId, createdAt])
+  @@map("organization_application_events")
+}
+
+/**
+ * One-time codes and submission tokens for the anonymous application form. These cannot live
+ * in identity-service's `auth_tokens` because that table is keyed by a user, and an applicant
+ * has no account yet.
+ */
+model OrganizationApplicationOtp {
+  id    String @id @default(uuid()) @db.Uuid
+  email String @db.VarChar(320)
+
+  /**
+   * `OTP` (6-digit code) or `SUBMISSION` (token handed out after the code was accepted).
+   */
+  purpose  String @db.VarChar(16)
+  /**
+   * sha256 of the code / token — never the value itself.
+   */
+  codeHash String @map("code_hash") @db.VarChar(64)
+
+  attempts  Int       @default(0)
+  expiresAt DateTime  @map("expires_at")
+  /**
+   * Set on first successful use; both purposes are single-use.
+   */
+  usedAt    DateTime? @map("used_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([email, purpose])
+  @@index([codeHash])
+  @@index([expiresAt])
+  @@map("organization_application_otps")
+}
+
+/**
+ * Public contact channel of an approved organization (fanpage / website / Zalo OA).
+ */
+model OrganizationChannel {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  /**
+   * `OrganizationChannelType`.
+   */
+  type      String  @db.VarChar(32)
+  url       String  @db.VarChar(2048)
+  isPrimary Boolean @default(false) @map("is_primary")
+
+  createdBy String? @map("created_by") @db.Uuid
+  updatedBy String? @map("updated_by") @db.Uuid
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([deletedAt])
+  @@map("organization_channels")
+}
+
+/**
+ * Recorded misconduct. The table exists so the Blue Tick revocation rules have somewhere to
+ * read from; nothing writes to it yet (post-moderation lands in a later phase).
+ */
+model OrganizationViolation {
+  id             String  @id @default(uuid()) @db.Uuid
+  organizationId String  @map("organization_id") @db.Uuid
+  campaignId     String? @map("campaign_id") @db.Uuid
+
+  /**
+   * `ViolationSeverity`.
+   */
+  severity String @db.VarChar(10)
+  reason   String
+
+  createdBy String?   @map("created_by") @db.Uuid
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([deletedAt])
+  @@map("organization_violations")
 }
