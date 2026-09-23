@@ -74,6 +74,20 @@ router.post(
 );
 
 /**
+ * @route   POST /api/v1/organization-applications/:id/documents/presign
+ * @desc    Upload slot for a resubmission (NEEDS_MORE_INFO only); the submission token is
+ *          spent by then, so the tracking link authorises it.
+ * @access  Public with the `token` from the tracking link
+ * @query   token
+ * @body    { doc_type, file_name, mime_type, size_bytes }
+ */
+router.post(
+  "/:id/documents/presign",
+  applicationPublicLimiter,
+  organizationApplicationController.presignDocumentForApplication,
+);
+
+/**
  * @route   GET /api/v1/organization-applications/:id
  * @desc    Follow a submission. Review-only fields (legal representative) are never included.
  * @access  Public with the `token` from the tracking link

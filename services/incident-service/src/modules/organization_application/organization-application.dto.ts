@@ -106,6 +106,8 @@ export interface UpdateApplicationBody
   extends Partial<Omit<CreateApplicationBody, "consent">> {
   /** Token from the tracking link emailed to the applicant. */
   token?: string;
+  /** Already-attached documents the applicant wants gone; soft-deleted on resubmit. */
+  removeDocumentIds?: string[];
 }
 
 /* -------------------------------------------------------------------------- */

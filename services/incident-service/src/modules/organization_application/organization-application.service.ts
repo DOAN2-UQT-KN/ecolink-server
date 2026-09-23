@@ -124,6 +124,31 @@ export class OrganizationApplicationService {
     };
   }
 
+  /**
+   * Upload slot for a resubmission. The one-time submission token is spent by then, so the
+   * tracking link is the credential — and only while a reviewer is waiting on more paperwork.
+   */
+  async presignDocumentForApplication(
+    applicationId: string,
+    trackingToken: string,
+    input: {
+      docType: string;
+      fileName: string;
+      mimeType: string;
+      sizeBytes: number;
+    },
+  ): Promise<PresignApplicationDocumentResponse> {
+    const email =
+      await organizationApplicationOtpService.resolveTrackingToken(
+        trackingToken,
+      );
+    const application = await this.loadForApplicant(applicationId, email);
+    if (application.status !== ApplicationStatus.NEEDS_MORE_INFO) {
+      throw new HttpError(HTTP_STATUS.ORGANIZATION_APPLICATION_NOT_EDITABLE);
+    }
+    return this.presignDocument(email, input);
+  }
+
   /* ------------------------------------------------------------------ */
   /* P2 — submission                                                     */
   /* ------------------------------------------------------------------ */
@@ -292,14 +317,37 @@ export class OrganizationApplicationService {
       }
     }
 
-    if (body.documentIds?.length) {
-      const documentIds = await this.assertDocumentsOwnedBy(
-        application.contactEmail,
-        body.documentIds,
+    // Everything is checked before anything is written, so a rejected resubmission leaves the
+    // application exactly as the reviewer last saw it.
+    const newDocumentIds = await this.assertDocumentsOwnedBy(
+      application.contactEmail,
+      body.documentIds ?? [],
+    );
+    const current =
+      await organizationApplicationRepository.findByIdWithRelations(
+        application.id,
       );
+    const currentIds = new Set((current?.documents ?? []).map((d) => d.id));
+    const removeIds = [...new Set(body.removeDocumentIds ?? [])];
+    if (removeIds.some((id) => !currentIds.has(id))) {
+      throw new HttpError(HTTP_STATUS.ORGANIZATION_DOCUMENT_NOT_FOUND);
+    }
+    const keptCount = currentIds.size - removeIds.length;
+    const addedCount = newDocumentIds.filter((id) => !currentIds.has(id)).length;
+    if (
+      keptCount + addedCount >
+      APPLICATION_DOCUMENT_LIMITS.maxFilesPerApplication
+    ) {
+      throw new HttpError(HTTP_STATUS.ORGANIZATION_DOCUMENT_LIMIT);
+    }
+
+    for (const id of removeIds) {
+      await organizationApplicationRepository.softDeleteDocument(id);
+    }
+    if (newDocumentIds.length) {
       await organizationApplicationRepository.attachDocuments(
         application.id,
-        documentIds,
+        newDocumentIds,
       );
     }
 
@@ -307,6 +355,10 @@ export class OrganizationApplicationService {
     await organizationApplicationRepository.recordEvent({
       applicationId: application.id,
       eventType: ApplicationEventType.RESUBMITTED,
+      payload: {
+        addedDocumentIds: newDocumentIds,
+        removedDocumentIds: removeIds,
+      },
     });
 
     const reloaded =

@@ -16,6 +16,11 @@ const consumeSubmissionTokenMock = jest.fn();
 const issueTrackingTokenMock = jest.fn();
 const receivedEmailMock = jest.fn();
 const createSignedUploadMock = jest.fn();
+const findByIdMock = jest.fn();
+const findByIdWithRelationsMock = jest.fn();
+const softDeleteDocumentMock = jest.fn();
+const updateMock = jest.fn();
+const resolveTrackingTokenMock = jest.fn();
 
 jest.mock("../organization-application.repository", () => ({
   organizationApplicationRepository: {
@@ -28,6 +33,10 @@ jest.mock("../organization-application.repository", () => ({
     createDocument: (...a: unknown[]) => createDocumentMock(...a),
     attachDocuments: (...a: unknown[]) => attachDocumentsMock(...a),
     recordEvent: (...a: unknown[]) => recordEventMock(...a),
+    findById: (...a: unknown[]) => findByIdMock(...a),
+    findByIdWithRelations: (...a: unknown[]) => findByIdWithRelationsMock(...a),
+    softDeleteDocument: (...a: unknown[]) => softDeleteDocumentMock(...a),
+    update: (...a: unknown[]) => updateMock(...a),
   },
 }));
 
@@ -35,6 +44,7 @@ jest.mock("../organization-application-otp.service", () => ({
   organizationApplicationOtpService: {
     consumeSubmissionToken: (...a: unknown[]) => consumeSubmissionTokenMock(...a),
     issueTrackingToken: (...a: unknown[]) => issueTrackingTokenMock(...a),
+    resolveTrackingToken: (...a: unknown[]) => resolveTrackingTokenMock(...a),
   },
 }));
 
@@ -266,5 +276,113 @@ describe("OrganizationApplicationService.presignDocument", () => {
       storageKey: "folder/public-id",
     });
     expect(result.documentId).toBe("doc-1");
+  });
+});
+
+describe("OrganizationApplicationService.updateApplication", () => {
+  const application = (status = "NEEDS_MORE_INFO") => ({
+    id: "app-1",
+    code: "ORG-1",
+    orgType: "CLUB",
+    status,
+    contactEmail: EMAIL,
+    profile: {},
+    channels: [],
+    reviewNote: "Thiếu giấy tờ",
+    rejectReason: null,
+    organizationId: null,
+    createdAt: new Date(),
+    reviewedAt: null,
+  });
+  const attached = (ids: string[]) =>
+    ids.map((id) => ({ id, submissionEmail: EMAIL, applicationId: "app-1" }));
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    resolveTrackingTokenMock.mockResolvedValue(EMAIL);
+    findByIdMock.mockResolvedValue(application());
+    findByIdWithRelationsMock.mockResolvedValue({
+      ...application(),
+      documents: attached(["doc-1", "doc-2"]),
+    });
+    findDocumentsByIdsMock.mockResolvedValue([]);
+    softDeleteDocumentMock.mockResolvedValue(undefined);
+    attachDocumentsMock.mockResolvedValue(undefined);
+    updateMock.mockResolvedValue(undefined);
+    recordEventMock.mockResolvedValue(undefined);
+  });
+
+  it("gỡ giấy tờ cũ của chính hồ sơ khi nộp lại", async () => {
+    await organizationApplicationService.updateApplication("app-1", "track", {
+      removeDocumentIds: ["doc-1"],
+    });
+
+    expect(softDeleteDocumentMock).toHaveBeenCalledWith("doc-1");
+    expect(updateMock).toHaveBeenCalledWith(
+      "app-1",
+      expect.objectContaining({ status: "SUBMITTED" }),
+    );
+  });
+
+  it("không cho gỡ giấy tờ không thuộc hồ sơ, và không ghi gì cả", async () => {
+    await expect(
+      organizationApplicationService.updateApplication("app-1", "track", {
+        removeDocumentIds: ["doc-of-someone-else"],
+      }),
+    ).rejects.toMatchObject({
+      statusResponse: { code: "ORGANIZATION_DOCUMENT_NOT_FOUND" },
+    });
+    expect(softDeleteDocumentMock).not.toHaveBeenCalled();
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it("chặn khi tổng số giấy tờ sau khi nộp lại vượt hạn mức", async () => {
+    findByIdWithRelationsMock.mockResolvedValue({
+      ...application(),
+      documents: attached(["d1", "d2", "d3", "d4"]),
+    });
+    findDocumentsByIdsMock.mockResolvedValue([
+      { id: "n1", submissionEmail: EMAIL },
+      { id: "n2", submissionEmail: EMAIL },
+    ]);
+
+    await expect(
+      organizationApplicationService.updateApplication("app-1", "track", {
+        documentIds: ["n1", "n2"],
+      }),
+    ).rejects.toMatchObject({
+      statusResponse: { code: "ORGANIZATION_DOCUMENT_LIMIT" },
+    });
+    expect(attachDocumentsMock).not.toHaveBeenCalled();
+  });
+
+  it("chỉ sửa được khi admin đang yêu cầu bổ sung", async () => {
+    findByIdMock.mockResolvedValue(application("SUBMITTED"));
+
+    await expect(
+      organizationApplicationService.updateApplication("app-1", "track", {}),
+    ).rejects.toMatchObject({
+      statusResponse: { code: "ORGANIZATION_APPLICATION_NOT_EDITABLE" },
+    });
+  });
+
+  it("upload giấy tờ bằng link tra cứu chỉ khi đang cần bổ sung", async () => {
+    findByIdMock.mockResolvedValue(application("UNDER_REVIEW"));
+
+    await expect(
+      organizationApplicationService.presignDocumentForApplication(
+        "app-1",
+        "track",
+        {
+          docType: "OTHER",
+          fileName: "a.pdf",
+          mimeType: "application/pdf",
+          sizeBytes: 100,
+        },
+      ),
+    ).rejects.toMatchObject({
+      statusResponse: { code: "ORGANIZATION_APPLICATION_NOT_EDITABLE" },
+    });
+    expect(createSignedUploadMock).not.toHaveBeenCalled();
   });
 });

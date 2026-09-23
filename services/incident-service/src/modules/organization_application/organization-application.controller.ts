@@ -127,6 +127,31 @@ export class OrganizationApplicationController {
     },
   ];
 
+  presignDocumentForApplication = [
+    param("id").isUUID(),
+    query("token").notEmpty().trim(),
+    body("docType").notEmpty().trim().isLength({ max: 32 }),
+    body("fileName").notEmpty().trim().isLength({ max: 255 }),
+    body("mimeType").notEmpty().trim().isLength({ max: 100 }),
+    body("sizeBytes").isInt({ min: 1 }).toInt(),
+
+    async (req: Request, res: Response): Promise<void> => {
+      if (failedValidation(req, res)) return;
+      try {
+        const result =
+          await organizationApplicationService.presignDocumentForApplication(
+            req.params.id,
+            String(req.query.token),
+            req.body as PresignApplicationDocumentBody,
+          );
+        return sendSuccess(res, HTTP_STATUS.CREATED, result);
+      } catch (error) {
+        if (sendHttpErrorResponse(res, error)) return;
+        throw error;
+      }
+    },
+  ];
+
   /* ------------------------------------------------------------------ */
   /* P2 — submit / track / edit / withdraw                               */
   /* ------------------------------------------------------------------ */
@@ -192,6 +217,8 @@ export class OrganizationApplicationController {
     body("channels").optional().isArray({ min: 1 }),
     body("documentIds").optional().isArray({ max: 5 }),
     body("documentIds.*").optional().isUUID(),
+    body("removeDocumentIds").optional().isArray({ max: 5 }),
+    body("removeDocumentIds.*").optional().isUUID(),
 
     async (req: Request, res: Response): Promise<void> => {
       if (failedValidation(req, res)) return;
