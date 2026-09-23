@@ -23,6 +23,19 @@ router.post(
 );
 
 /**
+ * @route   GET /api/v1/organization-applications/email-otp/link
+ * @desc    Resolve the link mailed with the code to its address, so the form can reopen with
+ *          the email locked. Grants nothing by itself; the code still has to be verified.
+ * @access  Public
+ * @query   token
+ */
+router.get(
+  "/email-otp/link",
+  applicationPublicLimiter,
+  organizationApplicationController.resolveEmailLink,
+);
+
+/**
  * @route   POST /api/v1/organization-applications/email-otp/verify
  * @desc    Exchange the code for a single-use submission token (valid 30 minutes).
  * @access  Public

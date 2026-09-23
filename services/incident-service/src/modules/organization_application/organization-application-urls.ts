@@ -17,3 +17,8 @@ export function buildApplicationTrackUrl(
 export function buildOrgAccountActivationUrl(token: string): string {
   return `${frontendBaseUrl()}/activate-organization?token=${encodeURIComponent(token)}`;
 }
+
+/** Reopens the form on the code step, with the address from the mail already locked in. */
+export function buildApplicationResumeUrl(token: string): string {
+  return `${frontendBaseUrl()}/organizations/apply?t=${encodeURIComponent(token)}`;
+}

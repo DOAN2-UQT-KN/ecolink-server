@@ -133,7 +133,7 @@ export class OrganizationApplicationService {
     submissionToken: string,
     body: CreateApplicationBody,
     submittedByUserId?: string,
-  ): Promise<ApplicationPublicResponse> {
+  ): Promise<{ application: ApplicationPublicResponse; trackingToken: string }> {
     if (!body.consent) {
       throw new HttpError(
         HTTP_STATUS.INVALID_INPUT.withMessage(
@@ -224,7 +224,13 @@ export class OrganizationApplicationService {
       );
     });
 
-    return this.toPublicResponse(created, []);
+    // The submission token already proved this browser owns the mailbox, so it may hold the
+    // same tracking credential the acknowledgement mail carries — the landing page needs it
+    // to show the application without a trip to the inbox.
+    return {
+      application: this.toPublicResponse(created, []),
+      trackingToken: tracking.token,
+    };
   }
 
   /** Resubmission after a reviewer asked for more information. */

@@ -12,6 +12,12 @@ export const OtpPurpose = {
    * applicant follows the same link repeatedly while the review runs.
    */
   TRACKING: "TRACKING",
+  /**
+   * Opaque token in the "continue your application" link mailed alongside the code. It only
+   * reveals which address the code went to, so the form can reopen with the email locked;
+   * the code itself still has to be typed. Lives exactly as long as the code it travels with.
+   */
+  LINK: "LINK",
 } as const;
 
 export type OtpPurposeValue = (typeof OtpPurpose)[keyof typeof OtpPurpose];

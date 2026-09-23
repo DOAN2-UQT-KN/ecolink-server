@@ -60,12 +60,14 @@ export function enqueueApplicationOtpEmail(params: {
   toEmail: string;
   otp: string;
   expiresInMinutes: number;
+  applyUrl: string;
   locale?: string;
 }): Promise<void> {
   return enqueueJob("ORG_APPLICATION_OTP", {
     toEmail: params.toEmail,
     otp: params.otp,
     expiresInMinutes: String(params.expiresInMinutes),
+    applyUrl: params.applyUrl,
     locale: params.locale ?? "vi",
   });
 }

@@ -35,11 +35,33 @@ export class OrganizationApplicationController {
       if (failedValidation(req, res)) return;
       try {
         const { email } = req.body as RequestApplicationOtpBody;
-        const { expiresAt } =
+        const { sentAt, expiresAt } =
           await organizationApplicationOtpService.requestOtp(email);
         return sendSuccess(res, HTTP_STATUS.OK, {
           sent: true,
+          sentAt: sentAt.toISOString(),
           expiresAt: expiresAt.toISOString(),
+        });
+      } catch (error) {
+        if (sendHttpErrorResponse(res, error)) return;
+        throw error;
+      }
+    },
+  ];
+
+  resolveEmailLink = [
+    query("token").notEmpty().trim().isLength({ max: 128 }),
+
+    async (req: Request, res: Response): Promise<void> => {
+      if (failedValidation(req, res)) return;
+      try {
+        const result = await organizationApplicationOtpService.resolveEmailLink(
+          String(req.query.token),
+        );
+        return sendSuccess(res, HTTP_STATUS.OK, {
+          email: result.email,
+          sentAt: result.sentAt.toISOString(),
+          expiresAt: result.expiresAt.toISOString(),
         });
       } catch (error) {
         if (sendHttpErrorResponse(res, error)) return;
@@ -125,14 +147,17 @@ export class OrganizationApplicationController {
         return sendError(res, HTTP_STATUS.SUBMISSION_TOKEN_INVALID);
       }
       try {
-        const application =
+        const { application, trackingToken } =
           await organizationApplicationService.createApplication(
             submissionEmail,
             submissionToken,
             req.body as CreateApplicationBody,
             req.user?.userId,
           );
-        return sendSuccess(res, HTTP_STATUS.CREATED, { application });
+        return sendSuccess(res, HTTP_STATUS.CREATED, {
+          application,
+          trackingToken,
+        });
       } catch (error) {
         if (sendHttpErrorResponse(res, error)) return;
         throw error;

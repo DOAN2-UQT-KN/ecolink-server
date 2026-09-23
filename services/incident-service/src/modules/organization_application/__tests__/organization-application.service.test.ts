@@ -165,7 +165,10 @@ describe("OrganizationApplicationService.createApplication", () => {
         "sub-token",
         validBody(),
       ),
-    ).resolves.toMatchObject({ id: "app-1" });
+    ).resolves.toMatchObject({
+      application: { id: "app-1" },
+      trackingToken: "track-token",
+    });
   });
 
   it("không cho gắn giấy tờ của hòm mail khác", async () => {
