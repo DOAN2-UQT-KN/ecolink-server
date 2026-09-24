@@ -21,6 +21,8 @@ const findByIdWithRelationsMock = jest.fn();
 const softDeleteDocumentMock = jest.fn();
 const updateMock = jest.fn();
 const resolveTrackingTokenMock = jest.fn();
+const findDocumentByIdMock = jest.fn();
+const downloadMock = jest.fn();
 
 jest.mock("../organization-application.repository", () => ({
   organizationApplicationRepository: {
@@ -37,6 +39,7 @@ jest.mock("../organization-application.repository", () => ({
     findByIdWithRelations: (...a: unknown[]) => findByIdWithRelationsMock(...a),
     softDeleteDocument: (...a: unknown[]) => softDeleteDocumentMock(...a),
     update: (...a: unknown[]) => updateMock(...a),
+    findDocumentById: (...a: unknown[]) => findDocumentByIdMock(...a),
   },
 }));
 
@@ -55,6 +58,7 @@ jest.mock("../organization-application-notify.client", () => ({
 jest.mock("../storage/cloudinary-document-storage", () => ({
   documentStorage: {
     createSignedUpload: (...a: unknown[]) => createSignedUploadMock(...a),
+    download: (...a: unknown[]) => downloadMock(...a),
   },
 }));
 
@@ -415,5 +419,69 @@ describe("OrganizationApplicationService.updateApplication", () => {
       statusResponse: { code: "ORGANIZATION_APPLICATION_NOT_EDITABLE" },
     });
     expect(createSignedUploadMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("OrganizationApplicationService.openDocumentForApplicant", () => {
+  const doc = (overrides: Record<string, unknown> = {}) => ({
+    id: "doc-1",
+    applicationId: "app-1",
+    docType: "BUSINESS_LICENSE",
+    storageKey: "key",
+    format: "pdf",
+    fileName: "giay-phep.pdf",
+    purgedAt: null,
+    ...overrides,
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    resolveTrackingTokenMock.mockResolvedValue(EMAIL);
+    findByIdMock.mockResolvedValue({ id: "app-1", contactEmail: EMAIL });
+    findDocumentByIdMock.mockResolvedValue(doc());
+    downloadMock.mockResolvedValue({
+      stream: {},
+      contentType: "application/pdf",
+    });
+    recordEventMock.mockResolvedValue(undefined);
+  });
+
+  it("mở được giấy tờ của chính hồ sơ và ghi lại lượt xem không có actor", async () => {
+    const file = await organizationApplicationService.openDocumentForApplicant(
+      "app-1",
+      "track",
+      "doc-1",
+    );
+
+    expect(file.fileName).toBe("giay-phep.pdf");
+    expect(recordEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: "DOCUMENT_VIEWED",
+        actorId: null,
+        payload: expect.objectContaining({ viewer: "applicant" }),
+      }),
+    );
+  });
+
+  it("không mở được giấy tờ thuộc hồ sơ khác", async () => {
+    findDocumentByIdMock.mockResolvedValue(doc({ applicationId: "app-2" }));
+
+    await expect(
+      organizationApplicationService.openDocumentForApplicant("app-1", "track", "doc-1"),
+    ).rejects.toMatchObject({
+      statusResponse: { code: "ORGANIZATION_DOCUMENT_NOT_FOUND" },
+    });
+    expect(downloadMock).not.toHaveBeenCalled();
+  });
+
+  it("giấy tờ đã bị xoá theo chính sách lưu trữ thì trả 404", async () => {
+    findDocumentByIdMock.mockResolvedValue(doc({ purgedAt: new Date() }));
+
+    await expect(
+      organizationApplicationService.openDocumentForApplicant("app-1", "track", "doc-1"),
+    ).rejects.toMatchObject({
+      statusResponse: { code: "ORGANIZATION_DOCUMENT_NOT_FOUND" },
+    });
+    expect(recordEventMock).not.toHaveBeenCalled();
   });
 });

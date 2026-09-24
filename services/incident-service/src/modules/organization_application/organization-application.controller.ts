@@ -15,6 +15,7 @@ import {
 } from "./organization-application.dto";
 import { organizationApplicationOtpService } from "./organization-application-otp.service";
 import { organizationApplicationService } from "./organization-application.service";
+import { sendDocumentStream } from "./document-stream";
 
 function failedValidation(req: Request, res: Response): boolean {
   const errors = validationResult(req);
@@ -234,6 +235,28 @@ export class OrganizationApplicationController {
             req.body as UpdateApplicationBody,
           );
         return sendSuccess(res, HTTP_STATUS.OK, { application });
+      } catch (error) {
+        if (sendHttpErrorResponse(res, error)) return;
+        throw error;
+      }
+    },
+  ];
+
+  openDocument = [
+    param("id").isUUID(),
+    param("docId").isUUID(),
+    query("token").notEmpty().trim(),
+
+    async (req: Request, res: Response): Promise<void> => {
+      if (failedValidation(req, res)) return;
+      try {
+        const file =
+          await organizationApplicationService.openDocumentForApplicant(
+            req.params.id,
+            String(req.query.token),
+            req.params.docId,
+          );
+        sendDocumentStream(res, file);
       } catch (error) {
         if (sendHttpErrorResponse(res, error)) return;
         throw error;

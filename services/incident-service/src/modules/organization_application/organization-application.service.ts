@@ -179,6 +179,48 @@ export class OrganizationApplicationService {
     return this.presignDocument(email, input);
   }
 
+  /**
+   * Lets the applicant re-open a document they attached, from the tracking link. Logged like
+   * a reviewer's view (without an actor), so the audit trail shows every read of the file.
+   */
+  async openDocumentForApplicant(
+    applicationId: string,
+    trackingToken: string,
+    documentId: string,
+  ) {
+    const email =
+      await organizationApplicationOtpService.resolveTrackingToken(
+        trackingToken,
+      );
+    await this.loadForApplicant(applicationId, email);
+
+    const document =
+      await organizationApplicationRepository.findDocumentById(documentId);
+    if (!document || document.applicationId !== applicationId) {
+      throw new HttpError(HTTP_STATUS.ORGANIZATION_DOCUMENT_NOT_FOUND);
+    }
+    if (document.purgedAt) {
+      throw new HttpError(
+        HTTP_STATUS.ORGANIZATION_DOCUMENT_NOT_FOUND.withMessage(
+          "This document has been erased by the retention policy",
+        ),
+      );
+    }
+
+    await organizationApplicationRepository.recordEvent({
+      applicationId,
+      eventType: ApplicationEventType.DOCUMENT_VIEWED,
+      actorId: null,
+      payload: { documentId, docType: document.docType, viewer: "applicant" },
+    });
+
+    const download = await documentStorage.download(
+      document.storageKey,
+      document.format,
+    );
+    return { ...download, fileName: document.fileName ?? documentId };
+  }
+
   /* ------------------------------------------------------------------ */
   /* P2 — submission                                                     */
   /* ------------------------------------------------------------------ */

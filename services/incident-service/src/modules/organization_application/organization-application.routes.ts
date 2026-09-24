@@ -88,6 +88,19 @@ router.post(
 );
 
 /**
+ * @route   GET /api/v1/organization-applications/:id/documents/:docId/file
+ * @desc    Stream one attached document back to the applicant (inline, for preview). Each
+ *          open is logged as DOCUMENT_VIEWED without an actor.
+ * @access  Public with the `token` from the tracking link
+ * @query   token
+ */
+router.get(
+  "/:id/documents/:docId/file",
+  applicationPublicLimiter,
+  organizationApplicationController.openDocument,
+);
+
+/**
  * @route   GET /api/v1/organization-applications/:id
  * @desc    Follow a submission. Review-only fields (legal representative) are never included.
  * @access  Public with the `token` from the tracking link

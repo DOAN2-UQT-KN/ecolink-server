@@ -11,6 +11,7 @@ import {
   RequestMoreInfoBody,
 } from "./organization-application.dto";
 import { organizationApplicationAdminService } from "./organization-application-admin.service";
+import { sendDocumentStream } from "./document-stream";
 
 /**
  * Resolves the caller and refuses anyone who is not an admin. Mirrors the inline check in
@@ -113,20 +114,7 @@ export class OrganizationApplicationAdminController {
           req.params.docId,
           adminUserId,
         );
-        res.setHeader("Content-Type", file.contentType);
-        res.setHeader("Cache-Control", "no-store, private");
-        res.setHeader(
-          "Content-Disposition",
-          `inline; filename="${encodeURIComponent(file.fileName)}"`,
-        );
-        if (file.contentLength) {
-          res.setHeader("Content-Length", String(file.contentLength));
-        }
-        file.stream.pipe(res);
-        file.stream.on("error", (err: unknown) => {
-          console.error("[organization-application] document stream:", err);
-          res.destroy();
-        });
+        sendDocumentStream(res, file);
       } catch (error) {
         if (sendHttpErrorResponse(res, error)) return;
         throw error;
