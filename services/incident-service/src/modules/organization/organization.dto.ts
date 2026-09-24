@@ -1,3 +1,5 @@
+import type { KycStatus, OrgType, TrustTier } from "@da2/constants";
+
 /**
  * Body for POST /api/v1/organizations (internal only; JSON keys may be snake_case and the
  * middleware normalizes them to camelCase).
@@ -66,6 +68,17 @@ export interface OrganizationResponse {
   status: number;
   /** Admin ban reason; `null` when the organization has not been banned (or reason was cleared). */
   rejectReason: string | null;
+  /** Kind of legal entity, confirmed by an admin on approval; `null` for legacy rows. */
+  orgType: OrgType | null;
+  /** Verdict on the legal paperwork. Independent of `trustTier`. */
+  kycStatus: KycStatus;
+  /** Blue Tick level; the client shows the tick only for `VERIFIED` and not `tickSuspended`. */
+  trustTier: TrustTier;
+  /** True while a violation is being handled: the tick is hidden. */
+  tickSuspended: boolean;
+  verifiedAt: Date | null;
+  /** Lane B ticks expire and must be re-assessed; `null` for lane A. */
+  verificationExpiresAt: Date | null;
   /**
    * The dedicated ORG login. `null` between the two halves of provisioning (the organization
    * row is written before the account exists), so consumers must tolerate it.

@@ -3,6 +3,9 @@ import { HttpError, HTTP_STATUS } from "../../constants/http-status";
 import prisma from "../../config/prisma.client";
 import { Prisma, type Organization } from "@prisma/client";
 import {
+  type KycStatus,
+  type OrgType,
+  type TrustTier,
   nextUniqueOrganizationSlug,
   slugifyOrganizationName,
 } from "@da2/constants";
@@ -90,6 +93,12 @@ export class OrganizationService {
       isEmailVerified: row.isEmailVerified,
       status: row.status,
       rejectReason: row.rejectReason ?? null,
+      orgType: (row.orgType as OrgType | null) ?? null,
+      kycStatus: row.kycStatus as KycStatus,
+      trustTier: row.trustTier as TrustTier,
+      tickSuspended: row.tickSuspended,
+      verifiedAt: row.verifiedAt,
+      verificationExpiresAt: row.verificationExpiresAt,
       ownerId: row.ownerId,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
