@@ -159,6 +159,8 @@ export interface ApplicationEventResponse {
   id: string;
   eventType: string;
   actorId: string | null;
+  /** Display name of the actor from identity-service; null for the applicant or on lookup failure. */
+  actorName: string | null;
   payload: unknown;
   createdAt: Date;
 }

@@ -23,6 +23,7 @@ const countDocumentsMock = jest.fn();
 const rejectedEmailMock = jest.fn();
 const needsInfoEmailMock = jest.fn();
 const issueTrackingTokenMock = jest.fn();
+const fetchOwnersMock = jest.fn();
 
 jest.mock("../../../config/prisma.client", () => ({
   __esModule: true,
@@ -55,6 +56,12 @@ jest.mock("../organization-application-otp.service", () => ({
   organizationApplicationOtpService: {
     issueTrackingToken: (...a: unknown[]) => issueTrackingTokenMock(...a),
   },
+}));
+
+jest.mock("../../organization/identity-user.client", () => ({
+  fetchOrganizationOwnersByUserIds: (...a: unknown[]) => fetchOwnersMock(...a),
+  getUserProfile: (m: Map<string, unknown>, id: string) =>
+    m.get(id.toLowerCase().trim()),
 }));
 
 import { organizationApplicationAdminService } from "../organization-application-admin.service";
@@ -376,5 +383,57 @@ describe("OrganizationApplicationAdminService.requestMoreInfo", () => {
     });
     expect(updateMock).not.toHaveBeenCalled();
     expect(needsInfoEmailMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("OrganizationApplicationAdminService.getById — activity log", () => {
+  const withEvents = () => ({
+    ...application(),
+    documents: [],
+    events: [
+      {
+        id: "ev-1",
+        eventType: "CLAIMED",
+        actorId: ADMIN,
+        payload: {},
+        createdAt: new Date(),
+      },
+      {
+        id: "ev-2",
+        eventType: "RESUBMITTED",
+        actorId: null,
+        payload: { changedFields: ["profile.name"] },
+        createdAt: new Date(),
+      },
+    ],
+    createdAt: new Date(),
+    reviewedAt: null,
+    organizationId: null,
+    reviewNote: null,
+    rejectReason: null,
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    findByIdWithRelationsMock.mockResolvedValue(withEvents());
+  });
+
+  it("gắn tên người thao tác lấy từ identity, người nộp ẩn danh thì để trống", async () => {
+    fetchOwnersMock.mockResolvedValue(
+      new Map([[ADMIN, { id: ADMIN, name: "Admin Một", avatar: null, bio: null }]]),
+    );
+
+    const result = await organizationApplicationAdminService.getById("app-1");
+
+    expect(fetchOwnersMock).toHaveBeenCalledWith([ADMIN]);
+    expect(result.events.map((e) => e.actorName)).toEqual(["Admin Một", null]);
+  });
+
+  it("identity không trả về gì thì tên để trống, vẫn trả hồ sơ bình thường", async () => {
+    fetchOwnersMock.mockResolvedValue(new Map());
+
+    const result = await organizationApplicationAdminService.getById("app-1");
+
+    expect(result.events.map((e) => e.actorName)).toEqual([null, null]);
   });
 });

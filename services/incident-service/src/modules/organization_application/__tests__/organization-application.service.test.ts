@@ -324,6 +324,37 @@ describe("OrganizationApplicationService.updateApplication", () => {
     );
   });
 
+  it("ghi lại tên các trường người nộp đã sửa, không ghi giá trị", async () => {
+    findByIdMock.mockResolvedValue({
+      ...application(),
+      profile: {
+        name: "Tên cũ",
+        contactEmail: EMAIL,
+        logoUrl: "https://res.cloudinary.com/demo/logo.png",
+      },
+      channels: [{ type: "FACEBOOK_PAGE", url: "https://facebook.com/old", isPrimary: true }],
+    });
+
+    await organizationApplicationService.updateApplication("app-1", "track", {
+      orgType: "CLUB",
+      profile: {
+        name: "Tên mới",
+        contactEmail: EMAIL,
+        logoUrl: "https://res.cloudinary.com/demo/logo.png",
+      },
+      channels: [{ type: "FACEBOOK_PAGE", url: "https://facebook.com/new", isPrimary: true }],
+    });
+
+    expect(recordEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: "RESUBMITTED",
+        payload: expect.objectContaining({
+          changedFields: ["profile.name", "channels"],
+        }),
+      }),
+    );
+  });
+
   it("không cho gỡ giấy tờ không thuộc hồ sơ, và không ghi gì cả", async () => {
     await expect(
       organizationApplicationService.updateApplication("app-1", "track", {

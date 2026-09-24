@@ -19,6 +19,10 @@ import {
   ApplicationDecisionBody,
   PaginatedApplicationsResponse,
 } from "./organization-application.dto";
+import {
+  fetchOrganizationOwnersByUserIds,
+  getUserProfile,
+} from "../organization/identity-user.client";
 import { organizationApplicationRepository } from "./organization-application.repository";
 import {
   enqueueApplicationNeedsInfoEmail,
@@ -89,10 +93,21 @@ export class OrganizationApplicationAdminService {
     if (!application) {
       throw new HttpError(HTTP_STATUS.ORGANIZATION_APPLICATION_NOT_FOUND);
     }
+    // Names are a convenience for the activity log; an identity outage just leaves them null.
+    const actorIds = [
+      ...new Set(
+        application.events
+          .map((event) => event.actorId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    const actors = await fetchOrganizationOwnersByUserIds(actorIds);
+
     return this.toAdminResponse(
       application,
       application.documents,
       application.events,
+      (actorId) => getUserProfile(actors, actorId)?.name ?? null,
     );
   }
 
@@ -488,6 +503,7 @@ export class OrganizationApplicationAdminService {
     row: ApplicationRow,
     documents: DocumentRow[],
     events: EventRow[],
+    actorNameOf: (actorId: string) => string | null = () => null,
   ): ApplicationAdminResponse {
     return {
       ...organizationApplicationService.toPublicResponse(row, documents),
@@ -515,6 +531,7 @@ export class OrganizationApplicationAdminService {
         id: event.id,
         eventType: event.eventType,
         actorId: event.actorId,
+        actorName: event.actorId ? actorNameOf(event.actorId) : null,
         payload: event.payload,
         createdAt: event.createdAt,
       })),

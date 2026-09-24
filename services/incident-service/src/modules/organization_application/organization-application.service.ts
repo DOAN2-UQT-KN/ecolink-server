@@ -50,6 +50,36 @@ function isOneOf(value: string, allowed: Record<string, string>): boolean {
   return Object.values(allowed).includes(value);
 }
 
+/** Profile keys whose edits are worth telling a reviewer about (contact email is fixed). */
+const TRACKED_PROFILE_KEYS = [
+  "name",
+  "description",
+  "address",
+  "logoUrl",
+  "backgroundUrl",
+  "latitude",
+  "longitude",
+] as const;
+
+function diffProfile(
+  before: Partial<ApplicationProfileInput>,
+  after: ApplicationProfileInput,
+): string[] {
+  return TRACKED_PROFILE_KEYS.filter(
+    (key) => (before[key] ?? null) !== (after[key] ?? null),
+  ).map((key) => `profile.${key}`);
+}
+
+function channelsKey(channels: ApplicationChannelInput[]): string {
+  return JSON.stringify(
+    channels.map((channel) => ({
+      type: channel.type,
+      url: channel.url,
+      isPrimary: Boolean(channel.isPrimary),
+    })),
+  );
+}
+
 export class OrganizationApplicationService {
   /* ------------------------------------------------------------------ */
   /* P1 — documents                                                      */
@@ -282,6 +312,10 @@ export class OrganizationApplicationService {
       reviewNote: null,
     };
 
+    // Names of what the applicant edited, for the reviewer's activity log. Values are left
+    // out on purpose: the log must not become a second copy of the personal data.
+    const changedFields: string[] = [];
+
     if (body.orgType) {
       if (!isOneOf(body.orgType, OrgType)) {
         throw new HttpError(
@@ -289,17 +323,34 @@ export class OrganizationApplicationService {
         );
       }
       data.orgType = body.orgType;
+      if (body.orgType !== application.orgType) changedFields.push("orgType");
     }
     if (body.profile) {
-      data.profile = this.validateProfile(
+      const profile = this.validateProfile(
         body.profile,
         application.contactEmail,
-      ) as unknown as Prisma.InputJsonValue;
+      );
+      data.profile = profile as unknown as Prisma.InputJsonValue;
+      changedFields.push(
+        ...diffProfile(
+          (application.profile ?? {}) as unknown as Partial<ApplicationProfileInput>,
+          profile,
+        ),
+      );
     }
     if (body.channels) {
-      data.channels = this.validateChannels(
-        body.channels,
-      ) as unknown as Prisma.InputJsonValue;
+      const channels = this.validateChannels(body.channels);
+      data.channels = channels as unknown as Prisma.InputJsonValue;
+      if (
+        channelsKey(channels) !==
+        channelsKey(
+          Array.isArray(application.channels)
+            ? (application.channels as unknown as ApplicationChannelInput[])
+            : [],
+        )
+      ) {
+        changedFields.push("channels");
+      }
     }
     if (body.legalRepresentative) {
       const legalRep = this.validateLegalRepresentative(
@@ -314,6 +365,8 @@ export class OrganizationApplicationService {
         data.legalRepIdType = legalRep.idType;
         data.legalRepIdHash = legalRep.idHash;
         data.legalRepIdLast4 = legalRep.idLast4;
+        // The ID is only kept as a hash, so a replacement cannot be compared with the old one.
+        changedFields.push("legalRepresentative");
       }
     }
 
@@ -356,7 +409,8 @@ export class OrganizationApplicationService {
       applicationId: application.id,
       eventType: ApplicationEventType.RESUBMITTED,
       payload: {
-        addedDocumentIds: newDocumentIds,
+        changedFields,
+        addedDocumentIds: newDocumentIds.filter((id) => !currentIds.has(id)),
         removedDocumentIds: removeIds,
       },
     });
