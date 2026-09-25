@@ -1,5 +1,12 @@
-/** Body for POST /api/v1/organizations (JSON keys may be snake_case; middleware normalizes to camelCase). */
+import type { KycStatus, OrgType, TrustTier } from "@da2/constants";
+
+/**
+ * Body for POST /api/v1/organizations (internal only; JSON keys may be snake_case and the
+ * middleware normalizes them to camelCase).
+ */
 export interface CreateOrganizationBody {
+  /** Internal callers carry no JWT, so the owner is named in the body. */
+  ownerId: string;
   name: string;
   description?: string;
   descriptionVi?: string;
@@ -61,9 +68,24 @@ export interface OrganizationResponse {
   status: number;
   /** Admin ban reason; `null` when the organization has not been banned (or reason was cleared). */
   rejectReason: string | null;
-  ownerId: string;
-  /** Owner profile from identity-service (name, avatar, bio). */
-  owner: OrganizationOwnerResponse;
+  /** Kind of legal entity, confirmed by an admin on approval; `null` for legacy rows. */
+  orgType: OrgType | null;
+  /** Verdict on the legal paperwork. Independent of `trustTier`. */
+  kycStatus: KycStatus;
+  /** Blue Tick level; the client shows the tick only for `VERIFIED` and not `tickSuspended`. */
+  trustTier: TrustTier;
+  /** True while a violation is being handled: the tick is hidden. */
+  tickSuspended: boolean;
+  verifiedAt: Date | null;
+  /** Lane B ticks expire and must be re-assessed; `null` for lane A. */
+  verificationExpiresAt: Date | null;
+  /**
+   * The dedicated ORG login. `null` between the two halves of provisioning (the organization
+   * row is written before the account exists), so consumers must tolerate it.
+   */
+  ownerId: string | null;
+  /** Owner profile from identity-service; `null` while `ownerId` is null. */
+  owner: OrganizationOwnerResponse | null;
   /**
    * Active member count (owner is not stored in `organization_members` and is not included).
    * Included on GET /organizations and GET /organizations/my.
@@ -108,7 +130,7 @@ export interface OrganizationJoinRequestDetailResponse
   organization?: {
     id: string;
     name: string;
-    ownerId: string;
+    ownerId: string | null;
   };
 }
 

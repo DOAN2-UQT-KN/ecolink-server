@@ -60,6 +60,10 @@ export class GoogleOauthService
       });
     } else if (user.status === UserStatus.INACTIVE) {
       throw new Error("ACCOUNT_BANNED");
+    } else if (user.status === UserStatus.PENDING_ACTIVATION) {
+      // An org account must go through its activation link, not a Google sign-in that
+      // happens to use the same contact address.
+      throw new Error("ACCOUNT_PENDING_ACTIVATION");
     } else if (!user.emailVerified && profile.verified_email) {
       user = await userRepository.update(user.id, { emailVerified: true });
     }

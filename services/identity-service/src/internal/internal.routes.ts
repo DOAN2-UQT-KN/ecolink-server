@@ -50,6 +50,59 @@ router.post(
 );
 
 /**
+ * Incident-service: create (or return) the single login that operates an organization.
+ *
+ * Idempotent on `applicationId` — the caller reaches this through its outbox relay, which
+ * retries on any failure, and a retry must not create a second account.
+ */
+router.post(
+  "/users/provision-org-account",
+  body("applicationId").isUUID(),
+  body("organizationId").isUUID(),
+  body("email").isEmail(),
+  body("displayName").notEmpty().trim().isLength({ max: 200 }),
+  async (req, res): Promise<void> => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
+      return;
+    }
+
+    const { applicationId, organizationId, email, displayName } = req.body as {
+      applicationId: string;
+      organizationId: string;
+      email: string;
+      displayName: string;
+    };
+
+    try {
+      const result = await authService.provisionOrgAccount({
+        applicationId,
+        organizationId,
+        email,
+        displayName,
+      });
+      sendSuccess(res, HTTP_STATUS.CREATED, result);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to provision account";
+      if (msg === "ORG_ACCOUNT_EMAIL_TAKEN") {
+        // A human already signed up with the organization's contact address. Retrying will
+        // not help, so the caller gets a 409 and an admin has to resolve it.
+        sendError(
+          res,
+          HTTP_STATUS.CONFLICT.withMessage(
+            "An account already exists for this contact email",
+          ),
+        );
+        return;
+      }
+      console.error("Internal provision org account error:", e);
+      sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+    }
+  },
+);
+
+/**
  * Incident-service: validate link token, consume it, return org + email for incident DB update.
  */
 router.post(

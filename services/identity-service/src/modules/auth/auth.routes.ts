@@ -61,6 +61,13 @@ router.post("/request-password-reset", authController.requestPasswordReset);
 router.post("/reset-password", authController.resetPassword);
 
 /**
+ * @route   POST /api/v1/auth/activate-org-account
+ * @desc    Set the first password of a provisioned organization account
+ * @access  Public (single-use token from the activation email)
+ */
+router.post("/activate-org-account", authController.activateOrgAccount);
+
+/**
  * @route   GET /api/v1/auth/me
  * @desc    Get currently authenticated user profile
  * @access  Private

@@ -14,7 +14,8 @@ model User {
   id                String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   email             String  @unique
   name              String
-  password          String
+  /// NULL until an org account redeems its activation link and sets one.
+  password          String?
   avatar            String?
   bio               String?
   emailVerified     Boolean @default(false)
@@ -37,7 +38,12 @@ model User {
   roleId String @db.Uuid
   role   Role   @relation(fields: [roleId], references: [id])
 
-  /// 1 = ACTIVE, 2 = INACTIVE (banned)
+  /// PERSONAL = a human signing up; ORG = the single login provisioned for an organization.
+  accountType String @default("PERSONAL") @map("account_type") @db.VarChar(16)
+  /// Application this ORG account was provisioned for; makes provisioning idempotent.
+  provisionedFromApplicationId String? @unique @map("provisioned_from_application_id") @db.Uuid
+
+  /// 1 = ACTIVE, 2 = INACTIVE (banned), 3 = PENDING_ACTIVATION (org account, no password yet)
   status       Int     @default(1)
   rejectReason String? @map("reject_reason")
 

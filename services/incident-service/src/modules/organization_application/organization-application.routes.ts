@@ -1,0 +1,139 @@
+import { Router } from "express";
+import {
+  applicationPublicLimiter,
+  otpPerEmailLimiter,
+  otpPerIpLimiter,
+} from "../../middleware/rate-limit.middleware";
+import { organizationApplicationController } from "./organization-application.controller";
+import { requireSubmissionToken } from "./submission-token.middleware";
+
+const router = Router();
+
+/**
+ * @route   POST /api/v1/organization-applications/email-otp
+ * @desc    Mail a 6-digit code to the address an applicant claims to own. No login required.
+ * @access  Public (rate limited: 3 / email / hour, 10 / IP / hour)
+ * @body    { email }
+ */
+router.post(
+  "/email-otp",
+  otpPerIpLimiter,
+  otpPerEmailLimiter,
+  organizationApplicationController.requestOtp,
+);
+
+/**
+ * @route   GET /api/v1/organization-applications/email-otp/link
+ * @desc    Resolve the link mailed with the code to its address, so the form can reopen with
+ *          the email locked. Grants nothing by itself; the code still has to be verified.
+ * @access  Public
+ * @query   token
+ */
+router.get(
+  "/email-otp/link",
+  applicationPublicLimiter,
+  organizationApplicationController.resolveEmailLink,
+);
+
+/**
+ * @route   POST /api/v1/organization-applications/email-otp/verify
+ * @desc    Exchange the code for a single-use submission token (valid 30 minutes).
+ * @access  Public
+ * @body    { email, otp }
+ */
+router.post(
+  "/email-otp/verify",
+  applicationPublicLimiter,
+  organizationApplicationController.verifyOtp,
+);
+
+/**
+ * @route   POST /api/v1/organization-applications/documents/presign
+ * @desc    Signed parameters for uploading one legal document to private storage.
+ * @access  Public with `x-submission-token`
+ * @body    { doc_type, file_name, mime_type, size_bytes }
+ */
+router.post(
+  "/documents/presign",
+  applicationPublicLimiter,
+  requireSubmissionToken,
+  organizationApplicationController.presignDocument,
+);
+
+/**
+ * @route   POST /api/v1/organization-applications
+ * @desc    Submit an application. Burns the submission token and mails a tracking link.
+ * @access  Public with `x-submission-token`
+ * @body    { org_type, profile, channels, legal_representative?, document_ids?, consent }
+ */
+router.post(
+  "/",
+  applicationPublicLimiter,
+  requireSubmissionToken,
+  organizationApplicationController.createApplication,
+);
+
+/**
+ * @route   POST /api/v1/organization-applications/:id/documents/presign
+ * @desc    Upload slot for a resubmission (NEEDS_MORE_INFO only); the submission token is
+ *          spent by then, so the tracking link authorises it.
+ * @access  Public with the `token` from the tracking link
+ * @query   token
+ * @body    { doc_type, file_name, mime_type, size_bytes }
+ */
+router.post(
+  "/:id/documents/presign",
+  applicationPublicLimiter,
+  organizationApplicationController.presignDocumentForApplication,
+);
+
+/**
+ * @route   GET /api/v1/organization-applications/:id/documents/:docId/file
+ * @desc    Stream one attached document back to the applicant (inline, for preview). Each
+ *          open is logged as DOCUMENT_VIEWED without an actor.
+ * @access  Public with the `token` from the tracking link
+ * @query   token
+ */
+router.get(
+  "/:id/documents/:docId/file",
+  applicationPublicLimiter,
+  organizationApplicationController.openDocument,
+);
+
+/**
+ * @route   GET /api/v1/organization-applications/:id
+ * @desc    Follow a submission. Review-only fields (legal representative) are never included.
+ * @access  Public with the `token` from the tracking link
+ * @query   token
+ */
+router.get(
+  "/:id",
+  applicationPublicLimiter,
+  organizationApplicationController.getApplication,
+);
+
+/**
+ * @route   PUT /api/v1/organization-applications/:id
+ * @desc    Resubmit after a reviewer requested more information (NEEDS_MORE_INFO only).
+ * @access  Public with the `token` from the tracking link
+ * @query   token
+ */
+router.put(
+  "/:id",
+  applicationPublicLimiter,
+  organizationApplicationController.updateApplication,
+);
+
+/**
+ * @route   POST /api/v1/organization-applications/:id/withdraw
+ * @desc    Withdraw a submission that has not been decided yet.
+ * @access  Public with the `token` from the tracking link
+ * @query   token
+ */
+router.post(
+  "/:id/withdraw",
+  applicationPublicLimiter,
+  organizationApplicationController.withdrawApplication,
+);
+
+export default router;

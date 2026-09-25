@@ -12,7 +12,7 @@ const app = express();
 const port = Number(process.env.PORT) || 8081;
 
 const IDENTITY_SERVICE_URL =
-  process.env.IDENTITY_SERVICE_URL || "http://localhost:3000";
+  process.env.IDENTITY_SERVICE_URL || "http://localhost:4000";
 const INCIDENT_SERVICE_URL =
   process.env.INCIDENT_SERVICE_URL || "http://localhost:3001";
 const REWARD_SERVICE_URL =
@@ -164,6 +164,21 @@ app.use(
   "/api/v1/organizations",
   proxy(INCIDENT_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/organizations${req.url}`,
+  }),
+);
+
+app.use(
+  "/api/v1/organization-applications",
+  proxy(INCIDENT_SERVICE_URL, {
+    proxyReqPathResolver: (req) => `/api/v1/organization-applications${req.url}`,
+  }),
+);
+
+app.use(
+  "/api/v1/admin/organization-applications",
+  proxy(INCIDENT_SERVICE_URL, {
+    proxyReqPathResolver: (req) =>
+      `/api/v1/admin/organization-applications${req.url}`,
   }),
 );
 

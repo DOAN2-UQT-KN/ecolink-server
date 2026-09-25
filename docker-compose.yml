@@ -1,6 +1,32 @@
 services:
+  # Shared PostGIS instance for all services. Exposed on 5433 to match the
+  # DATABASE_URL in every service .env (5432 is left free for any other local
+  # Postgres). init-postgis-db.sql creates the 5 service databases and enables
+  # the postgis / uuid-ossp extensions on first boot.
+  #
+  # NOTE: this adopts the container that used to be created by hand. The data
+  # lives in the pre-existing (anonymous) volume declared as external below, so
+  # compose must never be pointed at a fresh volume or the local data is gone.
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: postgres-ecolink
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-postgis-db.sql:/docker-entrypoint-initdb.d/init-postgis-db.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   localstack:
-    image: localstack/localstack
+    image: localstack/localstack:3.8  # latest is the pro image and needs a license
     ports:
       - "4566:4566"
     environment:
@@ -38,3 +64,8 @@ services:
 
 volumes:
   localstack_data:
+  # Pre-existing volume from the hand-made postgres-ecolink container; holds the
+  # local identitydb/incidentdb/notificationdb/rewarddb/aidb data.
+  postgres_data:
+    external: true
+    name: 53ca2c6c00ef04e3fc99efd51115f4e5c2902962e2f5719baa403bcc76a95011

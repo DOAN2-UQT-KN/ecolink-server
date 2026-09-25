@@ -163,7 +163,11 @@ export class CampaignService {
     ]);
 
     const orgOwnerIds = [
-      ...new Set(organizations.map((o) => o.ownerId).filter(Boolean)),
+      ...new Set(
+        organizations
+          .map((o) => o.ownerId)
+          .filter((id): id is string => Boolean(id)),
+      ),
     ];
     const identityUserIds = [...new Set([...managerIds, ...orgOwnerIds])];
     const profileMap = await fetchOrganizationOwnersByUserIds(identityUserIds);
@@ -184,10 +188,11 @@ export class CampaignService {
 
     return campaigns.map((campaign) => {
       const orgRow = organizationMap.get(campaign.organizationId);
-      const orgOwner = orgRow
-        ? (getUserProfile(profileMap, orgRow.ownerId) ??
-          this.ownerFallback(orgRow.ownerId))
-        : null;
+      const orgOwner =
+        orgRow && orgRow.ownerId
+          ? (getUserProfile(profileMap, orgRow.ownerId) ??
+            this.ownerFallback(orgRow.ownerId))
+          : null;
       const organization = orgRow
         ? {
             background_url: orgRow.background_url,

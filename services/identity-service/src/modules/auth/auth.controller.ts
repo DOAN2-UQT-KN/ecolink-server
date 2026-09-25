@@ -61,6 +61,17 @@ export class AuthController {
           HTTP_STATUS.FORBIDDEN.withMessage("Account banned"),
         );
       }
+      if (
+        error instanceof Error &&
+        error.message === "ACCOUNT_PENDING_ACTIVATION"
+      ) {
+        return sendError(
+          res,
+          HTTP_STATUS.FORBIDDEN.withMessage(
+            "This organization account has not been activated yet. Use the activation link sent to your contact email.",
+          ),
+        );
+      }
       console.error("Google callback error:", error);
       sendError(
         res,
@@ -150,6 +161,21 @@ export class AuthController {
           return sendError(
             res,
             HTTP_STATUS.FORBIDDEN.withMessage("Account banned"),
+          );
+        }
+        if (
+          error instanceof Error &&
+          error.message === "ACCOUNT_PENDING_ACTIVATION"
+        ) {
+          logger.warn(
+            { email: req.body?.email },
+            "login on account pending activation",
+          );
+          return sendError(
+            res,
+            HTTP_STATUS.FORBIDDEN.withMessage(
+              "This organization account has not been activated yet. Use the activation link sent to your contact email.",
+            ),
           );
         }
         logger.error({ email: req.body?.email, err: error }, "login failed");
@@ -292,6 +318,55 @@ export class AuthController {
         );
       } catch (error) {
         console.error("Reset password error:", error);
+        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+      }
+    },
+  ];
+
+  /**
+   * Redeems the link mailed to an approved organization and sets its first password.
+   * Separate from `resetPassword` because the token type, the account state it lifts, and
+   * the audience are all different.
+   */
+  activateOrgAccount = [
+    body("token").notEmpty().withMessage("Activation token is required"),
+    body("newPassword")
+      .isLength({ min: 8 })
+      .withMessage("New password must be at least 8 characters long"),
+
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: errors.array(),
+        });
+      }
+
+      try {
+        const { token, newPassword } = req.body as {
+          token: string;
+          newPassword: string;
+        };
+        const success = await authService.activateOrgAccount(
+          token,
+          newPassword,
+        );
+
+        if (!success) {
+          return sendError(
+            res,
+            HTTP_STATUS.BAD_REQUEST.withMessage(
+              "Invalid or expired activation token",
+            ),
+          );
+        }
+
+        sendSuccess(
+          res,
+          HTTP_STATUS.OK.withMessage("Organization account activated"),
+        );
+      } catch (error) {
+        console.error("Activate organization account error:", error);
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     },

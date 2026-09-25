@@ -9,6 +9,7 @@ import {
   type SendNotificationJobPayload,
 } from "../../queue/notification-job.types";
 import type { NotificationItemData } from "./notification.dto";
+import { allowsDirectToEmail } from "./direct-email-kinds";
 
 const KIND_VALUES = Object.values(NotificationKind).filter(
   (v): v is NotificationKind => typeof v === "string",
@@ -85,12 +86,12 @@ export const notificationController = {
         const p = jobPayload.payload ?? {};
         const directTo =
           typeof p.toEmail === "string" ? p.toEmail.trim() : "";
-        if (jobPayload.kind === NotificationKind.ORGANIZATION_CONTACT_VERIFY) {
+        if (allowsDirectToEmail(jobPayload.kind)) {
           if (!directTo) {
             sendError(
               res,
               HTTP_STATUS.BAD_REQUEST.withMessage(
-                "payload.toEmail is required for ORGANIZATION_CONTACT_VERIFY",
+                `payload.toEmail is required for ${jobPayload.kind}`,
               ),
             );
             return;

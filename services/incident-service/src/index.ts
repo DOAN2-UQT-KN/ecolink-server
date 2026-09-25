@@ -13,6 +13,8 @@ import sosRoutes from "./modules/sos/sos.routes";
 import voteRoutes from "./modules/vote/vote.routes";
 import savedResourceRoutes from "./modules/saved_resource/saved_resource.routes";
 import organizationRoutes from "./modules/organization/organization.routes";
+import organizationApplicationRoutes from "./modules/organization_application/organization-application.routes";
+import organizationApplicationAdminRoutes from "./modules/organization_application/organization-application-admin.routes";
 import adminMediaRoutes from "./modules/admin_media/admin-media.routes";
 import { errorHandler } from "./middleware/error.middleware";
 import {
@@ -30,6 +32,8 @@ const swaggerRouteFiles = routeModulesFrom(__dirname, [
   "modules/vote/vote.routes",
   "modules/saved_resource/saved_resource.routes",
   "modules/organization/organization.routes",
+  "modules/organization_application/organization-application.routes",
+  "modules/organization_application/organization-application-admin.routes",
   "modules/admin_media/admin-media.routes",
 ]);
 
@@ -75,6 +79,11 @@ app.use("/api/v1/sos", sosRoutes);
 app.use("/api/v1/incident/votes", voteRoutes);
 app.use("/incident/saved-resources", savedResourceRoutes);
 app.use("/api/v1/organizations", organizationRoutes);
+app.use("/api/v1/organization-applications", organizationApplicationRoutes);
+app.use(
+  "/api/v1/admin/organization-applications",
+  organizationApplicationAdminRoutes,
+);
 app.use("/api/v1/admin/media", adminMediaRoutes);
 
 // Error handling

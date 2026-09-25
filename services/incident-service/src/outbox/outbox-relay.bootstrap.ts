@@ -1,7 +1,33 @@
 import prisma from "../config/prisma.client";
+import { organizationAccountProvisionPublisher } from "../modules/organization_application/organization-account-provision.publisher";
 import { OutboxRelay } from "./outbox-relay";
+import {
+  OutboxPublisher,
+  RoutingOutboxPublisher,
+  SqsOutboxPublisher,
+} from "./outbox-publisher";
+import { OutboxEventType } from "./outbox.types";
 
 let relay: OutboxRelay | null = null;
+
+/**
+ * Composition root for the relay's transports. Kept here rather than inside `OutboxRelay`
+ * so the outbox core stays free of feature-module imports.
+ */
+function buildPublisher(): OutboxPublisher {
+  // The SQS client is only constructed if a reward event actually shows up, so a deployment
+  // without queue configuration can still run the provisioning route.
+  let sqs: OutboxPublisher | null = null;
+  const lazySqs = (): OutboxPublisher => (sqs ??= new SqsOutboxPublisher());
+
+  return new RoutingOutboxPublisher(
+    {
+      [OutboxEventType.ORG_ACCOUNT_PROVISION]:
+        organizationAccountProvisionPublisher,
+    },
+    lazySqs,
+  );
+}
 
 export function startOutboxRelay(): void {
   if (process.env.OUTBOX_RELAY_ENABLED === "false") {
@@ -9,7 +35,7 @@ export function startOutboxRelay(): void {
     return;
   }
   if (relay) return;
-  relay = new OutboxRelay(prisma);
+  relay = new OutboxRelay(prisma, buildPublisher());
   relay.start();
 }
 

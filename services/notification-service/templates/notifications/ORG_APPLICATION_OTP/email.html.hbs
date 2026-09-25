@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+  <body style="font-family: system-ui, sans-serif; line-height: 1.5; color: #111">
+    <p>Hello,</p>
+    <p>
+      Your verification code for registering an organization on
+      <strong>{{appName}}</strong> is:
+    </p>
+    <p style="font-size: 1.75rem; font-weight: 700; letter-spacing: 0.25em">
+      {{otp}}
+    </p>
+    <p style="font-size: 0.875rem; color: #444">
+      The code expires in {{expiresInMinutes}} minutes and can only be used once.
+    </p>
+    <p>
+      <a href="{{applyUrl}}" style="color: #0b57d0">Reopen the code page</a>
+    </p>
+    <p style="font-size: 0.875rem; color: #444">
+      Closed the application page? Open this link to enter the code without requesting a new email.<br />
+      {{applyUrl}}
+    </p>
+    <p style="font-size: 0.875rem; color: #666">
+      If you did not start an organization registration, you can ignore this message.
+    </p>
+  </body>
+</html>

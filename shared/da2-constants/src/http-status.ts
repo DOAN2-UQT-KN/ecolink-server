@@ -92,6 +92,62 @@ export const HTTP_STATUS = {
     "ORGANIZATION_ALREADY_EXISTS",
   ),
 
+  ORGANIZATION_APPLICATION_NOT_FOUND: createStatus(
+    404,
+    "Organization application not found",
+    "ORGANIZATION_APPLICATION_NOT_FOUND",
+  ),
+  ORGANIZATION_APPLICATION_ALREADY_OPEN: createStatus(
+    409,
+    "An open application already exists for this contact email",
+    "ORGANIZATION_APPLICATION_ALREADY_OPEN",
+  ),
+  ORGANIZATION_APPLICATION_NOT_EDITABLE: createStatus(
+    409,
+    "Application can only be edited while more information is requested",
+    "ORGANIZATION_APPLICATION_NOT_EDITABLE",
+  ),
+  ORGANIZATION_APPLICATION_ALREADY_DECIDED: createStatus(
+    409,
+    "Application has already been decided",
+    "ORGANIZATION_APPLICATION_ALREADY_DECIDED",
+  ),
+  ORGANIZATION_APPLICATION_CLAIMED: createStatus(
+    409,
+    "Application is already claimed by another reviewer",
+    "ORGANIZATION_APPLICATION_CLAIMED",
+  ),
+  ORGANIZATION_DOCUMENT_NOT_FOUND: createStatus(
+    404,
+    "Organization application document not found",
+    "ORGANIZATION_DOCUMENT_NOT_FOUND",
+  ),
+  ORGANIZATION_DOCUMENT_LIMIT: createStatus(
+    422,
+    "Too many documents for this application",
+    "ORGANIZATION_DOCUMENT_LIMIT",
+  ),
+  LEGAL_REP_LIMIT_EXCEEDED: createStatus(
+    422,
+    "This legal representative already reaches the maximum number of organizations",
+    "LEGAL_REP_LIMIT_EXCEEDED",
+  ),
+  OTP_INVALID: createStatus(
+    400,
+    "Verification code is invalid or has expired",
+    "OTP_INVALID",
+  ),
+  OTP_TOO_MANY_ATTEMPTS: createStatus(
+    429,
+    "Too many verification attempts, request a new code",
+    "OTP_TOO_MANY_ATTEMPTS",
+  ),
+  SUBMISSION_TOKEN_INVALID: createStatus(
+    401,
+    "Submission token is missing, invalid or has expired",
+    "SUBMISSION_TOKEN_INVALID",
+  ),
+
   TASK_NOT_FOUND: createStatus(404, "Task not found", "TASK_NOT_FOUND"),
   TASK_ALREADY_ASSIGNED: createStatus(
     409,

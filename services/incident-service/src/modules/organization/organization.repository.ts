@@ -31,7 +31,9 @@ export class OrganizationRepository {
         logoUrl: data.logoUrl,
         backgroundUrl: data.backgroundUrl ?? null,
         contactEmail: data.contactEmail ?? null,
-        status: GlobalStatus._STATUS_PENDING,
+        // `organizations` only holds approved rows now, so there is no PENDING state to
+        // start from; matches the column default.
+        status: GlobalStatus._STATUS_ACTIVE,
         ownerId: data.ownerId,
         createdBy: data.createdBy ?? data.ownerId,
       },
