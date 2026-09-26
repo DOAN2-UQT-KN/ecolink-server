@@ -19,11 +19,20 @@ async function main() {
       contactEmail: "contact@ecovolunteers.local",
       isEmailVerified: true,
       status: 1,
-      ownerId: "11111111-1111-1111-1111-111111111141",
       createdBy: "11111111-1111-1111-1111-111111111141",
       updatedBy: "11111111-1111-1111-1111-111111111141",
       createdAt: new Date("2026-01-01T00:00:00Z"),
       updatedAt: new Date("2026-01-01T00:00:00Z"),
+      // The DB refuses an organization without an owner membership; nested create keeps
+      // both in one transaction.
+      members: {
+        create: {
+          userId: "11111111-1111-1111-1111-111111111141",
+          role: "OWNER",
+          source: "INTERNAL",
+          createdBy: "11111111-1111-1111-1111-111111111141",
+        },
+      },
     },
   });
   console.log("✅ Organizations created");

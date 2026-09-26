@@ -5,8 +5,6 @@ import prisma from "../../config/prisma.client";
 export const OtpPurpose = {
   /** 6-digit code mailed to the address the applicant claims to own. */
   OTP: "OTP",
-  /** Opaque token handed out once the code was accepted; unlocks the submit endpoints. */
-  SUBMISSION: "SUBMISSION",
   /**
    * Long-lived token in the tracking link. Unlike the other two it is not single-use — the
    * applicant follows the same link repeatedly while the review runs.

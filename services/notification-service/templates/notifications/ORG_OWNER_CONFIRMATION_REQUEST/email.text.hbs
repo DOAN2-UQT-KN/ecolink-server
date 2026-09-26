@@ -1,0 +1,15 @@
+Hello {{{candidateName}}},
+
+{{{submitterEmail}}} is registering an organization on {{{appName}}} and listed you as an owner{{#if isLegalRep}} and its legal representative{{/if}}.
+
+Organization: {{{organizationName}}}
+Type: {{{orgType}}}
+{{#if address}}Address: {{{address}}}
+{{/if}}{{#if otherOwners}}Other owners: {{{otherOwners}}}
+{{/if}}
+Nobody gets a role on your behalf: the application only goes to review once every owner has confirmed.
+
+Review and confirm (or choose "I'm not involved"):
+{{{confirmUrl}}}
+
+The link expires on {{{expiresAt}}} ({{{expiresInDays}}} days).

@@ -19,10 +19,10 @@ describe("RoutingOutboxPublisher", () => {
     const fallback = jest.fn();
 
     const publisher = new RoutingOutboxPublisher(
-      { [OutboxEventType.ORG_ACCOUNT_PROVISION]: provisioning },
+      { [OutboxEventType.ORG_OWNER_ONBOARD]: provisioning },
       fallback,
     );
-    await publisher.publish(event(OutboxEventType.ORG_ACCOUNT_PROVISION));
+    await publisher.publish(event(OutboxEventType.ORG_OWNER_ONBOARD));
 
     expect(provisioning.publish).toHaveBeenCalled();
     // Fallback là SQS và chỉ được dựng khi thật sự cần, nên không được đụng tới.
@@ -46,12 +46,12 @@ describe("RoutingOutboxPublisher", () => {
     };
 
     const publisher = new RoutingOutboxPublisher(
-      { [OutboxEventType.ORG_ACCOUNT_PROVISION]: failing },
+      { [OutboxEventType.ORG_OWNER_ONBOARD]: failing },
       () => failing,
     );
 
     await expect(
-      publisher.publish(event(OutboxEventType.ORG_ACCOUNT_PROVISION)),
+      publisher.publish(event(OutboxEventType.ORG_OWNER_ONBOARD)),
     ).rejects.toThrow("identity down");
   });
 });

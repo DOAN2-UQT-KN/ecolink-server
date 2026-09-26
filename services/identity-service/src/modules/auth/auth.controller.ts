@@ -6,6 +6,10 @@ import {
   sendSuccess,
 } from "../../constants/http-status";
 import { authService } from "./auth.service";
+import {
+  buildAccountActivationUrl,
+  enqueueAccountActivationEmail,
+} from "./account-activation-notify.client";
 import { GoogleOauthCallbackQuery } from "./auth.dto";
 import { googleOauthService } from "../oauth/google.service";
 import logger from "../../logger";
@@ -67,9 +71,7 @@ export class AuthController {
       ) {
         return sendError(
           res,
-          HTTP_STATUS.FORBIDDEN.withMessage(
-            "This organization account has not been activated yet. Use the activation link sent to your contact email.",
-          ),
+          HTTP_STATUS.ACCOUNT_PENDING_ACTIVATION,
         );
       }
       console.error("Google callback error:", error);
@@ -173,9 +175,7 @@ export class AuthController {
           );
           return sendError(
             res,
-            HTTP_STATUS.FORBIDDEN.withMessage(
-              "This organization account has not been activated yet. Use the activation link sent to your contact email.",
-            ),
+            HTTP_STATUS.ACCOUNT_PENDING_ACTIVATION,
           );
         }
         logger.error({ email: req.body?.email, err: error }, "login failed");
@@ -324,11 +324,11 @@ export class AuthController {
   ];
 
   /**
-   * Redeems the link mailed to an approved organization and sets its first password.
-   * Separate from `resetPassword` because the token type, the account state it lifts, and
-   * the audience are all different.
+   * Redeems the activation link mailed to an approved owner who had no account, and sets the
+   * first password. Separate from `resetPassword`: the token type, the account state it lifts
+   * and the audience all differ.
    */
-  activateOrgAccount = [
+  activateAccount = [
     body("token").notEmpty().withMessage("Activation token is required"),
     body("newPassword")
       .isLength({ min: 8 })
@@ -347,10 +347,7 @@ export class AuthController {
           token: string;
           newPassword: string;
         };
-        const success = await authService.activateOrgAccount(
-          token,
-          newPassword,
-        );
+        const success = await authService.activateAccount(token, newPassword);
 
         if (!success) {
           return sendError(
@@ -361,14 +358,52 @@ export class AuthController {
           );
         }
 
-        sendSuccess(
-          res,
-          HTTP_STATUS.OK.withMessage("Organization account activated"),
-        );
+        sendSuccess(res, HTTP_STATUS.OK.withMessage("Account activated"));
       } catch (error) {
-        console.error("Activate organization account error:", error);
+        console.error("Activate account error:", error);
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
+    },
+  ];
+
+  /**
+   * "Resend activation email". Always answers the same way so it cannot be used to find out
+   * which emails have a pending account.
+   */
+  resendActivation = [
+    body("email").isEmail().withMessage("Valid email is required"),
+
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: errors.array(),
+        });
+      }
+
+      try {
+        const issued = await authService.requestActivationResend(
+          String(req.body.email),
+        );
+        if (issued) {
+          await enqueueAccountActivationEmail({
+            toEmail: issued.email,
+            fullName: issued.name,
+            activationUrl: buildAccountActivationUrl(issued.token),
+            expiresInHours: authService.activationTtlHours(),
+          }).catch((err) => {
+            console.error("Resend activation email failed:", err);
+          });
+        }
+      } catch (error) {
+        console.error("Resend activation error:", error);
+      }
+      sendSuccess(
+        res,
+        HTTP_STATUS.OK.withMessage(
+          "If this email has an account waiting for activation, a new link is on its way",
+        ),
+      );
     },
   ];
 

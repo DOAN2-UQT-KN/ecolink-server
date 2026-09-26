@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+  <body style="font-family: system-ui, sans-serif; line-height: 1.5; color: #111">
+    <p>Hello {{candidateName}},</p>
+    <p>
+      <strong>{{submitterEmail}}</strong> is registering an organization on
+      <strong>{{appName}}</strong> and listed you as an owner{{#if isLegalRep}}
+      and its <strong>legal representative</strong>{{/if}}.
+    </p>
+    <table style="border-collapse: collapse; font-size: 0.95rem">
+      <tr><td style="padding: 2px 12px 2px 0; color: #555">Organization</td><td><strong>{{organizationName}}</strong></td></tr>
+      <tr><td style="padding: 2px 12px 2px 0; color: #555">Type</td><td>{{orgType}}</td></tr>
+      {{#if address}}<tr><td style="padding: 2px 12px 2px 0; color: #555">Address</td><td>{{address}}</td></tr>{{/if}}
+      {{#if otherOwners}}<tr><td style="padding: 2px 12px 2px 0; color: #555; vertical-align: top">Other owners</td><td>{{otherOwners}}</td></tr>{{/if}}
+    </table>
+    <p>Nobody gets a role on your behalf: the application only goes to review once every owner has confirmed.</p>
+    <p>
+      <a href="{{confirmUrl}}" style="display: inline-block; padding: 10px 18px; background: #0b57d0; color: #fff; border-radius: 6px; text-decoration: none">Review and confirm</a>
+    </p>
+    <p style="font-size: 0.875rem; color: #444">
+      Not involved? Open the same link and choose <strong>"I'm not involved"</strong>.
+      The link expires on {{expiresAt}} ({{expiresInDays}} days).
+    </p>
+    <p style="font-size: 0.875rem; color: #444">{{confirmUrl}}</p>
+  </body>
+</html>

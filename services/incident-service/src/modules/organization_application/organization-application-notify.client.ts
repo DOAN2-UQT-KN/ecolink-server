@@ -72,6 +72,45 @@ export function enqueueApplicationOtpEmail(params: {
   });
 }
 
+/**
+ * Sent when the code opens a new draft: the link back to the editor, so the applicant can
+ * close the tab and return once they have every owner's details.
+ */
+export function enqueueApplicationDraftStartedEmail(params: {
+  toEmail: string;
+  applicationCode: string;
+  editUrl: string;
+  expiresInDays: number;
+  locale?: string;
+}): Promise<void> {
+  return enqueueJob("ORG_APPLICATION_DRAFT_STARTED", {
+    toEmail: params.toEmail,
+    applicationCode: params.applicationCode,
+    editUrl: params.editUrl,
+    expiresInDays: String(params.expiresInDays),
+    locale: params.locale ?? "vi",
+  });
+}
+
+/** The submitter pressed "Save draft"; at most once an hour per application. */
+export function enqueueApplicationDraftUpdatedEmail(params: {
+  toEmail: string;
+  applicationCode: string;
+  organizationName: string;
+  savedAt: string;
+  editUrl: string;
+  locale?: string;
+}): Promise<void> {
+  return enqueueJob("ORG_APPLICATION_DRAFT_UPDATED", {
+    toEmail: params.toEmail,
+    applicationCode: params.applicationCode,
+    organizationName: params.organizationName,
+    savedAt: params.savedAt,
+    editUrl: params.editUrl,
+    locale: params.locale ?? "vi",
+  });
+}
+
 /** Acknowledgement carrying the tracking code and link. */
 export function enqueueApplicationReceivedEmail(params: {
   toEmail: string;
@@ -125,22 +164,133 @@ export function enqueueApplicationRejectedEmail(params: {
 }
 
 /**
- * Link that lets the organization set the first password of its ORG account.
- * Deliberately a link, not a temporary password: a password mailed in plain text lives in
- * that inbox forever.
+ * Asks one owner candidate to confirm. Carries a summary of the application so the person
+ * knows exactly what they are agreeing to, including who else is on it.
  */
-export function enqueueOrgAccountActivationEmail(params: {
+export function enqueueOwnerConfirmationRequestEmail(params: {
   toEmail: string;
+  candidateName: string;
+  organizationName: string;
+  orgType: string;
+  address: string;
+  submitterEmail: string;
+  otherOwners: string;
+  isLegalRep: boolean;
+  confirmUrl: string;
+  expiresAt: Date;
+  expiresInDays: number;
+  locale?: string;
+}): Promise<void> {
+  return enqueueJob("ORG_OWNER_CONFIRMATION_REQUEST", {
+    toEmail: params.toEmail,
+    candidateName: params.candidateName,
+    organizationName: params.organizationName,
+    orgType: params.orgType,
+    address: params.address,
+    submitterEmail: params.submitterEmail,
+    otherOwners: params.otherOwners,
+    isLegalRep: params.isLegalRep ? "true" : "",
+    confirmUrl: params.confirmUrl,
+    expiresAt: params.expiresAt.toISOString().slice(0, 10),
+    expiresInDays: String(params.expiresInDays),
+    locale: params.locale ?? "vi",
+  });
+}
+
+/** Tells the submitter that a candidate pressed "I'm not involved". */
+export function enqueueOwnerDeclinedEmail(params: {
+  toEmail: string;
+  organizationName: string;
+  ownerEmail: string;
+  reason: string;
+  trackUrl: string;
+  locale?: string;
+}): Promise<void> {
+  return enqueueJob("ORG_OWNER_DECLINED", {
+    toEmail: params.toEmail,
+    organizationName: params.organizationName,
+    ownerEmail: params.ownerEmail,
+    reason: params.reason,
+    trackUrl: params.trackUrl,
+    locale: params.locale ?? "vi",
+  });
+}
+
+/** Tells the submitter that one or more candidates let the confirmation link expire. */
+export function enqueueOwnerConfirmationExpiredEmail(params: {
+  toEmail: string;
+  organizationName: string;
+  ownerEmails: string;
+  trackUrl: string;
+  locale?: string;
+}): Promise<void> {
+  return enqueueJob("ORG_OWNER_CONFIRMATION_EXPIRED", {
+    toEmail: params.toEmail,
+    organizationName: params.organizationName,
+    ownerEmails: params.ownerEmails,
+    trackUrl: params.trackUrl,
+    locale: params.locale ?? "vi",
+  });
+}
+
+/**
+ * Owners who already confirmed hear that the application was withdrawn. Silence would leave
+ * them wondering why nothing happened after they agreed.
+ */
+export function enqueueApplicationWithdrawnNoticeEmail(params: {
+  toEmail: string;
+  organizationName: string;
+  submitterEmail: string;
+  locale?: string;
+}): Promise<void> {
+  return enqueueJob("ORG_APPLICATION_WITHDRAWN_NOTICE", {
+    toEmail: params.toEmail,
+    organizationName: params.organizationName,
+    submitterEmail: params.submitterEmail,
+    locale: params.locale ?? "vi",
+  });
+}
+
+/**
+ * First-password link for an owner who had no Ecolink account. Deliberately a link, not a
+ * temporary password: a password mailed in plain text lives in that inbox forever.
+ */
+export function enqueueAccountActivationEmail(params: {
+  toEmail: string;
+  fullName: string;
   organizationName: string;
   activationUrl: string;
   expiresInHours: number;
   locale?: string;
 }): Promise<void> {
-  return enqueueJob("ORG_ACCOUNT_ACTIVATION", {
+  return enqueueJob("ACCOUNT_ACTIVATION", {
     toEmail: params.toEmail,
+    fullName: params.fullName,
     organizationName: params.organizationName,
     activationUrl: params.activationUrl,
     expiresInHours: String(params.expiresInHours),
+    locale: params.locale ?? "vi",
+  });
+}
+
+/**
+ * For an owner who already had an account. Never a password-reset link: sending one to
+ * someone using their account normally is indistinguishable from phishing.
+ */
+export function enqueueOwnerAttachedEmail(params: {
+  toEmail: string;
+  fullName: string;
+  organizationName: string;
+  isLegalRep: boolean;
+  manageUrl: string;
+  locale?: string;
+}): Promise<void> {
+  return enqueueJob("ORG_OWNER_ATTACHED", {
+    toEmail: params.toEmail,
+    fullName: params.fullName,
+    organizationName: params.organizationName,
+    isLegalRep: params.isLegalRep ? "true" : "",
+    manageUrl: params.manageUrl,
     locale: params.locale ?? "vi",
   });
 }

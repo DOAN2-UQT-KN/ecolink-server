@@ -162,14 +162,16 @@ export class CampaignService {
       this.getReportsByCampaignIds(campaignIds, viewerUserId),
     ]);
 
-    const orgOwnerIds = [
+    // The person who created the campaign on the organization's behalf. An organization
+    // never logs in, so this is always a real user.
+    const creatorIds = [
       ...new Set(
-        organizations
-          .map((o) => o.ownerId)
+        campaigns
+          .map((c) => c.createdBy)
           .filter((id): id is string => Boolean(id)),
       ),
     ];
-    const identityUserIds = [...new Set([...managerIds, ...orgOwnerIds])];
+    const identityUserIds = [...new Set([...managerIds, ...creatorIds])];
     const profileMap = await fetchOrganizationOwnersByUserIds(identityUserIds);
 
     const organizationMap = new Map(
@@ -181,18 +183,16 @@ export class CampaignService {
           logo_url: org.logoUrl,
           name: org.name,
           slug: org.slug,
-          ownerId: org.ownerId,
         },
       ]),
     );
 
     return campaigns.map((campaign) => {
       const orgRow = organizationMap.get(campaign.organizationId);
-      const orgOwner =
-        orgRow && orgRow.ownerId
-          ? (getUserProfile(profileMap, orgRow.ownerId) ??
-            this.ownerFallback(orgRow.ownerId))
-          : null;
+      const orgOwner = campaign.createdBy
+        ? (getUserProfile(profileMap, campaign.createdBy) ??
+          this.ownerFallback(campaign.createdBy))
+        : null;
       const organization = orgRow
         ? {
             background_url: orgRow.background_url,
@@ -406,10 +406,11 @@ export class CampaignService {
         HTTP_STATUS.NOT_FOUND.withMessage("Organization not found"),
       );
     }
-    if (org.ownerId !== userId) {
+    const isOwner = await organizationMemberRepository.isOwner(org.id, userId);
+    if (!isOwner) {
       throw new HttpError(
         HTTP_STATUS.FORBIDDEN.withMessage(
-          "Only the organization owner can create campaigns",
+          "Only an organization owner can create campaigns",
         ),
       );
     }
@@ -1703,11 +1704,10 @@ export class CampaignService {
     );
   }
 
-  private async resolveOrganizationOwnerId(
+  private async resolveOrganizationOwnerIds(
     organizationId: string,
-  ): Promise<string | null> {
-    const org = await organizationRepository.findById(organizationId);
-    return org?.ownerId ?? null;
+  ): Promise<string[]> {
+    return organizationMemberRepository.findOwnerUserIds(organizationId);
   }
 
   private async notifyOrganizationOwnerOfCompletionReview(args: {
@@ -1721,8 +1721,8 @@ export class CampaignService {
     outcome: "approved" | "rejected";
     rejectReason?: string;
   }): Promise<void> {
-    const ownerId = await this.resolveOrganizationOwnerId(args.organizationId);
-    if (!ownerId) {
+    const ownerIds = await this.resolveOrganizationOwnerIds(args.organizationId);
+    if (ownerIds.length === 0) {
       return;
     }
 
@@ -1730,7 +1730,7 @@ export class CampaignService {
     if (args.outcome === "approved") {
       await enqueueWebsiteNotificationsToUsers({
         kind: "CAMPAIGN_COMPLETION_APPROVED_BY_ADMIN",
-        userIds: [ownerId],
+        userIds: ownerIds,
         payload: {
           campaignId: args.campaignId,
           ...titlePayload,
@@ -1741,7 +1741,7 @@ export class CampaignService {
 
     await enqueueWebsiteNotificationsToUsers({
       kind: "CAMPAIGN_COMPLETION_REJECTED_BY_ADMIN",
-      userIds: [ownerId],
+      userIds: ownerIds,
       payload: {
         campaignId: args.campaignId,
         rejectReason: args.rejectReason ?? "",

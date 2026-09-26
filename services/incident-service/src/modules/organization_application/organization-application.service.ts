@@ -3,31 +3,68 @@ import { randomBytes } from "crypto";
 import {
   APPLICATION_DOCUMENT_LIMITS,
   ApplicationDocType,
+  DRAFT_UPDATE_NOTICE_COOLDOWN_MS,
   ApplicationEventType,
   ApplicationStatus,
-  DEFAULT_LEGAL_REP_ORG_LIMIT,
+  ApplicationType,
+  EDITABLE_APPLICATION_STATUSES,
   LegalRepIdType,
+  MAX_PENDING_INVITES_PER_EMAIL,
+  OWNER_ORG_LIMIT,
   OrgType,
   OrganizationChannelType,
+  OwnerCandidateStatus,
+  isOpenApplicationStatus,
 } from "@da2/constants";
-import { HTTP_STATUS, HttpError } from "../../constants/http-status";
+import prisma from "../../config/prisma.client";
+import {
+  HTTP_STATUS,
+  HttpError,
+  HttpStatusResponse,
+} from "../../constants/http-status";
 import { hashOpaqueToken } from "../../utils/token-hash";
+import { organizationMemberRepository } from "../organization/organization_member.repository";
 import {
   ApplicationChannelInput,
   ApplicationDocumentResponse,
   ApplicationProfileInput,
   ApplicationPublicResponse,
-  CreateApplicationBody,
+  ConfirmationRequestMeta,
   LegalRepresentativeInput,
+  LegalRepresentativeResponse,
   PresignApplicationDocumentResponse,
-  UpdateApplicationBody,
+  SaveApplicationBody,
+  SubmitApplicationBody,
 } from "./organization-application.dto";
 import { organizationApplicationRepository } from "./organization-application.repository";
 import { organizationApplicationOtpService } from "./organization-application-otp.service";
 import {
+  enqueueApplicationDraftStartedEmail,
+  enqueueApplicationDraftUpdatedEmail,
   enqueueApplicationReceivedEmail,
+  enqueueApplicationWithdrawnNoticeEmail,
 } from "./organization-application-notify.client";
-import { buildApplicationTrackUrl } from "./organization-application-urls";
+import {
+  buildApplicationEditUrl,
+  buildApplicationTrackUrl,
+} from "./organization-application-urls";
+import {
+  IdentityUserStatus,
+  lookupUsersByEmails,
+} from "./identity-owner.client";
+import {
+  CandidateRow,
+  buildConfirmationSnapshot,
+  fingerprint,
+  newConfirmToken,
+  nextResendAt,
+  normalizeEmail,
+  normalizeOwnerInputs,
+  sendConfirmationEmails,
+  snapshotsDiffer,
+  toOwnerCandidateResponse,
+  validateOwnerList,
+} from "./owner-candidates";
 import { documentStorage } from "./storage/cloudinary-document-storage";
 
 type DocumentRow = {
@@ -40,6 +77,8 @@ type DocumentRow = {
   createdAt: Date;
 };
 
+type ApplicationRow = Prisma.OrganizationApplicationGetPayload<object>;
+
 const MIME_TO_FORMAT: Record<string, string> = {
   "application/pdf": "pdf",
   "image/jpeg": "jpg",
@@ -50,48 +89,116 @@ function isOneOf(value: string, allowed: Record<string, string>): boolean {
   return Object.values(allowed).includes(value);
 }
 
-/** Profile keys whose edits are worth telling a reviewer about (contact email is fixed). */
-const TRACKED_PROFILE_KEYS = [
-  "name",
-  "description",
-  "address",
-  "logoUrl",
-  "backgroundUrl",
-  "latitude",
-  "longitude",
-] as const;
-
-function diffProfile(
-  before: Partial<ApplicationProfileInput>,
-  after: ApplicationProfileInput,
-): string[] {
-  return TRACKED_PROFILE_KEYS.filter(
-    (key) => (before[key] ?? null) !== (after[key] ?? null),
-  ).map((key) => `profile.${key}`);
+function isEditable(status: string): boolean {
+  return (EDITABLE_APPLICATION_STATUSES as readonly string[]).includes(status);
 }
 
-function channelsKey(channels: ApplicationChannelInput[]): string {
-  return JSON.stringify(
-    channels.map((channel) => ({
-      type: channel.type,
-      url: channel.url,
-      isPrimary: Boolean(channel.isPrimary),
-    })),
-  );
+/**
+ * Fields whose edits are worth telling a reviewer about on resubmission. Only fingerprints
+ * are stored, so the activity log never becomes a second copy of the personal data.
+ */
+const TRACKED_FIELDS = [
+  "orgType",
+  "profile.name",
+  "profile.description",
+  "profile.address",
+  "profile.logoUrl",
+  "profile.backgroundUrl",
+  "profile.contactEmail",
+  "profile.location",
+  "channels",
+  "legalRepresentative",
+  "owners",
+] as const;
+
+function withEmailDetails(
+  status: HttpStatusResponse,
+  email: string,
+): HttpError {
+  return new HttpError(status.withMessage(`${status.message}: ${email}`));
 }
 
 export class OrganizationApplicationService {
   /* ------------------------------------------------------------------ */
-  /* P1 — documents                                                      */
+  /* Step 1 — open the draft                                             */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * Called once the OTP passed. Hands back the mailbox's open application if it has one (so a
+   * second OTP resumes rather than duplicates), otherwise creates a draft with the submitter
+   * already on the owner list. The tracking link is issued now, not at submission: collecting
+   * several owners' details can take days, and the draft must survive that.
+   */
+  async openDraftForEmail(rawEmail: string): Promise<{
+    applicationId: string;
+    trackingToken: string;
+    resumed: boolean;
+  }> {
+    const email = normalizeEmail(rawEmail);
+    const existing =
+      await organizationApplicationRepository.findOpenBySubmitterEmail(email);
+
+    let applicationId: string;
+    let applicationCode: string;
+    let resumed = false;
+    if (existing) {
+      applicationId = existing.id;
+      applicationCode = existing.code;
+      resumed = true;
+    } else {
+      const now = new Date();
+      const created = await this.createWithUniqueCode({
+        type: ApplicationType.NEW_ORG,
+        status: ApplicationStatus.DRAFT,
+        submitterEmail: email,
+        contactEmail: email,
+        profile: { contactEmail: email },
+        emailVerifiedAt: now,
+        owners: {
+          create: [{ email, fullName: email.split("@")[0], isLegalRep: true }],
+        },
+      });
+      applicationId = created.id;
+      applicationCode = created.code;
+    }
+
+    const tracking =
+      await organizationApplicationOtpService.issueTrackingToken(email);
+
+    // Only a new draft gets the email: on resume the applicant already holds a link, and
+    // re-entering the code must not become a way to flood the inbox. A failed send never
+    // blocks the draft — the same code step can always reopen it.
+    if (!resumed) {
+      void enqueueApplicationDraftStartedEmail({
+        toEmail: email,
+        applicationCode,
+        editUrl: buildApplicationEditUrl(applicationId, tracking.token),
+        expiresInDays: Math.round(
+          (tracking.expiresAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000),
+        ),
+      }).catch((err) => {
+        console.warn(
+          "[organization-application] failed to send the draft link email",
+          err,
+        );
+      });
+    }
+
+    return { applicationId, trackingToken: tracking.token, resumed };
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Documents                                                           */
   /* ------------------------------------------------------------------ */
 
   /**
    * Hands the browser short-lived, signed parameters so it can upload one file straight to
-   * private storage. The row is created up front (still detached from any application) so the
-   * submit call can verify the file really came from this mailbox.
+   * private storage. The row is created detached; the next draft save attaches it after
+   * checking it came from this mailbox.
    */
-  async presignDocument(
-    submissionEmail: string,
+  async presignDocumentForApplication(
+    applicationId: string,
+    trackingToken: string,
     input: {
       docType: string;
       fileName: string;
@@ -99,6 +206,12 @@ export class OrganizationApplicationService {
       sizeBytes: number;
     },
   ): Promise<PresignApplicationDocumentResponse> {
+    const application = await this.loadForApplicant(applicationId, trackingToken);
+    if (!isEditable(application.status)) {
+      throw new HttpError(HTTP_STATUS.ORGANIZATION_APPLICATION_NOT_EDITABLE);
+    }
+    const email = application.submitterEmail;
+
     if (!isOneOf(input.docType, ApplicationDocType)) {
       throw new HttpError(
         HTTP_STATUS.INVALID_INPUT.withMessage("Unknown document type"),
@@ -123,21 +236,19 @@ export class OrganizationApplicationService {
     }
 
     const pending =
-      await organizationApplicationRepository.countUnattachedDocuments(
-        submissionEmail,
-      );
+      await organizationApplicationRepository.countUnattachedDocuments(email);
     if (pending >= APPLICATION_DOCUMENT_LIMITS.maxFilesPerApplication) {
       throw new HttpError(HTTP_STATUS.ORGANIZATION_DOCUMENT_LIMIT);
     }
 
     const signed = documentStorage.createSignedUpload({
-      scopeId: hashOpaqueToken(submissionEmail).slice(0, 16),
+      scopeId: hashOpaqueToken(email).slice(0, 16),
       docType: input.docType,
       format,
     });
 
     const document = await organizationApplicationRepository.createDocument({
-      submissionEmail,
+      submissionEmail: email,
       docType: input.docType,
       storageKey: signed.storageKey,
       format,
@@ -155,31 +266,6 @@ export class OrganizationApplicationService {
   }
 
   /**
-   * Upload slot for a resubmission. The one-time submission token is spent by then, so the
-   * tracking link is the credential — and only while a reviewer is waiting on more paperwork.
-   */
-  async presignDocumentForApplication(
-    applicationId: string,
-    trackingToken: string,
-    input: {
-      docType: string;
-      fileName: string;
-      mimeType: string;
-      sizeBytes: number;
-    },
-  ): Promise<PresignApplicationDocumentResponse> {
-    const email =
-      await organizationApplicationOtpService.resolveTrackingToken(
-        trackingToken,
-      );
-    const application = await this.loadForApplicant(applicationId, email);
-    if (application.status !== ApplicationStatus.NEEDS_MORE_INFO) {
-      throw new HttpError(HTTP_STATUS.ORGANIZATION_APPLICATION_NOT_EDITABLE);
-    }
-    return this.presignDocument(email, input);
-  }
-
-  /**
    * Lets the applicant re-open a document they attached, from the tracking link. Logged like
    * a reviewer's view (without an actor), so the audit trail shows every read of the file.
    */
@@ -188,11 +274,7 @@ export class OrganizationApplicationService {
     trackingToken: string,
     documentId: string,
   ) {
-    const email =
-      await organizationApplicationOtpService.resolveTrackingToken(
-        trackingToken,
-      );
-    await this.loadForApplicant(applicationId, email);
+    await this.loadForApplicant(applicationId, trackingToken);
 
     const document =
       await organizationApplicationRepository.findDocumentById(documentId);
@@ -222,200 +304,63 @@ export class OrganizationApplicationService {
   }
 
   /* ------------------------------------------------------------------ */
-  /* P2 — submission                                                     */
+  /* Draft                                                               */
   /* ------------------------------------------------------------------ */
 
-  async createApplication(
-    submissionEmail: string,
-    submissionToken: string,
-    body: CreateApplicationBody,
-    submittedByUserId?: string,
-  ): Promise<{ application: ApplicationPublicResponse; trackingToken: string }> {
-    if (!body.consent) {
-      throw new HttpError(
-        HTTP_STATUS.INVALID_INPUT.withMessage(
-          "Consent to personal data processing is required",
-        ),
-      );
-    }
-    if (!isOneOf(body.orgType, OrgType)) {
-      throw new HttpError(
-        HTTP_STATUS.INVALID_INPUT.withMessage("Unknown organization type"),
-      );
-    }
-
-    const profile = this.validateProfile(body.profile, submissionEmail);
-    const channels = this.validateChannels(body.channels);
-    const legalRep = this.validateLegalRepresentative(body.legalRepresentative);
-
-    const existingOpen =
-      await organizationApplicationRepository.findOpenByContactEmail(
-        submissionEmail,
-      );
-    if (existingOpen) {
-      throw new HttpError(HTTP_STATUS.ORGANIZATION_APPLICATION_ALREADY_OPEN);
-    }
-
-    if (legalRep) {
-      await this.assertLegalRepUnderLimit(legalRep.idHash);
-    }
-
-    const documentIds = await this.assertDocumentsOwnedBy(
-      submissionEmail,
-      body.documentIds ?? [],
-    );
-
-    const now = new Date();
-    const created = await this.createWithUniqueCode({
-      orgType: body.orgType,
-      status: ApplicationStatus.SUBMITTED,
-      profile: profile as unknown as Prisma.InputJsonValue,
-      channels: channels as unknown as Prisma.InputJsonValue,
-      contactEmail: submissionEmail,
-      legalRepName: legalRep?.fullName ?? null,
-      legalRepPhone: legalRep?.phone ?? null,
-      legalRepEmail: legalRep?.email ?? null,
-      legalRepPosition: legalRep?.position ?? null,
-      legalRepIdType: legalRep?.idType ?? null,
-      legalRepIdHash: legalRep?.idHash ?? null,
-      legalRepIdLast4: legalRep?.idLast4 ?? null,
-      submittedByUserId: submittedByUserId ?? null,
-      // The OTP already proved the mailbox; the organization inherits this and is never
-      // asked to verify the same address a second time.
-      emailVerifiedAt: now,
-      consentedAt: now,
-    });
-
-    if (documentIds.length) {
-      await organizationApplicationRepository.attachDocuments(
-        created.id,
-        documentIds,
-      );
-    }
-
-    await organizationApplicationRepository.recordEvent({
-      applicationId: created.id,
-      eventType: ApplicationEventType.SUBMITTED,
-      actorId: submittedByUserId ?? null,
-      payload: { documentCount: documentIds.length, orgType: body.orgType },
-    });
-
-    await organizationApplicationOtpService.consumeSubmissionToken(
-      submissionToken,
-    );
-
-    const tracking =
-      await organizationApplicationOtpService.issueTrackingToken(
-        submissionEmail,
-      );
-
-    void enqueueApplicationReceivedEmail({
-      toEmail: submissionEmail,
-      organizationName: profile.name,
-      applicationCode: created.code,
-      trackUrl: buildApplicationTrackUrl(created.id, tracking.token),
-    }).catch((err) => {
-      console.warn(
-        "[organization-application] failed to send the acknowledgement email",
-        err,
-      );
-    });
-
-    // The submission token already proved this browser owns the mailbox, so it may hold the
-    // same tracking credential the acknowledgement mail carries — the landing page needs it
-    // to show the application without a trip to the inbox.
-    return {
-      application: this.toPublicResponse(created, []),
-      trackingToken: tracking.token,
-    };
-  }
-
-  /** Resubmission after a reviewer asked for more information. */
-  async updateApplication(
+  /**
+   * Saves whatever the form sends, while the application is a draft or back for revision.
+   * Only shapes are checked here; the full rules run on submit, so a half-filled draft can
+   * always be saved.
+   */
+  async saveDraft(
     applicationId: string,
     trackingToken: string,
-    body: UpdateApplicationBody,
-  ): Promise<ApplicationPublicResponse> {
-    const email =
-      await organizationApplicationOtpService.resolveTrackingToken(
-        trackingToken,
-      );
-    const application = await this.loadForApplicant(applicationId, email);
-
-    if (application.status !== ApplicationStatus.NEEDS_MORE_INFO) {
+    body: SaveApplicationBody,
+  ): Promise<{ application: ApplicationPublicResponse; notified: boolean }> {
+    const application = await this.loadForApplicant(applicationId, trackingToken);
+    if (!isEditable(application.status)) {
       throw new HttpError(HTTP_STATUS.ORGANIZATION_APPLICATION_NOT_EDITABLE);
     }
 
-    const data: Prisma.OrganizationApplicationUpdateInput = {
-      status: ApplicationStatus.SUBMITTED,
-      // Hand the file back to the queue: a resubmission is reviewed from scratch.
-      reviewerId: null,
-      claimedAt: null,
-      reviewNote: null,
-    };
+    const data: Prisma.OrganizationApplicationUpdateInput = {};
 
-    // Names of what the applicant edited, for the reviewer's activity log. Values are left
-    // out on purpose: the log must not become a second copy of the personal data.
-    const changedFields: string[] = [];
-
-    if (body.orgType) {
-      if (!isOneOf(body.orgType, OrgType)) {
+    if (body.orgType !== undefined) {
+      if (body.orgType && !isOneOf(body.orgType, OrgType)) {
         throw new HttpError(
           HTTP_STATUS.INVALID_INPUT.withMessage("Unknown organization type"),
         );
       }
-      data.orgType = body.orgType;
-      if (body.orgType !== application.orgType) changedFields.push("orgType");
+      data.orgType = body.orgType || null;
     }
     if (body.profile) {
-      const profile = this.validateProfile(
-        body.profile,
-        application.contactEmail,
-      );
+      const profile = this.sanitizeProfile({
+        ...((application.profile ?? {}) as Partial<ApplicationProfileInput>),
+        ...body.profile,
+      });
       data.profile = profile as unknown as Prisma.InputJsonValue;
-      changedFields.push(
-        ...diffProfile(
-          (application.profile ?? {}) as unknown as Partial<ApplicationProfileInput>,
-          profile,
-        ),
-      );
+      data.contactEmail = profile.contactEmail ?? application.submitterEmail;
     }
     if (body.channels) {
-      const channels = this.validateChannels(body.channels);
-      data.channels = channels as unknown as Prisma.InputJsonValue;
-      if (
-        channelsKey(channels) !==
-        channelsKey(
-          Array.isArray(application.channels)
-            ? (application.channels as unknown as ApplicationChannelInput[])
-            : [],
-        )
-      ) {
-        changedFields.push("channels");
-      }
+      data.channels = this.validateChannels(body.channels, {
+        requireOne: false,
+      }) as unknown as Prisma.InputJsonValue;
     }
     if (body.legalRepresentative) {
-      const legalRep = this.validateLegalRepresentative(
-        body.legalRepresentative,
-      );
-      if (legalRep) {
-        await this.assertLegalRepUnderLimit(legalRep.idHash, application.id);
-        data.legalRepName = legalRep.fullName;
-        data.legalRepPhone = legalRep.phone;
-        data.legalRepEmail = legalRep.email;
-        data.legalRepPosition = legalRep.position;
-        data.legalRepIdType = legalRep.idType;
-        data.legalRepIdHash = legalRep.idHash;
-        data.legalRepIdLast4 = legalRep.idLast4;
-        // The ID is only kept as a hash, so a replacement cannot be compared with the old one.
-        changedFields.push("legalRepresentative");
-      }
+      Object.assign(data, this.sanitizeLegalRep(body.legalRepresentative));
+    }
+    if (body.consent === true && !application.consentedAt) {
+      data.consentedAt = new Date();
+    } else if (body.consent === false) {
+      data.consentedAt = null;
     }
 
-    // Everything is checked before anything is written, so a rejected resubmission leaves the
-    // application exactly as the reviewer last saw it.
+    const owners =
+      body.owners !== undefined ? normalizeOwnerInputs(body.owners) : null;
+
+    // Every check happens before anything is written, so a rejected save leaves the draft
+    // exactly as it was.
     const newDocumentIds = await this.assertDocumentsOwnedBy(
-      application.contactEmail,
+      application.submitterEmail,
       body.documentIds ?? [],
     );
     const current =
@@ -427,74 +372,612 @@ export class OrganizationApplicationService {
     if (removeIds.some((id) => !currentIds.has(id))) {
       throw new HttpError(HTTP_STATUS.ORGANIZATION_DOCUMENT_NOT_FOUND);
     }
-    const keptCount = currentIds.size - removeIds.length;
-    const addedCount = newDocumentIds.filter((id) => !currentIds.has(id)).length;
+    const addedIds = newDocumentIds.filter((id) => !currentIds.has(id));
     if (
-      keptCount + addedCount >
+      currentIds.size - removeIds.length + addedIds.length >
       APPLICATION_DOCUMENT_LIMITS.maxFilesPerApplication
     ) {
       throw new HttpError(HTTP_STATUS.ORGANIZATION_DOCUMENT_LIMIT);
     }
-
-    for (const id of removeIds) {
-      await organizationApplicationRepository.softDeleteDocument(id);
+    if (owners) {
+      const referenced = owners
+        .map((o) => o.nationalIdDocumentId)
+        .filter((id): id is string => Boolean(id));
+      const available = new Set([...currentIds, ...addedIds]);
+      for (const id of removeIds) available.delete(id);
+      if (referenced.some((id) => !available.has(id))) {
+        throw new HttpError(
+          HTTP_STATUS.ORGANIZATION_DOCUMENT_NOT_FOUND.withMessage(
+            "An owner points at a document that is not attached to this application",
+          ),
+        );
+      }
     }
-    if (newDocumentIds.length) {
-      await organizationApplicationRepository.attachDocuments(
-        application.id,
-        newDocumentIds,
-      );
-    }
 
-    await organizationApplicationRepository.update(application.id, data);
-    await organizationApplicationRepository.recordEvent({
-      applicationId: application.id,
-      eventType: ApplicationEventType.RESUBMITTED,
-      payload: {
-        changedFields,
-        addedDocumentIds: newDocumentIds.filter((id) => !currentIds.has(id)),
-        removedDocumentIds: removeIds,
-      },
+    await prisma.$transaction(async (tx) => {
+      await organizationApplicationRepository.lockForUpdate(tx, application.id);
+      const locked = await tx.organizationApplication.findUniqueOrThrow({
+        where: { id: application.id },
+        select: { status: true },
+      });
+      if (!isEditable(locked.status)) {
+        throw new HttpError(HTTP_STATUS.ORGANIZATION_APPLICATION_NOT_EDITABLE);
+      }
+
+      if (removeIds.length) {
+        await tx.organizationApplicationDocument.updateMany({
+          where: { id: { in: removeIds } },
+          data: { deletedAt: new Date() },
+        });
+      }
+      if (addedIds.length) {
+        await tx.organizationApplicationDocument.updateMany({
+          where: { id: { in: addedIds } },
+          data: { applicationId: application.id },
+        });
+      }
+      if (owners) {
+        await this.syncOwners(tx, application.id, owners);
+      }
+      if (Object.keys(data).length) {
+        await tx.organizationApplication.update({
+          where: { id: application.id },
+          data,
+        });
+      }
     });
 
-    const reloaded =
-      await organizationApplicationRepository.findByIdWithRelations(
-        application.id,
-      );
-    if (!reloaded) {
-      throw new HttpError(HTTP_STATUS.ORGANIZATION_APPLICATION_NOT_FOUND);
-    }
-    return this.toPublicResponse(reloaded, reloaded.documents);
+    const notified = body.notifySubmitter
+      ? await this.notifyDraftUpdated(application.id, trackingToken)
+      : false;
+
+    return {
+      application: await this.getForApplicant(application.id, trackingToken),
+      notified,
+    };
   }
 
+  /**
+   * "Draft updated" email after a manual save. Only the "Save draft" button asks for it —
+   * "Continue" saves too, and mailing on every step would bury the inbox. Capped at one per
+   * application per `DRAFT_UPDATE_NOTICE_COOLDOWN_MS`, recorded as an event so the cap
+   * survives restarts. Also a tripwire: if someone else holds the link, the owner of the
+   * mailbox sees the draft change. A failed send never fails the save.
+   */
+  private async notifyDraftUpdated(
+    applicationId: string,
+    trackingToken: string,
+  ): Promise<boolean> {
+    const last = await organizationApplicationRepository.findLatestEvent(
+      applicationId,
+      ApplicationEventType.DRAFT_UPDATE_NOTIFIED,
+    );
+    const now = new Date();
+    if (
+      last &&
+      now.getTime() - last.createdAt.getTime() < DRAFT_UPDATE_NOTICE_COOLDOWN_MS
+    ) {
+      return false;
+    }
+
+    const application =
+      await organizationApplicationRepository.findById(applicationId);
+    if (!application) return false;
+
+    await organizationApplicationRepository.recordEvent({
+      applicationId,
+      eventType: ApplicationEventType.DRAFT_UPDATE_NOTIFIED,
+    });
+
+    const profile = (application.profile ?? {}) as Partial<ApplicationProfileInput>;
+    void enqueueApplicationDraftUpdatedEmail({
+      toEmail: application.submitterEmail,
+      applicationCode: application.code,
+      organizationName: profile.name ?? "",
+      savedAt: new Intl.DateTimeFormat("vi-VN", {
+        timeZone: "Asia/Ho_Chi_Minh",
+        dateStyle: "short",
+        timeStyle: "short",
+      }).format(now),
+      editUrl: buildApplicationEditUrl(application.id, trackingToken),
+    }).catch((err) => {
+      console.warn(
+        "[organization-application] failed to send the draft-updated email",
+        err,
+      );
+    });
+    return true;
+  }
+
+  /**
+   * Makes the stored owner list match `owners`, keyed by email. Rows that disappear are
+   * marked removed and their link is voided — never deleted, the history has to stay
+   * traceable. A removed person who is added back starts over as PENDING.
+   */
+  private async syncOwners(
+    tx: Prisma.TransactionClient,
+    applicationId: string,
+    owners: ReturnType<typeof normalizeOwnerInputs>,
+  ): Promise<void> {
+    const existing = await tx.organizationApplicationOwner.findMany({
+      where: { applicationId },
+    });
+    const byEmail = new Map(existing.map((row) => [row.email, row]));
+    const wanted = new Set(owners.map((o) => o.email));
+    const now = new Date();
+
+    for (const owner of owners) {
+      const row = byEmail.get(owner.email);
+      const fields = {
+        fullName: owner.fullName,
+        isLegalRep: Boolean(owner.isLegalRep),
+        nationalIdDocumentId: owner.nationalIdDocumentId ?? null,
+      };
+      if (!row) {
+        await tx.organizationApplicationOwner.create({
+          data: { applicationId, email: owner.email, ...fields },
+        });
+      } else if (row.removedAt) {
+        await tx.organizationApplicationOwner.update({
+          where: { id: row.id },
+          data: {
+            ...fields,
+            removedAt: null,
+            status: OwnerCandidateStatus.PENDING,
+            confirmTokenHash: null,
+            expiresAt: null,
+            respondedAt: null,
+            declineReason: null,
+            confirmIp: null,
+            confirmUa: null,
+          },
+        });
+      } else {
+        await tx.organizationApplicationOwner.update({
+          where: { id: row.id },
+          data: fields,
+        });
+      }
+    }
+
+    for (const row of existing) {
+      if (row.removedAt || wanted.has(row.email)) continue;
+      await tx.organizationApplicationOwner.update({
+        where: { id: row.id },
+        data: { removedAt: now, confirmTokenHash: null },
+      });
+      await organizationApplicationRepository.recordEvent({
+        tx,
+        applicationId,
+        eventType: ApplicationEventType.OWNER_CANDIDATE_REMOVED,
+        payload: {
+          candidateId: row.id,
+          email: row.email,
+          previousStatus: row.status,
+        },
+      });
+    }
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Step 1 — submit                                                     */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * Runs every rule, then sends the owners their confirmation links. All checks that could
+   * fail later (suspended account, 3-org cap, invitation spam cap) run here, before a single
+   * email goes out — failing after 14 days of waiting on confirmations would be far worse.
+   */
+  async submitApplication(
+    applicationId: string,
+    trackingToken: string,
+    body: SubmitApplicationBody,
+    meta: ConfirmationRequestMeta,
+  ): Promise<ApplicationPublicResponse> {
+    const loaded = await this.loadForApplicant(applicationId, trackingToken);
+    const application =
+      await organizationApplicationRepository.findByIdWithOwners(loaded.id);
+    if (!application) {
+      throw new HttpError(HTTP_STATUS.ORGANIZATION_APPLICATION_NOT_FOUND);
+    }
+    if (!isEditable(application.status)) {
+      throw new HttpError(HTTP_STATUS.ORGANIZATION_APPLICATION_NOT_EDITABLE);
+    }
+
+    if (!body.consent && !application.consentedAt) {
+      throw new HttpError(
+        HTTP_STATUS.INVALID_INPUT.withMessage(
+          "Consent to personal data processing is required",
+        ),
+      );
+    }
+    if (!application.orgType || !isOneOf(application.orgType, OrgType)) {
+      throw new HttpError(
+        HTTP_STATUS.INVALID_INPUT.withMessage("Organization type is required"),
+      );
+    }
+    const profile = this.validateProfile(
+      (application.profile ?? {}) as Partial<ApplicationProfileInput>,
+      application.submitterEmail,
+    );
+    this.validateChannels(this.channelsOf(application), { requireOne: true });
+
+    const owners = application.owners;
+    validateOwnerList(owners, application.submitterEmail);
+    const declined = owners.find(
+      (o) => o.status === OwnerCandidateStatus.DECLINED,
+    );
+    if (declined) {
+      throw withEmailDetails(
+        HTTP_STATUS.OWNER_DECLINED_MUST_BE_REPLACED,
+        declined.email,
+      );
+    }
+
+    await this.assertOwnersEligible(application.id, application.submitterEmail, owners);
+
+    const snapshot = buildConfirmationSnapshot({
+      name: profile.name,
+      orgType: application.orgType,
+      owners,
+    });
+    const contentFingerprints = this.contentFingerprints(application, owners);
+    const wasDraft = application.status === ApplicationStatus.DRAFT;
+    const now = new Date();
+    const issued: { candidate: CandidateRow; rawToken: string }[] = [];
+
+    const result = await prisma.$transaction(async (tx) => {
+      await organizationApplicationRepository.lockForUpdate(tx, application.id);
+      const fresh = await organizationApplicationRepository.findByIdWithOwners(
+        application.id,
+        tx,
+      );
+      if (!fresh || !isEditable(fresh.status)) {
+        throw new HttpError(HTTP_STATUS.ORGANIZATION_APPLICATION_NOT_EDITABLE);
+      }
+
+      const previous = (fresh.confirmationSnapshot ?? null) as {
+        snapshot?: Record<string, unknown>;
+        fields?: Record<string, string>;
+      } | null;
+      const reset = snapshotsDiffer(
+        (previous?.snapshot ?? null) as Prisma.JsonValue,
+        snapshot,
+      );
+
+      for (const candidate of fresh.owners) {
+        const isSubmitter = candidate.email === fresh.submitterEmail;
+        if (isSubmitter) {
+          // The submitter's mailbox passed the OTP, which is the same proof a confirmation
+          // link gives; recording it keeps "every owner confirmed" literally true.
+          if (candidate.status !== OwnerCandidateStatus.CONFIRMED || reset) {
+            await tx.organizationApplicationOwner.update({
+              where: { id: candidate.id },
+              data: {
+                status: OwnerCandidateStatus.CONFIRMED,
+                respondedAt: now,
+                confirmIp: meta.ip,
+                confirmUa: meta.userAgent,
+                confirmTokenHash: null,
+                expiresAt: null,
+              },
+            });
+          }
+          continue;
+        }
+
+        const needsLink =
+          candidate.status === OwnerCandidateStatus.EXPIRED ||
+          (candidate.status === OwnerCandidateStatus.CONFIRMED && reset) ||
+          (candidate.status === OwnerCandidateStatus.PENDING &&
+            (!candidate.confirmTokenHash ||
+              !candidate.expiresAt ||
+              candidate.expiresAt <= now));
+        if (!needsLink) continue;
+
+        const token = newConfirmToken(now);
+        const updated = await tx.organizationApplicationOwner.update({
+          where: { id: candidate.id },
+          data: {
+            ...token.data,
+            status: OwnerCandidateStatus.PENDING,
+            respondedAt: null,
+            confirmIp: null,
+            confirmUa: null,
+          },
+        });
+        issued.push({ candidate: updated, rawToken: token.raw });
+      }
+
+      const remaining = await tx.organizationApplicationOwner.count({
+        where: {
+          applicationId: fresh.id,
+          removedAt: null,
+          status: { not: OwnerCandidateStatus.CONFIRMED },
+        },
+      });
+      const nextStatus =
+        remaining === 0
+          ? ApplicationStatus.PENDING_REVIEW
+          : ApplicationStatus.AWAITING_OWNER_CONFIRMATION;
+
+      await tx.organizationApplication.update({
+        where: { id: fresh.id },
+        data: {
+          status: nextStatus,
+          submittedAt: now,
+          consentedAt: fresh.consentedAt ?? now,
+          contactEmail: profile.contactEmail,
+          confirmationSnapshot: {
+            snapshot,
+            fields: contentFingerprints,
+          } as unknown as Prisma.InputJsonValue,
+          // A resubmission is reviewed from scratch.
+          reviewerId: null,
+          claimedAt: null,
+          reviewNote: null,
+          rejectReason: null,
+        },
+      });
+
+      const changedFields = previous?.fields
+        ? Object.keys(contentFingerprints).filter(
+            (key) => previous.fields?.[key] !== contentFingerprints[key],
+          )
+        : [];
+      await organizationApplicationRepository.recordEvent({
+        tx,
+        applicationId: fresh.id,
+        eventType: wasDraft
+          ? ApplicationEventType.SUBMITTED
+          : ApplicationEventType.RESUBMITTED,
+        payload: {
+          orgType: fresh.orgType,
+          ownerCount: fresh.owners.length,
+          invitationsSent: issued.length,
+          ...(wasDraft ? {} : { changedFields }),
+        },
+      });
+      if (reset) {
+        await organizationApplicationRepository.recordEvent({
+          tx,
+          applicationId: fresh.id,
+          eventType: ApplicationEventType.OWNER_CONFIRMATIONS_RESET,
+          payload: { reason: "name, type, legal representative or owner list changed" },
+        });
+      }
+      if (nextStatus === ApplicationStatus.PENDING_REVIEW) {
+        await organizationApplicationRepository.recordEvent({
+          tx,
+          applicationId: fresh.id,
+          eventType: ApplicationEventType.READY_FOR_REVIEW,
+        });
+      }
+
+      return { owners: fresh.owners };
+    });
+
+    sendConfirmationEmails({
+      issued,
+      allOwners: result.owners,
+      submitterEmail: application.submitterEmail,
+      orgType: application.orgType,
+      profile,
+    });
+
+    if (wasDraft) {
+      const tracking = await organizationApplicationOtpService.issueTrackingToken(
+        application.submitterEmail,
+      );
+      void enqueueApplicationReceivedEmail({
+        toEmail: application.submitterEmail,
+        organizationName: profile.name,
+        applicationCode: application.code,
+        trackUrl: buildApplicationTrackUrl(application.id, tracking.token),
+      }).catch((err) => {
+        console.warn(
+          "[organization-application] failed to send the acknowledgement email",
+          err,
+        );
+      });
+    }
+
+    return this.getForApplicant(application.id, trackingToken);
+  }
+
+  /**
+   * The early checks from the design, run for every owner:
+   *   - suspended account → OWNER_SUSPENDED
+   *   - already owns `OWNER_ORG_LIMIT` organizations → OWNER_QUOTA_EXCEEDED (checked again,
+   *     under a lock, at approval)
+   *   - listed on too many other in-flight applications → TOO_MANY_PENDING_INVITES
+   *   - opted out via "I'm not involved" → OWNER_INVITE_BLOCKED
+   */
+  private async assertOwnersEligible(
+    applicationId: string,
+    submitterEmail: string,
+    owners: CandidateRow[],
+  ): Promise<void> {
+    const emails = owners.map((o) => o.email);
+
+    let accounts;
+    try {
+      accounts = await lookupUsersByEmails(emails);
+    } catch (error) {
+      console.error("[organization-application] identity lookup failed", error);
+      throw new HttpError(
+        HTTP_STATUS.SERVICE_UNAVAILABLE.withMessage(
+          "Could not verify the owners right now, please try again",
+        ),
+      );
+    }
+
+    const userIds = [...accounts.values()].map((u) => u.id);
+    const [ownerCounts, candidacies, blocked] = await Promise.all([
+      organizationMemberRepository.countActiveOwnerOrgs(userIds),
+      organizationApplicationRepository.countOtherCandidacies(
+        emails,
+        applicationId,
+      ),
+      organizationApplicationRepository.findBlockedEmails(
+        emails.filter((e) => e !== submitterEmail),
+      ),
+    ]);
+
+    for (const owner of owners) {
+      const account = accounts.get(owner.email);
+      if (account?.status === IdentityUserStatus.INACTIVE) {
+        throw withEmailDetails(HTTP_STATUS.OWNER_SUSPENDED, owner.email);
+      }
+      if (account && (ownerCounts.get(account.id) ?? 0) >= OWNER_ORG_LIMIT) {
+        throw withEmailDetails(HTTP_STATUS.OWNER_QUOTA_EXCEEDED, owner.email);
+      }
+      if ((candidacies.get(owner.email) ?? 0) >= MAX_PENDING_INVITES_PER_EMAIL) {
+        throw withEmailDetails(HTTP_STATUS.TOO_MANY_PENDING_INVITES, owner.email);
+      }
+      if (blocked.has(owner.email)) {
+        throw withEmailDetails(HTTP_STATUS.OWNER_INVITE_BLOCKED, owner.email);
+      }
+    }
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Resend / withdraw / read                                            */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * New link for one candidate who has not answered. As many times as the submitter needs,
+   * but at least an hour apart (the only anti-spam guard left). Overwriting the hash voids the
+   * previous link and restarts the 14 days.
+   */
+  async resendOwnerInvite(
+    applicationId: string,
+    trackingToken: string,
+    candidateId: string,
+  ): Promise<ApplicationPublicResponse> {
+    const application = await this.loadForApplicant(applicationId, trackingToken);
+    const now = new Date();
+
+    const { candidate, rawToken, owners } = await prisma.$transaction(
+      async (tx) => {
+        await organizationApplicationRepository.lockForUpdate(tx, application.id);
+        const fresh = await organizationApplicationRepository.findByIdWithOwners(
+          application.id,
+          tx,
+        );
+        if (
+          !fresh ||
+          (fresh.status !== ApplicationStatus.AWAITING_OWNER_CONFIRMATION &&
+            fresh.status !== ApplicationStatus.NEEDS_REVISION)
+        ) {
+          throw new HttpError(HTTP_STATUS.APPLICATION_NOT_ACTIVE);
+        }
+        const target = fresh.owners.find((o) => o.id === candidateId);
+        if (!target || target.status !== OwnerCandidateStatus.PENDING) {
+          throw new HttpError(
+            HTTP_STATUS.NOT_FOUND.withMessage(
+              "No pending owner with this id on the application",
+            ),
+          );
+        }
+        const earliest = nextResendAt(target);
+        if (earliest && earliest > now) {
+          throw new HttpError(
+            HTTP_STATUS.RESEND_TOO_SOON.withMessage(
+              `You can resend after ${earliest.toISOString()}`,
+            ),
+          );
+        }
+
+        const token = newConfirmToken(now);
+        const updated = await tx.organizationApplicationOwner.update({
+          where: { id: target.id },
+          data: token.data,
+        });
+        await organizationApplicationRepository.recordEvent({
+          tx,
+          applicationId: fresh.id,
+          eventType: ApplicationEventType.OWNER_INVITE_RESENT,
+          payload: { candidateId: target.id, sentCount: updated.sentCount },
+        });
+        return { candidate: updated, rawToken: token.raw, owners: fresh.owners };
+      },
+    );
+
+    sendConfirmationEmails({
+      issued: [{ candidate, rawToken }],
+      allOwners: owners,
+      submitterEmail: application.submitterEmail,
+      orgType: application.orgType,
+      profile: (application.profile ?? {}) as Partial<ApplicationProfileInput>,
+    });
+
+    return this.getForApplicant(application.id, trackingToken);
+  }
+
+  /**
+   * Allowed in any state before a decision, including while waiting on confirmations — the
+   * longest stretch and the likeliest time to change one's mind. Voids every link still out
+   * there, and tells owners who already confirmed.
+   */
   async withdrawApplication(
     applicationId: string,
     trackingToken: string,
   ): Promise<ApplicationPublicResponse> {
-    const email =
-      await organizationApplicationOtpService.resolveTrackingToken(
-        trackingToken,
+    const application = await this.loadForApplicant(applicationId, trackingToken);
+
+    const confirmed = await prisma.$transaction(async (tx) => {
+      await organizationApplicationRepository.lockForUpdate(tx, application.id);
+      const fresh = await organizationApplicationRepository.findByIdWithOwners(
+        application.id,
+        tx,
       );
-    const application = await this.loadForApplicant(applicationId, email);
+      if (!fresh || !isOpenApplicationStatus(fresh.status)) {
+        throw new HttpError(HTTP_STATUS.ORGANIZATION_APPLICATION_ALREADY_DECIDED);
+      }
 
-    if (
-      application.status === ApplicationStatus.APPROVED ||
-      application.status === ApplicationStatus.REJECTED ||
-      application.status === ApplicationStatus.WITHDRAWN
-    ) {
-      throw new HttpError(HTTP_STATUS.ORGANIZATION_APPLICATION_ALREADY_DECIDED);
-    }
+      await tx.organizationApplication.update({
+        where: { id: fresh.id },
+        data: { status: ApplicationStatus.WITHDRAWN },
+      });
+      // Unanswered links stop working. The hashes stay, so opening one explains that the
+      // application was withdrawn rather than claiming the link never existed.
+      await tx.organizationApplicationOwner.updateMany({
+        where: {
+          applicationId: fresh.id,
+          status: OwnerCandidateStatus.PENDING,
+        },
+        data: { expiresAt: new Date() },
+      });
+      await organizationApplicationRepository.recordEvent({
+        tx,
+        applicationId: fresh.id,
+        eventType: ApplicationEventType.WITHDRAWN,
+        payload: { previousStatus: fresh.status },
+      });
 
-    const updated = await organizationApplicationRepository.update(
-      application.id,
-      { status: ApplicationStatus.WITHDRAWN },
-    );
-    await organizationApplicationRepository.recordEvent({
-      applicationId: application.id,
-      eventType: ApplicationEventType.WITHDRAWN,
+      return fresh.owners.filter(
+        (o) =>
+          o.status === OwnerCandidateStatus.CONFIRMED &&
+          o.email !== fresh.submitterEmail,
+      );
     });
 
-    return this.toPublicResponse(updated, []);
+    const profile = (application.profile ?? {}) as Partial<ApplicationProfileInput>;
+    for (const owner of confirmed) {
+      void enqueueApplicationWithdrawnNoticeEmail({
+        toEmail: owner.email,
+        organizationName: profile.name ?? application.code,
+        submitterEmail: application.submitterEmail,
+      }).catch((err) => {
+        console.warn(
+          "[organization-application] failed to send a withdrawal notice",
+          err,
+        );
+      });
+    }
+
+    return this.getForApplicant(application.id, trackingToken);
   }
 
   /** What the applicant sees behind their tracking link. */
@@ -510,58 +993,110 @@ export class OrganizationApplicationService {
       await organizationApplicationRepository.findByIdWithRelations(
         applicationId,
       );
-    if (!application || application.contactEmail !== email) {
+    if (!application || application.submitterEmail !== email) {
       throw new HttpError(HTTP_STATUS.ORGANIZATION_APPLICATION_NOT_FOUND);
     }
-    return this.toPublicResponse(application, application.documents);
+    return this.toPublicResponse(
+      application,
+      application.documents,
+      application.owners,
+    );
   }
 
   /* ------------------------------------------------------------------ */
   /* Shared helpers                                                      */
   /* ------------------------------------------------------------------ */
 
-  private async loadForApplicant(applicationId: string, email: string) {
+  private async loadForApplicant(
+    applicationId: string,
+    trackingToken: string,
+  ): Promise<ApplicationRow> {
+    const email =
+      await organizationApplicationOtpService.resolveTrackingToken(
+        trackingToken,
+      );
     const application =
       await organizationApplicationRepository.findById(applicationId);
-    if (!application || application.contactEmail !== email) {
+    if (!application || application.submitterEmail !== email) {
       throw new HttpError(HTTP_STATUS.ORGANIZATION_APPLICATION_NOT_FOUND);
     }
     return application;
   }
 
-  private validateProfile(
-    profile: ApplicationProfileInput | undefined,
-    submissionEmail: string,
-  ): ApplicationProfileInput {
-    if (!profile?.name?.trim()) {
+  private contentFingerprints(
+    application: ApplicationRow,
+    owners: CandidateRow[],
+  ): Record<string, string> {
+    const profile = (application.profile ?? {}) as Partial<ApplicationProfileInput>;
+    const values: Record<(typeof TRACKED_FIELDS)[number], unknown> = {
+      orgType: application.orgType,
+      "profile.name": profile.name,
+      "profile.description": profile.description,
+      "profile.address": profile.address,
+      "profile.logoUrl": profile.logoUrl,
+      "profile.backgroundUrl": profile.backgroundUrl,
+      "profile.contactEmail": profile.contactEmail,
+      "profile.location": [profile.latitude, profile.longitude],
+      channels: application.channels,
+      legalRepresentative: [
+        application.legalRepIdType,
+        application.legalRepIdHash,
+        application.legalRepPhone,
+        application.legalRepPosition,
+      ],
+      owners: owners.map((o) => [o.email, o.fullName, o.isLegalRep]),
+    };
+    const out: Record<string, string> = {};
+    for (const key of TRACKED_FIELDS) out[key] = fingerprint(values[key]);
+    return out;
+  }
+
+  /** Trims a partial profile for a draft; only present values are checked. */
+  private sanitizeProfile(
+    profile: Partial<ApplicationProfileInput>,
+  ): Partial<ApplicationProfileInput> {
+    const contactEmail = profile.contactEmail?.trim().toLowerCase() || null;
+    if (contactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) {
       throw new HttpError(
-        HTTP_STATUS.INVALID_INPUT.withMessage("profile.name is required"),
-      );
-    }
-    if (!profile.logoUrl?.trim()) {
-      throw new HttpError(
-        HTTP_STATUS.INVALID_INPUT.withMessage("profile.logo_url is required"),
-      );
-    }
-    const contactEmail = profile.contactEmail?.trim().toLowerCase() ?? "";
-    if (contactEmail !== submissionEmail) {
-      // The submission token is bound to one mailbox; letting the body name a different
-      // contact address would defeat the OTP entirely.
-      throw new HttpError(
-        HTTP_STATUS.INVALID_INPUT.withMessage(
-          "profile.contact_email must match the verified email address",
-        ),
+        HTTP_STATUS.INVALID_INPUT.withMessage("profile.contact_email is invalid"),
       );
     }
     return {
-      name: profile.name.trim(),
+      name: profile.name?.trim() || undefined,
       contactEmail,
-      logoUrl: profile.logoUrl.trim(),
+      logoUrl: profile.logoUrl?.trim() || undefined,
       backgroundUrl: profile.backgroundUrl?.trim() || null,
       address: profile.address?.trim() || null,
       latitude: this.validateCoordinate(profile.latitude, "latitude", 90),
       longitude: this.validateCoordinate(profile.longitude, "longitude", 180),
       description: profile.description?.trim() || null,
+    };
+  }
+
+  /**
+   * Submit-time profile rules. The contact email is the organization's public address and
+   * defaults to the submitter's; it is only ever used to contact the organization.
+   */
+  private validateProfile(
+    profile: Partial<ApplicationProfileInput>,
+    submitterEmail: string,
+  ): ApplicationProfileInput {
+    const clean = this.sanitizeProfile(profile);
+    if (!clean.name) {
+      throw new HttpError(
+        HTTP_STATUS.INVALID_INPUT.withMessage("profile.name is required"),
+      );
+    }
+    if (!clean.logoUrl) {
+      throw new HttpError(
+        HTTP_STATUS.INVALID_INPUT.withMessage("profile.logo_url is required"),
+      );
+    }
+    return {
+      ...clean,
+      name: clean.name,
+      logoUrl: clean.logoUrl,
+      contactEmail: clean.contactEmail || submitterEmail,
     };
   }
 
@@ -590,18 +1125,24 @@ export class OrganizationApplicationService {
     return value;
   }
 
+  private channelsOf(application: ApplicationRow): ApplicationChannelInput[] {
+    return Array.isArray(application.channels)
+      ? (application.channels as unknown as ApplicationChannelInput[])
+      : [];
+  }
+
   private validateChannels(
-    channels: ApplicationChannelInput[] | undefined,
+    channels: ApplicationChannelInput[],
+    opts: { requireOne: boolean },
   ): ApplicationChannelInput[] {
-    const list = channels ?? [];
-    if (list.length === 0) {
+    if (opts.requireOne && channels.length === 0) {
       throw new HttpError(
         HTTP_STATUS.INVALID_INPUT.withMessage(
           "At least one official channel is required",
         ),
       );
     }
-    return list.map((channel) => {
+    return channels.map((channel) => {
       if (!isOneOf(channel.type, OrganizationChannelType)) {
         throw new HttpError(
           HTTP_STATUS.INVALID_INPUT.withMessage(
@@ -625,87 +1166,44 @@ export class OrganizationApplicationService {
   }
 
   /**
-   * Splits the representative's ID number into a hash (used only to count how many
-   * organizations one person stands for) and its last 4 characters. The raw number is
-   * deliberately dropped here and never reaches the database.
+   * Splits the representative's ID number into a hash and its last 4 characters. The raw
+   * number is dropped here and never reaches the database. Fields left out are kept.
    */
-  private validateLegalRepresentative(
-    input: LegalRepresentativeInput | undefined,
-  ): {
-    fullName: string;
-    phone: string;
-    email: string | null;
-    position: string | null;
-    idType: string;
-    idHash: string;
-    idLast4: string;
-  } | null {
-    if (!input) return null;
-
-    if (!input.fullName?.trim() || !input.phone?.trim()) {
-      throw new HttpError(
-        HTTP_STATUS.INVALID_INPUT.withMessage(
-          "legal_representative requires full_name and phone",
-        ),
-      );
+  private sanitizeLegalRep(
+    input: LegalRepresentativeInput,
+  ): Prisma.OrganizationApplicationUpdateInput {
+    const data: Prisma.OrganizationApplicationUpdateInput = {};
+    if (input.idType !== undefined) {
+      if (input.idType && !isOneOf(input.idType, LegalRepIdType)) {
+        throw new HttpError(
+          HTTP_STATUS.INVALID_INPUT.withMessage(
+            "Unknown legal_representative.id_type",
+          ),
+        );
+      }
+      data.legalRepIdType = input.idType || null;
     }
-    if (!isOneOf(input.idType, LegalRepIdType)) {
-      throw new HttpError(
-        HTTP_STATUS.INVALID_INPUT.withMessage(
-          "Unknown legal_representative.id_type",
-        ),
-      );
+    const idNumber = input.idNumber?.trim();
+    if (idNumber) {
+      if (idNumber.length < 4) {
+        throw new HttpError(
+          HTTP_STATUS.INVALID_INPUT.withMessage(
+            "legal_representative.id_number is too short",
+          ),
+        );
+      }
+      data.legalRepIdHash = hashOpaqueToken(idNumber.toUpperCase());
+      data.legalRepIdLast4 = idNumber.slice(-4);
     }
-    const idNumber = input.idNumber?.trim() ?? "";
-    if (idNumber.length < 4) {
-      throw new HttpError(
-        HTTP_STATUS.INVALID_INPUT.withMessage(
-          "legal_representative.id_number is too short",
-        ),
-      );
+    if (input.phone !== undefined) data.legalRepPhone = input.phone?.trim() || null;
+    if (input.position !== undefined) {
+      data.legalRepPosition = input.position?.trim() || null;
     }
-
-    return {
-      fullName: input.fullName.trim(),
-      phone: input.phone.trim(),
-      email: input.email?.trim().toLowerCase() || null,
-      position: input.position?.trim() || null,
-      idType: input.idType,
-      idHash: hashOpaqueToken(idNumber.toUpperCase()),
-      idLast4: idNumber.slice(-4),
-    };
-  }
-
-  /**
-   * The cap counts open submissions as well as approved ones. Counting only approved
-   * organizations would let one person file ten applications at once and slip through.
-   *
-   * It is not airtight — the same person using two different ID numbers produces two hashes —
-   * so it stops careless duplication and lazy spam, not determined fraud.
-   */
-  private async assertLegalRepUnderLimit(
-    idHash: string,
-    excludeApplicationId?: string,
-  ): Promise<void> {
-    const [count, override] = await Promise.all([
-      organizationApplicationRepository.countOpenByLegalRepHash(
-        idHash,
-        excludeApplicationId,
-      ),
-      organizationApplicationRepository.findLegalRepLimitOverride(idHash),
-    ]);
-    const limit = override ?? DEFAULT_LEGAL_REP_ORG_LIMIT;
-    if (count >= limit) {
-      throw new HttpError(
-        HTTP_STATUS.LEGAL_REP_LIMIT_EXCEEDED.withMessage(
-          `This legal representative already stands for ${count} organizations (limit ${limit})`,
-        ),
-      );
-    }
+    return data;
   }
 
   private async assertDocumentsOwnedBy(
-    submissionEmail: string,
+    submitterEmail: string,
     documentIds: string[],
   ): Promise<string[]> {
     if (documentIds.length === 0) return [];
@@ -713,13 +1211,14 @@ export class OrganizationApplicationService {
       throw new HttpError(HTTP_STATUS.ORGANIZATION_DOCUMENT_LIMIT);
     }
 
+    const unique = [...new Set(documentIds)];
     const documents =
-      await organizationApplicationRepository.findDocumentsByIds(documentIds);
-    if (documents.length !== documentIds.length) {
+      await organizationApplicationRepository.findDocumentsByIds(unique);
+    if (documents.length !== unique.length) {
       throw new HttpError(HTTP_STATUS.ORGANIZATION_DOCUMENT_NOT_FOUND);
     }
     for (const document of documents) {
-      if (document.submissionEmail !== submissionEmail) {
+      if (document.submissionEmail !== submitterEmail) {
         throw new HttpError(HTTP_STATUS.ORGANIZATION_DOCUMENT_NOT_FOUND);
       }
     }
@@ -762,34 +1261,50 @@ export class OrganizationApplicationService {
     };
   }
 
+  legalRepresentativeOf(
+    row: ApplicationRow,
+    owners: CandidateRow[],
+  ): LegalRepresentativeResponse {
+    const rep = owners.find((o) => o.isLegalRep);
+    return {
+      fullName: rep?.fullName ?? null,
+      email: rep?.email ?? null,
+      idType: row.legalRepIdType,
+      // Only the last 4 characters are ever stored.
+      idLast4: row.legalRepIdLast4,
+      phone: row.legalRepPhone,
+      position: row.legalRepPosition,
+    };
+  }
+
   toPublicResponse(
-    row: {
-      id: string;
-      code: string;
-      orgType: string;
-      status: string;
-      profile: Prisma.JsonValue;
-      channels: Prisma.JsonValue;
-      reviewNote: string | null;
-      rejectReason: string | null;
-      organizationId: string | null;
-      createdAt: Date;
-      reviewedAt: Date | null;
-    },
+    row: ApplicationRow,
     documents: DocumentRow[],
+    owners: CandidateRow[],
   ): ApplicationPublicResponse {
     return {
       id: row.id,
       code: row.code,
+      type: row.type,
       orgType: row.orgType,
       status: row.status,
+      submitterEmail: row.submitterEmail,
+      contactEmail: row.contactEmail,
       profile: row.profile,
       channels: row.channels,
       documents: documents.map((d) => this.toDocumentResponse(d)),
+      owners: owners.map((o) => toOwnerCandidateResponse(o, row.submitterEmail)),
+      confirmedCount: owners.filter(
+        (o) => o.status === OwnerCandidateStatus.CONFIRMED,
+      ).length,
+      totalOwners: owners.length,
+      legalRepresentative: this.legalRepresentativeOf(row, owners),
       reviewNote: row.reviewNote,
       rejectReason: row.rejectReason,
       organizationId: row.organizationId,
-      submittedAt: row.createdAt,
+      consentedAt: row.consentedAt,
+      createdAt: row.createdAt,
+      submittedAt: row.submittedAt,
       reviewedAt: row.reviewedAt,
     };
   }

@@ -12,11 +12,11 @@ export const OutboxEventType = {
   REPORT_VOTE_MILESTONE_GREEN_POINTS: "REPORT_VOTE_MILESTONE_GREEN_POINTS",
   CAMPAIGN_FACEBOOK_RECOGNITION: "CAMPAIGN_FACEBOOK_RECOGNITION",
   /**
-   * Not a reward event: the second half of organization provisioning (create the ORG login
-   * in identity-service, then attach it). It rides the outbox so it is written atomically
-   * with the organization and retried with backoff instead of needing its own cron.
+   * Not a reward event: after an application is approved, one per owner, to send either the
+   * account-activation link or the "you were added as owner" email. It rides the outbox so
+   * it is written atomically with the memberships and retried with backoff.
    */
-  ORG_ACCOUNT_PROVISION: "ORG_ACCOUNT_PROVISION",
+  ORG_OWNER_ONBOARD: "ORG_OWNER_ONBOARD",
 } as const;
 
 export type OutboxEventType =

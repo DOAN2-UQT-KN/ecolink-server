@@ -568,7 +568,9 @@ model SavedResource {
 }
 
 /**
- * A group with exactly one owner (`ownerId`). Other users join via `OrganizationJoiningRequest`.
+ * A legal entity. It never logs in: the people who act for it are `OrganizationMember` rows
+ * whose `role` is one of `OWNER_ROLES`. A DB trigger keeps at least one such owner on every
+ * active organization.
  */
 model Organization {
   id            String  @id @default(uuid()) @db.Uuid
@@ -655,17 +657,6 @@ model Organization {
   violationCount          Int @default(0) @map("violation_count")
 
   /**
-   * NULL = use `DEFAULT_LEGAL_REP_ORG_LIMIT`; an admin may raise it for one organization.
-   */
-  legalRepLimitOverride Int? @map("legal_rep_limit_override")
-
-  /**
-   * The dedicated `accountType = ORG` login. NULLABLE on purpose: provisioning writes the
-   * organization first and fills this in a second step, so queries must tolerate NULL.
-   */
-  ownerId String? @map("owner_id") @db.Uuid
-
-  /**
    * Application this organization was created from; kept for traceability.
    */
   applicationId String? @unique @map("application_id") @db.Uuid
@@ -684,7 +675,6 @@ model Organization {
   violations   OrganizationViolation[]
   application  OrganizationApplication?     @relation(fields: [applicationId], references: [id])
 
-  @@index([ownerId])
   @@index([deletedAt])
   @@index([trustTier, status])
   @@index([kycStatus, verificationExpiresAt])
@@ -692,11 +682,22 @@ model Organization {
 }
 
 /**
- * Approved members (owner is not duplicated here; use `Organization.ownerId`).
+ * `(userId, orgId, role)` — the only link between a person and an organization. The primary
+ * key keeps one role per person per organization.
  */
 model OrganizationMember {
   organizationId String @map("organization_id") @db.Uuid
   userId         String @map("user_id") @db.Uuid
+
+  /**
+   * `OrgMemberRole`. `LEGAL_REPRESENTATIVE` and `OWNER` are the owner roles.
+   */
+  role      String  @default("MEMBER") @db.VarChar(32)
+  /**
+   * `MembershipSource` and the id of what granted it (e.g. the application), for tracing.
+   */
+  source    String? @db.VarChar(32)
+  sourceRef String? @map("source_ref") @db.Uuid
 
   createdBy String?   @map("created_by") @db.Uuid
   updatedBy String?   @map("updated_by") @db.Uuid
@@ -709,6 +710,7 @@ model OrganizationMember {
   @@id([organizationId, userId])
   @@index([organizationId])
   @@index([userId])
+  @@index([userId, role])
   @@map("organization_members")
 }
 
@@ -779,13 +781,18 @@ model OrganizationApplication {
   code String @unique @db.VarChar(16)
 
   /**
-   * `OrgType` declared by the applicant.
+   * `ApplicationType`: `NEW_ORG` creates an organization, `ADD_OWNER` (phase 2) adds owners
+   * to `organizationId`.
    */
-  orgType               String  @map("org_type") @db.VarChar(32)
+  type                  String  @default("NEW_ORG") @db.VarChar(16)
+  /**
+   * `OrgType` declared by the applicant. NULL while the draft has not picked one.
+   */
+  orgType               String? @map("org_type") @db.VarChar(32)
   /**
    * `ApplicationStatus`.
    */
-  status                String  @default("SUBMITTED") @db.VarChar(20)
+  status                String  @default("DRAFT") @db.VarChar(32)
   /**
    * `ApplicationLane`. NULL while the application is open — the system never guesses the lane
    * from the email domain; only an admin sets it when deciding.
@@ -800,25 +807,30 @@ model OrganizationApplication {
   /**
    * Public-facing profile proposed for the organization: name, contactEmail, logoUrl, …
    */
-  profile  Json
+  profile  Json @default("{}")
   /**
    * Proposed public channels: `[{ type, url, isPrimary }]`.
    */
   channels Json @default("[]")
 
   /**
-   * Normalized copy of `profile.contactEmail`, used for the one-open-application rule.
+   * Mailbox that passed the OTP. Holds the tracking link and occupies the
+   * one-open-application slot. Always one of the owner candidates.
    */
-  contactEmail String @map("contact_email") @db.VarChar(320)
+  submitterEmail String @map("submitter_email") @db.VarChar(320)
 
   /**
-   * Legal representative — review data, never displayed publicly and never copied onto the
-   * organization. The raw ID number is NOT stored: only a hash (for the per-person org cap)
-   * and the last 4 characters (to confirm identity during a dispute).
+   * Normalized copy of `profile.contactEmail`: the organization's public contact address.
+   * Only for contacting the organization — it never becomes a login.
    */
-  legalRepName     String? @map("legal_rep_name") @db.VarChar(200)
+  contactEmail String? @map("contact_email") @db.VarChar(320)
+
+  /**
+   * KYC for the owner candidate marked `isLegalRep` (name and email live on that candidate).
+   * Never displayed publicly and never copied onto the organization. The raw ID number is NOT
+   * stored: only a hash and the last 4 characters (to confirm identity during a dispute).
+   */
   legalRepPhone    String? @map("legal_rep_phone") @db.VarChar(32)
-  legalRepEmail    String? @map("legal_rep_email") @db.VarChar(320)
   legalRepPosition String? @map("legal_rep_position") @db.VarChar(200)
   legalRepIdType   String? @map("legal_rep_id_type") @db.VarChar(20)
   legalRepIdHash   String? @map("legal_rep_id_hash") @db.VarChar(64)
@@ -829,9 +841,19 @@ model OrganizationApplication {
    */
   submittedByUserId String?   @map("submitted_by_user_id") @db.Uuid
   /**
-   * When the OTP on `contactEmail` passed; inherited by `organizations.isEmailVerified`.
+   * When the OTP on `submitterEmail` passed. The organization inherits it as
+   * `isEmailVerified` only when the contact email is that same address.
    */
   emailVerifiedAt   DateTime? @map("email_verified_at")
+  /**
+   * Last time the submitter pressed "submit" (first submission or resubmission).
+   */
+  submittedAt       DateTime? @map("submitted_at")
+  /**
+   * What the owners agreed to at the last submission: name, org type, legal representative
+   * and owner emails. Changing any of these resets every confirmation.
+   */
+  confirmationSnapshot Json? @map("confirmation_snapshot")
   /**
    * Timestamp of the personal-data consent checkbox.
    */
@@ -854,10 +876,6 @@ model OrganizationApplication {
    */
   organizationId       String?   @map("organization_id") @db.Uuid
   /**
-   * NULL while the ORG login has not been created yet — the relay retries until it is.
-   */
-  accountProvisionedAt DateTime? @map("account_provisioned_at")
-  /**
    * Set by the retention job once documents and `legalRep*` have been erased.
    */
   purgedAt             DateTime? @map("purged_at")
@@ -871,9 +889,12 @@ model OrganizationApplication {
 
   documents    OrganizationApplicationDocument[]
   events       OrganizationApplicationEvent[]
+  owners       OrganizationApplicationOwner[]
   organization Organization?
 
   @@index([status])
+  @@index([status, submittedAt])
+  @@index([submitterEmail])
   @@index([contactEmail])
   @@index([legalRepIdHash])
   @@index([reviewerId])
@@ -954,6 +975,73 @@ model OrganizationApplicationEvent {
 
   @@index([applicationId, createdAt])
   @@map("organization_application_events")
+}
+
+/**
+ * One person named as owner on an application. Nobody gets a role without having confirmed
+ * here: the row keeps the evidence (when, from which IP / user agent).
+ */
+model OrganizationApplicationOwner {
+  id            String @id @default(uuid()) @db.Uuid
+  applicationId String @map("application_id") @db.Uuid
+
+  email      String  @db.VarChar(320)
+  fullName   String  @map("full_name") @db.VarChar(200)
+  isLegalRep Boolean @default(false) @map("is_legal_rep")
+  /**
+   * Optional pointer to an uploaded document (e.g. the ID card) that identifies this person.
+   */
+  nationalIdDocumentId String? @map("national_id_document_id") @db.Uuid
+
+  /**
+   * `OwnerCandidateStatus`.
+   */
+  status           String    @default("PENDING") @db.VarChar(16)
+  /**
+   * sha256 of the token mailed to the candidate. NULL once no link is valid (submitter,
+   * withdrawn application, answered).
+   */
+  confirmTokenHash String?   @unique @map("confirm_token_hash") @db.VarChar(64)
+  expiresAt        DateTime? @map("expires_at")
+  sentAt           DateTime? @map("sent_at")
+  sentCount        Int       @default(0) @map("sent_count")
+  respondedAt      DateTime? @map("responded_at")
+  declineReason    String?   @map("decline_reason")
+
+  /**
+   * Captured at confirmation time — the only evidence in a later "I never agreed" dispute.
+   */
+  confirmIp String? @map("confirm_ip") @db.VarChar(64)
+  confirmUa String? @map("confirm_ua") @db.VarChar(512)
+
+  /**
+   * identity-service user the candidate became on approval.
+   */
+  resolvedUserId String?   @map("resolved_user_id") @db.Uuid
+  /**
+   * Set when the submitter takes the candidate off the list. The row is kept for tracing.
+   */
+  removedAt      DateTime? @map("removed_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  application OrganizationApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@unique([applicationId, email])
+  @@index([email, status])
+  @@map("organization_application_owners")
+}
+
+/**
+ * Emails whose owners pressed "I'm not involved — block future invitations".
+ */
+model OwnerInviteBlock {
+  email             String   @id @db.VarChar(320)
+  sourceCandidateId String?  @map("source_candidate_id") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  @@map("owner_invite_blocks")
 }
 
 /**

@@ -13,9 +13,27 @@ export function buildApplicationTrackUrl(
   return `${frontendBaseUrl()}/organizations/apply/status/${applicationId}?token=${encodeURIComponent(token)}`;
 }
 
-/** Where the organization sets the first password of its provisioned ORG account. */
-export function buildOrgAccountActivationUrl(token: string): string {
-  return `${frontendBaseUrl()}/activate-organization?token=${encodeURIComponent(token)}`;
+/** The draft editor; the token is the only credential, so this link must stay private. */
+export function buildApplicationEditUrl(
+  applicationId: string,
+  token: string,
+): string {
+  return `${frontendBaseUrl()}/organizations/apply/edit/${applicationId}?token=${encodeURIComponent(token)}`;
+}
+
+/** Where a newly created owner account sets its first password. */
+export function buildAccountActivationUrl(token: string): string {
+  return `${frontendBaseUrl()}/activate-account?token=${encodeURIComponent(token)}`;
+}
+
+/** Public page where an owner candidate confirms or declines. No login needed. */
+export function buildOwnerConfirmUrl(token: string): string {
+  return `${frontendBaseUrl()}/organizations/owner-confirm?token=${encodeURIComponent(token)}`;
+}
+
+/** Where an owner lands to manage the organization. */
+export function buildOrganizationManageUrl(slug: string): string {
+  return `${frontendBaseUrl()}/organizations/${encodeURIComponent(slug)}`;
 }
 
 /** Reopens the form on the code step, with the address from the mail already locked in. */

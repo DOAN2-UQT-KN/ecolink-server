@@ -46,12 +46,21 @@ export class UserRepository {
     });
   }
 
-  /** Lookup that makes org-account provisioning idempotent across relay retries. */
-  async findByProvisionedApplicationId(
-    applicationId: string,
-  ): Promise<UserEntity | null> {
-    return this.prisma.user.findFirst({
-      where: { provisionedFromApplicationId: applicationId, deletedAt: null },
+  /** Case-insensitive lookup of several emails at once. */
+  async findManyByEmails(emails: string[]): Promise<UserEntity[]> {
+    const unique = [...new Set(emails.map((e) => e.trim().toLowerCase()))].filter(
+      Boolean,
+    );
+    if (unique.length === 0) {
+      return [];
+    }
+    return this.prisma.user.findMany({
+      where: {
+        deletedAt: null,
+        OR: unique.map((email) => ({
+          email: { equals: email, mode: "insensitive" as const },
+        })),
+      },
     });
   }
 

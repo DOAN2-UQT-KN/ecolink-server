@@ -14,9 +14,6 @@ import {
 import { buildApplicationResumeUrl } from "./organization-application-urls";
 
 const OTP_TTL_MS = Number(process.env.APPLICATION_OTP_TTL_MS ?? 10 * 60 * 1000);
-const SUBMISSION_TOKEN_TTL_MS = Number(
-  process.env.APPLICATION_SUBMISSION_TOKEN_TTL_MS ?? 30 * 60 * 1000,
-);
 /** After this many wrong guesses the code is burned and a new one must be requested. */
 const MAX_OTP_ATTEMPTS = Number(process.env.APPLICATION_OTP_MAX_ATTEMPTS ?? 5);
 /**
@@ -153,13 +150,10 @@ export class OrganizationApplicationOtpService {
   }
 
   /**
-   * Checks the code and, on success, hands back a single-use submission token. The token is
-   * what later proves "this browser owns that mailbox" without any login.
+   * Checks the code and returns the proven address. The caller opens (or reopens) the draft
+   * for that mailbox and hands out a tracking link, which is the credential from then on.
    */
-  async verifyOtp(
-    rawEmail: string,
-    otp: string,
-  ): Promise<{ submissionToken: string; expiresAt: Date }> {
+  async verifyOtp(rawEmail: string, otp: string): Promise<string> {
     const email = normalizeEmail(rawEmail);
     const record = await organizationApplicationOtpRepository.findActive(
       email,
@@ -184,42 +178,15 @@ export class OrganizationApplicationOtpService {
       email,
       OtpPurpose.LINK,
     );
-    await organizationApplicationOtpRepository.expireActiveFor(
-      email,
-      OtpPurpose.SUBMISSION,
-    );
 
-    const token = generateOpaqueToken();
-    const expiresAt = new Date(Date.now() + SUBMISSION_TOKEN_TTL_MS);
-    await organizationApplicationOtpRepository.create({
-      email,
-      purpose: OtpPurpose.SUBMISSION,
-      codeHash: hashOpaqueToken(token),
-      expiresAt,
-    });
-
-    return { submissionToken: token, expiresAt };
+    return email;
   }
 
   /**
-   * Resolves a token to the verified address without consuming it — the form calls the
-   * presign endpoint several times before it finally submits.
-   */
-  async resolveSubmissionToken(token: string): Promise<string> {
-    const record = await organizationApplicationOtpRepository.findActiveByHash(
-      hashOpaqueToken(token.trim()),
-      OtpPurpose.SUBMISSION,
-    );
-    if (!record) {
-      throw new HttpError(HTTP_STATUS.SUBMISSION_TOKEN_INVALID);
-    }
-    return record.email;
-  }
-
-  /**
-   * Long-lived token embedded in the tracking link. Reusable on purpose: the applicant opens
-   * it whenever they want to see where the review stands, or to resubmit after a request for
-   * more information.
+   * Long-lived token embedded in the tracking link. Issued as soon as the OTP passes, so the
+   * applicant can save a draft and come back later to finish collecting owner details.
+   * Reusable on purpose: the same link is used to edit, submit, resend invitations and follow
+   * the review.
    */
   async issueTrackingToken(
     rawEmail: string,
@@ -243,21 +210,8 @@ export class OrganizationApplicationOtpService {
       OtpPurpose.TRACKING,
     );
     if (!record) {
-      throw new HttpError(HTTP_STATUS.SUBMISSION_TOKEN_INVALID);
+      throw new HttpError(HTTP_STATUS.TRACKING_TOKEN_INVALID);
     }
-    return record.email;
-  }
-
-  /** Burns the token; called once the application row has been written. */
-  async consumeSubmissionToken(token: string): Promise<string> {
-    const record = await organizationApplicationOtpRepository.findActiveByHash(
-      hashOpaqueToken(token.trim()),
-      OtpPurpose.SUBMISSION,
-    );
-    if (!record) {
-      throw new HttpError(HTTP_STATUS.SUBMISSION_TOKEN_INVALID);
-    }
-    await organizationApplicationOtpRepository.markUsed(record.id);
     return record.email;
   }
 }

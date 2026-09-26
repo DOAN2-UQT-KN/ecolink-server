@@ -6,6 +6,8 @@ import {
   type KycStatus,
   type OrgType,
   type TrustTier,
+  OrgMemberRole,
+  isOwnerRole,
   nextUniqueOrganizationSlug,
   slugifyOrganizationName,
 } from "@da2/constants";
@@ -20,6 +22,7 @@ import type {
   OrganizationMemberResponse,
   OrganizationMembersListQuery,
   OrganizationOwnerResponse,
+  OrganizationOwnerWithRoleResponse,
   OrganizationResponse,
   UpdateOrganizationBody,
 } from "./organization.dto";
@@ -76,7 +79,7 @@ function enqueueOrganizationTranslationJob(
     });
 }
 
-type OrganizationCore = Omit<OrganizationResponse, "owner">;
+type OrganizationCore = Omit<OrganizationResponse, "owners">;
 
 export class OrganizationService {
   private organizationCoreFromRow(row: Organization): OrganizationCore {
@@ -99,7 +102,6 @@ export class OrganizationService {
       tickSuspended: row.tickSuspended,
       verifiedAt: row.verifiedAt,
       verificationExpiresAt: row.verificationExpiresAt,
-      ownerId: row.ownerId,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
@@ -112,29 +114,48 @@ export class OrganizationService {
   private async withOwner(
     core: OrganizationCore,
   ): Promise<OrganizationResponse> {
-    if (!core.ownerId) {
-      return { ...core, owner: null };
-    }
-    const map = await fetchOrganizationOwnersByUserIds([core.ownerId]);
-    return {
-      ...core,
-      owner:
-        getUserProfile(map, core.ownerId) ?? this.ownerFallback(core.ownerId),
-    };
+    const [withOwners] = await this.withOwners([core]);
+    return withOwners;
   }
 
+  /** Attaches the active owners (owner / legal representative memberships) with profiles. */
   private async withOwners(
     cores: OrganizationCore[],
   ): Promise<OrganizationResponse[]> {
-    const map = await fetchOrganizationOwnersByUserIds(
-      cores.map((c) => c.ownerId).filter((id): id is string => Boolean(id)),
-    );
+    const ownersByOrg =
+      await organizationMemberRepository.findOwnersByOrganizationIds(
+        cores.map((c) => c.id),
+      );
+    const userIds = [
+      ...new Set(
+        [...ownersByOrg.values()].flat().map((owner) => owner.userId),
+      ),
+    ];
+    const map = await fetchOrganizationOwnersByUserIds(userIds);
     return cores.map((c) => ({
       ...c,
-      owner: c.ownerId
-        ? (getUserProfile(map, c.ownerId) ?? this.ownerFallback(c.ownerId))
-        : null,
+      owners: (ownersByOrg.get(c.id) ?? []).map(
+        (owner): OrganizationOwnerWithRoleResponse => ({
+          ...(getUserProfile(map, owner.userId) ??
+            this.ownerFallback(owner.userId)),
+          role: owner.role,
+        }),
+      ),
     }));
+  }
+
+  private async assertOwner(
+    organizationId: string,
+    userId: string,
+    message: string,
+  ): Promise<void> {
+    const isOwner = await organizationMemberRepository.isOwner(
+      organizationId,
+      userId,
+    );
+    if (!isOwner) {
+      throw new HttpError(HTTP_STATUS.FORBIDDEN.withMessage(message));
+    }
   }
 
   private joinRequestResponseFromRow(
@@ -175,7 +196,6 @@ export class OrganizationService {
           ? {
               id: org.id,
               name: org.name,
-              ownerId: org.ownerId,
             }
           : undefined,
     };
@@ -363,7 +383,6 @@ export class OrganizationService {
     }
     await organizationRepository.update(organizationId, {
       isEmailVerified: true,
-      updatedBy: org.ownerId,
     });
     return { slug: org.slug };
   }
@@ -453,38 +472,40 @@ export class OrganizationService {
     return this.withOwner(this.organizationCoreFromRow(updated));
   }
 
-  /** Best-effort in-app notice to the org owner after admin verify/ban. */
+  /** Best-effort in-app notice to every owner after admin verify/ban. */
   private notifyOwnerOfOrganizationVerified(
     org: Organization,
     outcome: "approved" | "banned",
     rejectReason?: string,
   ): void {
-    const ownerId = org.ownerId;
-    if (!ownerId) {
-      // Provisioning has not attached the ORG account yet; nobody to notify in-app.
-      return;
-    }
-    const run =
-      outcome === "approved"
-        ? enqueueOrganizationApprovedWebsiteNotification({
-            userId: ownerId,
-            organizationName: org.name,
-            organizationId: org.id,
-            organizationSlug: org.slug,
-          })
-        : enqueueOrganizationRejectedWebsiteNotification({
-            userId: ownerId,
-            organizationName: org.name,
-            organizationId: org.id,
-            organizationSlug: org.slug,
-            rejectReason: rejectReason ?? "",
-          });
-    void run.catch((err) => {
-      console.warn(
-        `[organization] failed to notify owner of organization ${outcome}`,
-        err,
-      );
-    });
+    void organizationMemberRepository
+      .findOwnerUserIds(org.id)
+      .then((ownerIds) =>
+        Promise.all(
+          ownerIds.map((ownerId) =>
+            outcome === "approved"
+              ? enqueueOrganizationApprovedWebsiteNotification({
+                  userId: ownerId,
+                  organizationName: org.name,
+                  organizationId: org.id,
+                  organizationSlug: org.slug,
+                })
+              : enqueueOrganizationRejectedWebsiteNotification({
+                  userId: ownerId,
+                  organizationName: org.name,
+                  organizationId: org.id,
+                  organizationSlug: org.slug,
+                  rejectReason: rejectReason ?? "",
+                }),
+          ),
+        ),
+      )
+      .catch((err) => {
+        console.warn(
+          `[organization] failed to notify owners of organization ${outcome}`,
+          err,
+        );
+      });
   }
 
   /** Owner-only: partial update; changing `contactEmail` resets verification and queues a new email. */
@@ -500,13 +521,11 @@ export class OrganizationService {
         HTTP_STATUS.NOT_FOUND.withMessage("Organization not found"),
       );
     }
-    if (org.ownerId !== ownerId) {
-      throw new HttpError(
-        HTTP_STATUS.FORBIDDEN.withMessage(
-          "Only the organization owner can update this organization",
-        ),
-      );
-    }
+    await this.assertOwner(
+      organizationId,
+      ownerId,
+      "Only an organization owner can update this organization",
+    );
 
     const prevEmailNorm = org.contactEmail?.toLowerCase().trim() ?? "";
     const nextName = body.name !== undefined ? body.name.trim() : org.name;
@@ -611,13 +630,11 @@ export class OrganizationService {
         HTTP_STATUS.NOT_FOUND.withMessage("Organization not found"),
       );
     }
-    if (org.ownerId !== ownerId) {
-      throw new HttpError(
-        HTTP_STATUS.FORBIDDEN.withMessage(
-          "Only the organization owner can resend the verification email",
-        ),
-      );
-    }
+    await this.assertOwner(
+      organizationId,
+      ownerId,
+      "Only an organization owner can resend the verification email",
+    );
     const email = org.contactEmail?.trim();
     if (!email) {
       throw new HttpError(
@@ -689,15 +706,19 @@ export class OrganizationService {
   private attachViewerJoinState(
     organization: OrganizationResponse,
     latest: { id: string; status: number } | undefined,
-    isMember: boolean,
+    role: string | null,
   ): OrganizationResponse {
+    const isMember = role !== null;
     const requestStatus = this.joinRequestStatusForOrganizationDetail(
       latest?.status,
       isMember,
     );
-    const next: OrganizationResponse = isMember
-      ? { ...organization, isMember }
-      : organization;
+    const next: OrganizationResponse = {
+      ...organization,
+      myRole: role,
+      isOwner: isOwnerRole(role),
+      ...(isMember ? { isMember } : {}),
+    };
     if (requestStatus === undefined || latest === undefined) {
       return next;
     }
@@ -743,7 +764,7 @@ export class OrganizationService {
         row.id,
         viewerUserId,
       );
-    const isMember = await organizationMemberRepository.isActiveMember(
+    const role = await organizationMemberRepository.findActiveRole(
       row.id,
       viewerUserId,
     );
@@ -752,7 +773,7 @@ export class OrganizationService {
       latestJoin
         ? { id: latestJoin.id, status: latestJoin.status }
         : undefined,
-      isMember,
+      role,
     );
   }
 
@@ -776,8 +797,8 @@ export class OrganizationService {
     if (organizations.length === 0) {
       return organizations;
     }
-    const memberOrgIds =
-      await organizationMemberRepository.findActiveMembershipOrgIds(
+    const roleByOrgId =
+      await organizationMemberRepository.findActiveRolesForUser(
         viewerUserId,
         organizations.map((o) => o.id),
       );
@@ -786,14 +807,13 @@ export class OrganizationService {
         viewerUserId,
         organizations.map((o) => o.id),
       );
-    return organizations.map((org) => {
-      const isMember = memberOrgIds.has(org.id);
-      return this.attachViewerJoinState(
+    return organizations.map((org) =>
+      this.attachViewerJoinState(
         org,
         latestByOrgId.get(org.id),
-        isMember,
-      );
-    });
+        roleByOrgId.get(org.id) ?? null,
+      ),
+    );
   }
 
   private async withMemberCounts(
@@ -939,14 +959,6 @@ export class OrganizationService {
       );
     }
 
-    if (org.ownerId === requesterId) {
-      throw new HttpError(
-        HTTP_STATUS.BAD_REQUEST.withMessage(
-          "Organization owner cannot request to join",
-        ),
-      );
-    }
-
     const isMember = await organizationMemberRepository.isActiveMember(
       organizationId,
       requesterId,
@@ -975,21 +987,28 @@ export class OrganizationService {
       row.requesterId,
     ]);
 
-    if (org.ownerId) {
-      void this.notifyOrganizationOwnerOfJoinRequest({
-        ownerId: org.ownerId,
-        organizationId,
-        organizationSlug: org.slug,
-        organizationName: org.name,
-        requesterId: row.requesterId,
-        requesterById,
-      }).catch((err) => {
+    void organizationMemberRepository
+      .findOwnerUserIds(organizationId)
+      .then((ownerIds) =>
+        Promise.all(
+          ownerIds.map((ownerId) =>
+            this.notifyOrganizationOwnerOfJoinRequest({
+              ownerId,
+              organizationId,
+              organizationSlug: org.slug,
+              organizationName: org.name,
+              requesterId: row.requesterId,
+              requesterById,
+            }),
+          ),
+        ),
+      )
+      .catch((err) => {
         console.warn(
-          "[organization] failed to notify owner of join request",
+          "[organization] failed to notify owners of join request",
           err,
         );
       });
-    }
 
     return this.joinRequestResponseFromRow(row, requesterById);
   }
@@ -1034,13 +1053,11 @@ export class OrganizationService {
         HTTP_STATUS.NOT_FOUND.withMessage("Organization not found"),
       );
     }
-    if (org.ownerId !== ownerId) {
-      throw new HttpError(
-        HTTP_STATUS.FORBIDDEN.withMessage(
-          "Only the organization owner can view join requests",
-        ),
-      );
-    }
+    await this.assertOwner(
+      organizationId,
+      ownerId,
+      "Only an organization owner can view join requests",
+    );
 
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
@@ -1133,13 +1150,11 @@ export class OrganizationService {
       );
     }
 
-    if (request.organization.ownerId !== ownerId) {
-      throw new HttpError(
-        HTTP_STATUS.FORBIDDEN.withMessage(
-          "Only the organization owner can process join requests",
-        ),
-      );
-    }
+    await this.assertOwner(
+      request.organizationId,
+      ownerId,
+      "Only an organization owner can process join requests",
+    );
 
     if (request.status !== JoinRequestStatus._STATUS_PENDING) {
       throw new HttpError(HTTP_STATUS.JOIN_REQUEST_ALREADY_PROCESSED);
@@ -1161,10 +1176,16 @@ export class OrganizationService {
           create: {
             organizationId: request.organizationId,
             userId: request.requesterId,
+            role: OrgMemberRole.MEMBER,
+            source: "JOIN_REQUEST",
+            sourceRef: request.id,
             createdBy: ownerId,
           },
           update: {
             deletedAt: null,
+            role: OrgMemberRole.MEMBER,
+            source: "JOIN_REQUEST",
+            sourceRef: request.id,
             updatedAt: new Date(),
             updatedBy: ownerId,
           },
@@ -1304,6 +1325,7 @@ export class OrganizationService {
       const members: OrganizationMemberResponse[] = pageRows.map((r) => ({
         organizationId: r.organizationId,
         userId: r.userId,
+        role: r.role,
         user:
           getUserProfile(profiles, r.userId) ?? this.ownerFallback(r.userId),
         createdAt: r.createdAt,
@@ -1332,6 +1354,7 @@ export class OrganizationService {
     const members: OrganizationMemberResponse[] = rows.map((r) => ({
       organizationId: r.organizationId,
       userId: r.userId,
+      role: r.role,
       user: getUserProfile(userById, r.userId) ?? this.ownerFallback(r.userId),
       createdAt: r.createdAt,
     }));
@@ -1355,11 +1378,22 @@ export class OrganizationService {
         HTTP_STATUS.NOT_FOUND.withMessage("Organization not found"),
       );
     }
-    if (org.ownerId === userId) {
+    const role = await organizationMemberRepository.findActiveRole(
+      organizationId,
+      userId,
+    );
+    if (isOwnerRole(role)) {
+      const owners = await organizationMemberRepository.findOwnerUserIds(
+        organizationId,
+      );
+      // Leaving as an owner is part of the exit flow (revoke / transfer), which is not
+      // designed yet; the last owner can never leave (the DB refuses it as well).
       throw new HttpError(
-        HTTP_STATUS.BAD_REQUEST.withMessage(
-          "Organization owners cannot leave; transfer ownership or delete the organization",
-        ),
+        owners.length <= 1
+          ? HTTP_STATUS.ORG_MUST_HAVE_OWNER
+          : HTTP_STATUS.BAD_REQUEST.withMessage(
+              "Organization owners cannot leave yet; ownership changes go through the platform",
+            ),
       );
     }
     const left = await organizationMemberRepository.softDeleteMembership(

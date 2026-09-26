@@ -4,6 +4,27 @@ import prisma from "../../config/prisma.client";
 
 const OPEN_STATUSES: string[] = [...OPEN_APPLICATION_STATUSES];
 
+/**
+ * Statuses an admin never sees: until every owner has confirmed, the application is not in
+ * the review queue at all.
+ */
+export const HIDDEN_FROM_ADMIN_STATUSES: string[] = [
+  ApplicationStatus.DRAFT,
+  ApplicationStatus.AWAITING_OWNER_CONFIRMATION,
+];
+
+/** Statuses in which a candidacy still "counts" against the anti-spam cap. */
+const IN_FLIGHT_STATUSES: string[] = [
+  ApplicationStatus.AWAITING_OWNER_CONFIRMATION,
+  ApplicationStatus.PENDING_REVIEW,
+  ApplicationStatus.NEEDS_REVISION,
+];
+
+const ACTIVE_OWNERS_INCLUDE = {
+  where: { removedAt: null },
+  orderBy: { createdAt: "asc" as const },
+};
+
 export class OrganizationApplicationRepository {
   private prisma: PrismaClient;
 
@@ -31,8 +52,25 @@ export class OrganizationApplicationRepository {
       include: {
         documents: { where: { deletedAt: null }, orderBy: { createdAt: "asc" } },
         events: { orderBy: { createdAt: "asc" } },
+        owners: ACTIVE_OWNERS_INCLUDE,
       },
     });
+  }
+
+  findByIdWithOwners(id: string, client: Prisma.TransactionClient = this.prisma) {
+    return client.organizationApplication.findFirst({
+      where: { id, deletedAt: null },
+      include: { owners: ACTIVE_OWNERS_INCLUDE },
+    });
+  }
+
+  /**
+   * Row lock on one application. Every transition (confirm, decline, expire, withdraw,
+   * submit, approve) takes it first, so two of them racing on the same application are
+   * serialized and the loser re-reads the winner's state.
+   */
+  async lockForUpdate(tx: Prisma.TransactionClient, id: string): Promise<void> {
+    await tx.$queryRaw`SELECT id FROM "organization_applications" WHERE id = ${id}::uuid FOR UPDATE`;
   }
 
   findByCode(code: string) {
@@ -41,53 +79,74 @@ export class OrganizationApplicationRepository {
     });
   }
 
-  /** The row that occupies the "one open application per contact email" slot, if any. */
-  findOpenByContactEmail(contactEmail: string, excludeId?: string) {
+  /** The row that occupies the "one open application per submitter email" slot, if any. */
+  findOpenBySubmitterEmail(submitterEmail: string) {
     return this.prisma.organizationApplication.findFirst({
       where: {
-        contactEmail,
+        submitterEmail,
         status: { in: OPEN_STATUSES },
         deletedAt: null,
-        ...(excludeId ? { id: { not: excludeId } } : {}),
       },
+      orderBy: { createdAt: "desc" },
     });
   }
 
   /**
-   * Open applications standing in the name of one representative. Counted together with the
-   * organizations they already own — otherwise someone could file ten submissions at once and
-   * stay under the cap until they were all approved.
+   * How many other in-flight applications list each email as an (unremoved) owner. Feeds the
+   * anti-spam cap: nobody can flood a mailbox by naming it on a stack of junk applications.
    */
-  countOpenByLegalRepHash(legalRepIdHash: string, excludeId?: string) {
-    return this.prisma.organizationApplication.count({
+  async countOtherCandidacies(
+    emails: string[],
+    excludeApplicationId: string,
+  ): Promise<Map<string, number>> {
+    if (emails.length === 0) return new Map();
+    const groups = await this.prisma.organizationApplicationOwner.groupBy({
+      by: ["email"],
       where: {
-        legalRepIdHash,
-        status: { in: [...OPEN_STATUSES, ApplicationStatus.APPROVED] },
-        deletedAt: null,
-        ...(excludeId ? { id: { not: excludeId } } : {}),
+        email: { in: emails },
+        removedAt: null,
+        applicationId: { not: excludeApplicationId },
+        application: { status: { in: IN_FLIGHT_STATUSES }, deletedAt: null },
+      },
+      _count: { _all: true },
+    });
+    return new Map(groups.map((g) => [g.email, g._count._all]));
+  }
+
+  async findBlockedEmails(emails: string[]): Promise<Set<string>> {
+    if (emails.length === 0) return new Set();
+    const rows = await this.prisma.ownerInviteBlock.findMany({
+      where: { email: { in: emails } },
+      select: { email: true },
+    });
+    return new Set(rows.map((r) => r.email));
+  }
+
+  findCandidateByTokenHash(confirmTokenHash: string) {
+    return this.prisma.organizationApplicationOwner.findUnique({
+      where: { confirmTokenHash },
+      include: {
+        application: { include: { owners: ACTIVE_OWNERS_INCLUDE } },
       },
     });
   }
 
-  /**
-   * Highest per-organization override granted to this representative, if any. Admins raise
-   * the cap on an organization; the raise then applies to the person behind it.
-   */
-  async findLegalRepLimitOverride(
-    legalRepIdHash: string,
-  ): Promise<number | null> {
-    const rows = await this.prisma.organization.findMany({
+  /** Candidates whose link ran out while their application still waits on them. */
+  findOverdueCandidates(now: Date, take = 200) {
+    return this.prisma.organizationApplicationOwner.findMany({
       where: {
-        deletedAt: null,
-        legalRepLimitOverride: { not: null },
-        application: { legalRepIdHash },
+        status: "PENDING",
+        removedAt: null,
+        expiresAt: { lt: now },
+        application: {
+          status: ApplicationStatus.AWAITING_OWNER_CONFIRMATION,
+          deletedAt: null,
+        },
       },
-      select: { legalRepLimitOverride: true },
+      select: { applicationId: true },
+      distinct: ["applicationId"],
+      take,
     });
-    const values = rows
-      .map((r) => r.legalRepLimitOverride)
-      .filter((v): v is number => typeof v === "number");
-    return values.length ? Math.max(...values) : null;
   }
 
   update(id: string, data: Prisma.OrganizationApplicationUpdateInput) {
@@ -96,6 +155,7 @@ export class OrganizationApplicationRepository {
 
   async search(params: {
     status?: string[];
+    excludeStatus?: string[];
     orgType?: string[];
     lane?: string[];
     q?: string;
@@ -104,15 +164,29 @@ export class OrganizationApplicationRepository {
   }) {
     const where: Prisma.OrganizationApplicationWhereInput = {
       deletedAt: null,
-      ...(params.status?.length ? { status: { in: params.status } } : {}),
+      status: {
+        ...(params.status?.length ? { in: params.status } : {}),
+        ...(params.excludeStatus?.length ? { notIn: params.excludeStatus } : {}),
+      },
       ...(params.orgType?.length ? { orgType: { in: params.orgType } } : {}),
       ...(params.lane?.length ? { lane: { in: params.lane } } : {}),
       ...(params.q
         ? {
             OR: [
               { code: { contains: params.q, mode: "insensitive" } },
+              { submitterEmail: { contains: params.q, mode: "insensitive" } },
               { contactEmail: { contains: params.q, mode: "insensitive" } },
-              { legalRepName: { contains: params.q, mode: "insensitive" } },
+              {
+                owners: {
+                  some: {
+                    removedAt: null,
+                    OR: [
+                      { fullName: { contains: params.q, mode: "insensitive" } },
+                      { email: { contains: params.q, mode: "insensitive" } },
+                    ],
+                  },
+                },
+              },
             ],
           }
         : {}),
@@ -121,7 +195,7 @@ export class OrganizationApplicationRepository {
     const [rows, total] = await Promise.all([
       this.prisma.organizationApplication.findMany({
         where,
-        orderBy: { createdAt: "desc" },
+        orderBy: [{ submittedAt: "desc" }, { createdAt: "desc" }],
         skip: params.skip,
         take: params.take,
         include: {
@@ -129,6 +203,7 @@ export class OrganizationApplicationRepository {
             where: { deletedAt: null },
             orderBy: { createdAt: "asc" },
           },
+          owners: ACTIVE_OWNERS_INCLUDE,
         },
       }),
       this.prisma.organizationApplication.count({ where }),
@@ -221,6 +296,14 @@ export class OrganizationApplicationRepository {
         actorId: data.actorId ?? null,
         payload: data.payload ?? {},
       },
+    });
+  }
+
+  /** Most recent event of one type, e.g. to rate-limit a notice. */
+  findLatestEvent(applicationId: string, eventType: string) {
+    return this.prisma.organizationApplicationEvent.findFirst({
+      where: { applicationId, eventType },
+      orderBy: { createdAt: "desc" },
     });
   }
 

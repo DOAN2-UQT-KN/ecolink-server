@@ -1,5 +1,5 @@
 import prisma from "../config/prisma.client";
-import { organizationAccountProvisionPublisher } from "../modules/organization_application/organization-account-provision.publisher";
+import { organizationOwnerOnboardPublisher } from "../modules/organization_application/organization-owner-onboard.publisher";
 import { OutboxRelay } from "./outbox-relay";
 import {
   OutboxPublisher,
@@ -16,14 +16,13 @@ let relay: OutboxRelay | null = null;
  */
 function buildPublisher(): OutboxPublisher {
   // The SQS client is only constructed if a reward event actually shows up, so a deployment
-  // without queue configuration can still run the provisioning route.
+  // without queue configuration can still deliver owner onboarding emails.
   let sqs: OutboxPublisher | null = null;
   const lazySqs = (): OutboxPublisher => (sqs ??= new SqsOutboxPublisher());
 
   return new RoutingOutboxPublisher(
     {
-      [OutboxEventType.ORG_ACCOUNT_PROVISION]:
-        organizationAccountProvisionPublisher,
+      [OutboxEventType.ORG_OWNER_ONBOARD]: organizationOwnerOnboardPublisher,
     },
     lazySqs,
   );

@@ -35,7 +35,6 @@ export class OrganizationJoiningRequestRepository {
             id: true,
             name: true,
             slug: true,
-            ownerId: true,
             deletedAt: true,
           },
         },
@@ -129,7 +128,6 @@ export class OrganizationJoiningRequestRepository {
         select: {
           id: true,
           name: true,
-          ownerId: true,
         },
       },
     };

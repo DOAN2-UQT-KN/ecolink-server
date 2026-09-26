@@ -6,6 +6,9 @@ import {
   GlobalStatus,
   KycStatus,
   LANE_B_VERIFICATION_VALID_DAYS,
+  MembershipSource,
+  OrgMemberRole,
+  OwnerCandidateStatus,
   TrustTier,
   nextUniqueOrganizationSlug,
   slugifyOrganizationName,
@@ -15,6 +18,7 @@ import { HTTP_STATUS, HttpError } from "../../constants/http-status";
 import { emitOutbox } from "../../outbox/outbox.writer";
 import { OutboxEventType } from "../../outbox/outbox.types";
 import {
+  AdminOwnerCandidateResponse,
   ApplicationAdminResponse,
   ApplicationDecisionBody,
   PaginatedApplicationsResponse,
@@ -23,7 +27,19 @@ import {
   fetchOrganizationOwnersByUserIds,
   getUserProfile,
 } from "../organization/identity-user.client";
-import { organizationApplicationRepository } from "./organization-application.repository";
+import { organizationMemberRepository } from "../organization/organization_member.repository";
+import { organizationMembershipService } from "../organization/organization-membership.service";
+import {
+  HIDDEN_FROM_ADMIN_STATUSES,
+  organizationApplicationRepository,
+} from "./organization-application.repository";
+import {
+  IdentityUserStatus,
+  IdentityUserSummary,
+  ensureUsers,
+  lookupUsersByEmails,
+} from "./identity-owner.client";
+import { CandidateRow, toOwnerCandidateResponse } from "./owner-candidates";
 import {
   enqueueApplicationNeedsInfoEmail,
   enqueueApplicationRejectedEmail,
@@ -34,6 +50,9 @@ import { organizationApplicationService } from "./organization-application.servi
 import { documentStorage } from "./storage/cloudinary-document-storage";
 
 type ApplicationRow = Prisma.OrganizationApplicationGetPayload<object>;
+
+/** Two confirmations from one IP within this window are flagged for the reviewer. */
+const SAME_IP_WINDOW_MS = 5 * 60 * 1000;
 type DocumentRow = Prisma.OrganizationApplicationDocumentGetPayload<object>;
 type EventRow = Prisma.OrganizationApplicationEventGetPayload<object>;
 
@@ -69,6 +88,8 @@ export class OrganizationApplicationAdminService {
   }): Promise<PaginatedApplicationsResponse> {
     const { rows, total } = await organizationApplicationRepository.search({
       status: params.status,
+      // Nothing reaches the queue before every owner has confirmed.
+      excludeStatus: HIDDEN_FROM_ADMIN_STATUSES,
       orgType: params.orgType,
       lane: params.lane,
       q: params.q,
@@ -78,7 +99,7 @@ export class OrganizationApplicationAdminService {
 
     return {
       applications: rows.map((row) =>
-        this.toAdminResponse(row, row.documents, []),
+        this.toAdminResponse(row, row.documents, [], row.owners),
       ),
       total,
       page: params.page,
@@ -90,7 +111,10 @@ export class OrganizationApplicationAdminService {
   async getById(id: string): Promise<ApplicationAdminResponse> {
     const application =
       await organizationApplicationRepository.findByIdWithRelations(id);
-    if (!application) {
+    if (
+      !application ||
+      HIDDEN_FROM_ADMIN_STATUSES.includes(application.status)
+    ) {
       throw new HttpError(HTTP_STATUS.ORGANIZATION_APPLICATION_NOT_FOUND);
     }
     // Names are a convenience for the activity log; an identity outage just leaves them null.
@@ -101,13 +125,29 @@ export class OrganizationApplicationAdminService {
           .filter((id): id is string => Boolean(id)),
       ),
     ];
-    const actors = await fetchOrganizationOwnersByUserIds(actorIds);
+    const [actors, accounts] = await Promise.all([
+      fetchOrganizationOwnersByUserIds(actorIds),
+      lookupUsersByEmails(application.owners.map((o) => o.email)).catch(
+        (error) => {
+          console.warn(
+            "[organization-application] identity lookup failed; owner accounts left blank",
+            error,
+          );
+          return new Map<string, IdentityUserSummary>();
+        },
+      ),
+    ]);
+    const ownerOrgCounts = await organizationMemberRepository.countActiveOwnerOrgs(
+      [...accounts.values()].map((u) => u.id),
+    );
 
     return this.toAdminResponse(
       application,
       application.documents,
       application.events,
+      application.owners,
       (actorId) => getUserProfile(actors, actorId)?.name ?? null,
+      { accounts, ownerOrgCounts },
     );
   }
 
@@ -157,18 +197,14 @@ export class OrganizationApplicationAdminService {
     applicationId: string,
     adminUserId: string,
   ): Promise<ApplicationAdminResponse> {
-    const application = await this.loadOpen(applicationId);
+    const application = await this.loadPendingReview(applicationId);
 
-    if (
-      application.reviewerId &&
-      application.reviewerId !== adminUserId &&
-      application.status === ApplicationStatus.UNDER_REVIEW
-    ) {
+    if (application.reviewerId && application.reviewerId !== adminUserId) {
       throw new HttpError(HTTP_STATUS.ORGANIZATION_APPLICATION_CLAIMED);
     }
 
+    // Claiming no longer changes the status: PENDING_REVIEW is the whole review stage.
     await organizationApplicationRepository.update(applicationId, {
-      status: ApplicationStatus.UNDER_REVIEW,
       reviewerId: adminUserId,
       claimedAt: new Date(),
     });
@@ -191,10 +227,10 @@ export class OrganizationApplicationAdminService {
     adminUserId: string,
     message: string,
   ): Promise<ApplicationAdminResponse> {
-    const application = await this.loadOpen(applicationId);
+    const application = await this.loadPendingReview(applicationId);
 
     await organizationApplicationRepository.update(applicationId, {
-      status: ApplicationStatus.NEEDS_MORE_INFO,
+      status: ApplicationStatus.NEEDS_REVISION,
       reviewerId: adminUserId,
       reviewNote: message,
     });
@@ -206,10 +242,10 @@ export class OrganizationApplicationAdminService {
     });
 
     const tracking = await organizationApplicationOtpService.issueTrackingToken(
-      application.contactEmail,
+      application.submitterEmail,
     );
     void enqueueApplicationNeedsInfoEmail({
-      toEmail: application.contactEmail,
+      toEmail: application.submitterEmail,
       organizationName: this.profileOf(application).name ?? application.code,
       applicationCode: application.code,
       message,
@@ -238,7 +274,7 @@ export class OrganizationApplicationAdminService {
       );
     }
 
-    const application = await this.loadOpen(applicationId);
+    const application = await this.loadPendingReview(applicationId);
 
     if (decision === "REJECT") {
       return this.reject(application, adminUserId, body);
@@ -260,11 +296,24 @@ export class OrganizationApplicationAdminService {
       );
     }
 
-    await organizationApplicationRepository.update(application.id, {
-      status: ApplicationStatus.REJECTED,
-      reviewerId: adminUserId,
-      reviewedAt: new Date(),
-      rejectReason: reason,
+    await prisma.$transaction(async (tx) => {
+      await organizationApplicationRepository.lockForUpdate(tx, application.id);
+      const fresh = await tx.organizationApplication.findUniqueOrThrow({
+        where: { id: application.id },
+        select: { status: true },
+      });
+      if (fresh.status !== ApplicationStatus.PENDING_REVIEW) {
+        throw new HttpError(HTTP_STATUS.NOT_PENDING_REVIEW);
+      }
+      await tx.organizationApplication.update({
+        where: { id: application.id },
+        data: {
+          status: ApplicationStatus.REJECTED,
+          reviewerId: adminUserId,
+          reviewedAt: new Date(),
+          rejectReason: reason,
+        },
+      });
     });
     await organizationApplicationRepository.recordEvent({
       applicationId: application.id,
@@ -274,7 +323,7 @@ export class OrganizationApplicationAdminService {
     });
 
     void enqueueApplicationRejectedEmail({
-      toEmail: application.contactEmail,
+      toEmail: application.submitterEmail,
       organizationName: this.profileOf(application).name ?? application.code,
       applicationCode: application.code,
       rejectReason: reason,
@@ -289,10 +338,17 @@ export class OrganizationApplicationAdminService {
   }
 
   /**
-   * Step 1 of the provisioning saga, all inside one transaction: the organization, its
-   * channels, the application's new status, and the outbox event that will create the ORG
-   * login. Writing the event here is what makes the two halves atomic — there is no moment
-   * where an organization exists but nothing is scheduled to give it an account.
+   * Creates the organization and makes every confirmed candidate an owner, in one
+   * transaction:
+   *
+   *   1. identity-service finds or creates a person account per candidate (outside the
+   *      transaction; idempotent, so a failed approval only leaves unactivated accounts
+   *      that the next attempt reuses)
+   *   2. lock the application, re-check PENDING_REVIEW and that every owner confirmed —
+   *      the state machine already guarantees it; this is defence in depth
+   *   3. organization + channels
+   *   4. per candidate: 3-org cap under a per-user lock, then the membership
+   *   5. one outbox event per candidate for the activation / "you were added" email
    */
   private async approve(
     application: ApplicationRow,
@@ -341,6 +397,45 @@ export class OrganizationApplicationAdminService {
       );
     }
 
+    const withOwners = await organizationApplicationRepository.findByIdWithOwners(
+      application.id,
+    );
+    const candidates = withOwners?.owners ?? [];
+    if (candidates.length === 0) {
+      throw new HttpError(HTTP_STATUS.AT_LEAST_ONE_OWNER);
+    }
+
+    let users: Map<string, IdentityUserSummary>;
+    try {
+      users = await ensureUsers(
+        candidates.map((c) => ({ email: c.email, fullName: c.fullName })),
+      );
+    } catch (error) {
+      console.error("[organization-application] ensure-users failed", error);
+      throw new HttpError(
+        HTTP_STATUS.SERVICE_UNAVAILABLE.withMessage(
+          "Could not prepare the owners' accounts, please try again",
+        ),
+      );
+    }
+    for (const candidate of candidates) {
+      const user = users.get(candidate.email);
+      if (!user) {
+        throw new HttpError(
+          HTTP_STATUS.SERVICE_UNAVAILABLE.withMessage(
+            `Identity service returned no account for ${candidate.email}`,
+          ),
+        );
+      }
+      if (user.status === IdentityUserStatus.INACTIVE) {
+        throw new HttpError(
+          HTTP_STATUS.OWNER_SUSPENDED.withMessage(
+            `${HTTP_STATUS.OWNER_SUSPENDED.message}: ${candidate.email}`,
+          ),
+        );
+      }
+    }
+
     // Lane A is granted the tick on approval; lane B has to earn it through activity, so it
     // stays at NONE unless the admin explicitly says otherwise.
     const grantBlueTick =
@@ -349,6 +444,22 @@ export class OrganizationApplicationAdminService {
     const slug = await this.allocateSlug(name);
 
     await prisma.$transaction(async (tx) => {
+      await organizationApplicationRepository.lockForUpdate(tx, application.id);
+      const fresh = await organizationApplicationRepository.findByIdWithOwners(
+        application.id,
+        tx,
+      );
+      if (!fresh || fresh.status !== ApplicationStatus.PENDING_REVIEW) {
+        throw new HttpError(HTTP_STATUS.NOT_PENDING_REVIEW);
+      }
+      if (
+        fresh.owners.length === 0 ||
+        fresh.owners.some((o) => o.status !== OwnerCandidateStatus.CONFIRMED)
+      ) {
+        throw new HttpError(HTTP_STATUS.OWNERS_NOT_ALL_CONFIRMED);
+      }
+
+      const contactEmail = fresh.contactEmail ?? fresh.submitterEmail;
       const organization = await tx.organization.create({
         data: {
           name,
@@ -357,15 +468,17 @@ export class OrganizationApplicationAdminService {
           descriptionVi: profile.description ?? null,
           logoUrl,
           backgroundUrl: profile.backgroundUrl ?? null,
-          contactEmail: application.contactEmail,
+          contactEmail,
           address: profile.address ?? null,
           // Carried over from the map step so the organization can be placed on a map.
           latitude: profile.latitude ?? null,
           longitude: profile.longitude ?? null,
-          // Inherited from the OTP the applicant passed; never verified a second time.
-          isEmailVerified: Boolean(application.emailVerifiedAt),
+          // The OTP proved the submitter's mailbox; that only counts when the organization's
+          // contact address is that same mailbox.
+          isEmailVerified:
+            Boolean(fresh.emailVerifiedAt) && contactEmail === fresh.submitterEmail,
           status: GlobalStatus._STATUS_ACTIVE,
-          orgType: application.orgType,
+          orgType: fresh.orgType,
           kycStatus: KycStatus.APPROVED,
           trustTier: grantBlueTick ? TrustTier.VERIFIED : TrustTier.NONE,
           domainVerified: lane === ApplicationLane.A && documentsWaived,
@@ -378,15 +491,13 @@ export class OrganizationApplicationAdminService {
                     LANE_B_VERIFICATION_VALID_DAYS * 24 * 60 * 60 * 1000,
                 )
               : null,
-          applicationId: application.id,
-          // Filled by the provisioning step; the column is nullable for exactly this gap.
-          ownerId: null,
+          applicationId: fresh.id,
           createdBy: adminUserId,
           updatedBy: adminUserId,
         },
       });
 
-      const channels = this.channelsOf(application);
+      const channels = this.channelsOf(fresh);
       if (channels.length) {
         await tx.organizationChannel.createMany({
           data: channels.map((channel) => ({
@@ -399,8 +510,48 @@ export class OrganizationApplicationAdminService {
         });
       }
 
+      for (const candidate of fresh.owners) {
+        const user = users.get(candidate.email)!;
+        await organizationMembershipService.assertOwnerQuota(
+          tx,
+          user.id,
+          candidate.email,
+        );
+        await organizationMembershipService.grantMembership(tx, {
+          userId: user.id,
+          organizationId: organization.id,
+          role: candidate.isLegalRep
+            ? OrgMemberRole.LEGAL_REPRESENTATIVE
+            : OrgMemberRole.OWNER,
+          source: MembershipSource.APPLICATION_APPROVAL,
+          sourceRef: fresh.id,
+          actorId: adminUserId,
+        });
+        await tx.organizationApplicationOwner.update({
+          where: { id: candidate.id },
+          data: { resolvedUserId: user.id },
+        });
+        await emitOutbox(tx, {
+          aggregateType: "organization_application",
+          aggregateId: fresh.id,
+          eventType: OutboxEventType.ORG_OWNER_ONBOARD,
+          dedupKey: `${OutboxEventType.ORG_OWNER_ONBOARD}:${candidate.id}`,
+          payload: {
+            applicationId: fresh.id,
+            candidateId: candidate.id,
+            organizationId: organization.id,
+            organizationName: name,
+            organizationSlug: slug,
+            userId: user.id,
+            email: candidate.email,
+            fullName: candidate.fullName,
+            isLegalRep: candidate.isLegalRep,
+          },
+        });
+      }
+
       await tx.organizationApplication.update({
-        where: { id: application.id },
+        where: { id: fresh.id },
         data: {
           status: ApplicationStatus.APPROVED,
           lane,
@@ -416,15 +567,20 @@ export class OrganizationApplicationAdminService {
       await tx.organizationApplicationEvent.createMany({
         data: [
           {
-            applicationId: application.id,
+            applicationId: fresh.id,
             eventType: ApplicationEventType.APPROVED,
             actorId: adminUserId,
-            payload: { lane, grantBlueTick, organizationId: organization.id },
+            payload: {
+              lane,
+              grantBlueTick,
+              organizationId: organization.id,
+              ownerUserIds: fresh.owners.map((c) => users.get(c.email)!.id),
+            },
           },
           ...(documentsWaived
             ? [
                 {
-                  applicationId: application.id,
+                  applicationId: fresh.id,
                   eventType: ApplicationEventType.DOCUMENTS_WAIVED,
                   actorId: adminUserId,
                   // Who waived what and why is the only control left once the automatic
@@ -435,20 +591,6 @@ export class OrganizationApplicationAdminService {
             : []),
         ],
       });
-
-      await emitOutbox(tx, {
-        aggregateType: "organization_application",
-        aggregateId: application.id,
-        eventType: OutboxEventType.ORG_ACCOUNT_PROVISION,
-        dedupKey: `${OutboxEventType.ORG_ACCOUNT_PROVISION}:${application.id}`,
-        payload: {
-          applicationId: application.id,
-          organizationId: organization.id,
-          email: application.contactEmail,
-          displayName: name,
-          legalRepEmail: application.legalRepEmail,
-        },
-      });
     });
 
     return this.getById(application.id);
@@ -458,10 +600,16 @@ export class OrganizationApplicationAdminService {
   /* Helpers                                                             */
   /* ------------------------------------------------------------------ */
 
-  private async loadOpen(applicationId: string): Promise<ApplicationRow> {
+  /** Review actions only apply to applications in the queue. */
+  private async loadPendingReview(
+    applicationId: string,
+  ): Promise<ApplicationRow> {
     const application =
       await organizationApplicationRepository.findById(applicationId);
-    if (!application) {
+    if (
+      !application ||
+      HIDDEN_FROM_ADMIN_STATUSES.includes(application.status)
+    ) {
       throw new HttpError(HTTP_STATUS.ORGANIZATION_APPLICATION_NOT_FOUND);
     }
     if (
@@ -470,6 +618,9 @@ export class OrganizationApplicationAdminService {
       application.status === ApplicationStatus.WITHDRAWN
     ) {
       throw new HttpError(HTTP_STATUS.ORGANIZATION_APPLICATION_ALREADY_DECIDED);
+    }
+    if (application.status !== ApplicationStatus.PENDING_REVIEW) {
+      throw new HttpError(HTTP_STATUS.NOT_PENDING_REVIEW);
     }
     return application;
   }
@@ -494,7 +645,9 @@ export class OrganizationApplicationAdminService {
     return (application.profile ?? {}) as ApplicationProfileShape;
   }
 
-  private channelsOf(application: ApplicationRow): ApplicationChannelShape[] {
+  private channelsOf(
+    application: Pick<ApplicationRow, "channels">,
+  ): ApplicationChannelShape[] {
     const raw = application.channels;
     return Array.isArray(raw) ? (raw as unknown as ApplicationChannelShape[]) : [];
   }
@@ -503,29 +656,30 @@ export class OrganizationApplicationAdminService {
     row: ApplicationRow,
     documents: DocumentRow[],
     events: EventRow[],
+    owners: CandidateRow[],
     actorNameOf: (actorId: string) => string | null = () => null,
+    evidence: {
+      accounts: Map<string, IdentityUserSummary>;
+      ownerOrgCounts: Map<string, number>;
+    } = { accounts: new Map(), ownerOrgCounts: new Map() },
   ): ApplicationAdminResponse {
+    const base = organizationApplicationService.toPublicResponse(
+      row,
+      documents,
+      owners,
+    );
     return {
-      ...organizationApplicationService.toPublicResponse(row, documents),
+      ...base,
+      owners: owners.map((owner) =>
+        this.toAdminOwner(owner, owners, row.submitterEmail, evidence),
+      ),
       lane: row.lane,
       documentsWaived: row.documentsWaived,
       documentsWaivedReason: row.documentsWaivedReason,
-      contactEmail: row.contactEmail,
-      legalRepresentative: {
-        fullName: row.legalRepName,
-        idType: row.legalRepIdType,
-        // Only the last 4 characters are ever stored, so this is all a reviewer can see.
-        idLast4: row.legalRepIdLast4,
-        phone: row.legalRepPhone,
-        position: row.legalRepPosition,
-        email: row.legalRepEmail,
-      },
       submittedByUserId: row.submittedByUserId,
       emailVerifiedAt: row.emailVerifiedAt,
-      consentedAt: row.consentedAt,
       reviewerId: row.reviewerId,
       claimedAt: row.claimedAt,
-      accountProvisionedAt: row.accountProvisionedAt,
       purgedAt: row.purgedAt,
       events: events.map((event) => ({
         id: event.id,
@@ -535,6 +689,48 @@ export class OrganizationApplicationAdminService {
         payload: event.payload,
         createdAt: event.createdAt,
       })),
+    };
+  }
+
+  /**
+   * The reviewer checks the people, not just the paperwork. Two signals matter most: how
+   * close each person is to the 3-organization cap, and confirmations from the same IP within
+   * minutes of each other (people registering together — or one person filling in for all).
+   */
+  private toAdminOwner(
+    owner: CandidateRow,
+    all: CandidateRow[],
+    submitterEmail: string,
+    evidence: {
+      accounts: Map<string, IdentityUserSummary>;
+      ownerOrgCounts: Map<string, number>;
+    },
+  ): AdminOwnerCandidateResponse {
+    const account = evidence.accounts.get(owner.email) ?? null;
+    const sameIpCluster =
+      !!owner.confirmIp &&
+      !!owner.respondedAt &&
+      all.some(
+        (other) =>
+          other.id !== owner.id &&
+          other.confirmIp === owner.confirmIp &&
+          !!other.respondedAt &&
+          Math.abs(
+            other.respondedAt.getTime() - owner.respondedAt!.getTime(),
+          ) <= SAME_IP_WINDOW_MS,
+      );
+    return {
+      ...toOwnerCandidateResponse(owner, submitterEmail),
+      confirmIp: owner.confirmIp,
+      confirmUa: owner.confirmUa,
+      resolvedUserId: owner.resolvedUserId,
+      account: account
+        ? { userId: account.id, status: account.status, createdAt: account.createdAt }
+        : null,
+      activeOwnerOrgCount: account
+        ? (evidence.ownerOrgCounts.get(account.id) ?? 0)
+        : 0,
+      sameIpCluster,
     };
   }
 }

@@ -64,10 +64,10 @@ export class SqsOutboxPublisher implements OutboxPublisher {
 /**
  * Sends each event to the transport its `eventType` belongs to.
  *
- * Reward events keep going to the shared SQS intake. Organization provisioning is a
- * synchronous call into identity-service instead, but it still rides the outbox so it is
- * written in the same transaction as the organization row and inherits the relay's retry
- * with backoff — no separate cron, no dual write.
+ * Reward events keep going to the shared SQS intake. Owner onboarding after an approval
+ * (activation link or "you were added" email) is handled in-process instead, but it still
+ * rides the outbox so it is written in the same transaction as the memberships and inherits
+ * the relay's retry with backoff — no separate cron, no dual write.
  */
 export class RoutingOutboxPublisher implements OutboxPublisher {
   constructor(

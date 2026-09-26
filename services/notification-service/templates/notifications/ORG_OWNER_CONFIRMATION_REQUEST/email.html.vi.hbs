@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+  <body style="font-family: system-ui, sans-serif; line-height: 1.5; color: #111">
+    <p>Xin chào {{candidateName}},</p>
+    <p>
+      <strong>{{submitterEmail}}</strong> đang đăng ký một tổ chức trên
+      <strong>{{appName}}</strong> và ghi tên bạn làm owner{{#if isLegalRep}}
+      kiêm <strong>người đại diện pháp lý</strong>{{/if}}.
+    </p>
+    <table style="border-collapse: collapse; font-size: 0.95rem">
+      <tr><td style="padding: 2px 12px 2px 0; color: #555">Tổ chức</td><td><strong>{{organizationName}}</strong></td></tr>
+      <tr><td style="padding: 2px 12px 2px 0; color: #555">Loại</td><td>{{orgType}}</td></tr>
+      {{#if address}}<tr><td style="padding: 2px 12px 2px 0; color: #555">Địa chỉ</td><td>{{address}}</td></tr>{{/if}}
+      {{#if otherOwners}}<tr><td style="padding: 2px 12px 2px 0; color: #555; vertical-align: top">Owner khác</td><td>{{otherOwners}}</td></tr>{{/if}}
+    </table>
+    <p>Không ai được gán vai thay bạn: hồ sơ chỉ được thẩm định khi mọi owner đã xác nhận.</p>
+    <p>
+      <a href="{{confirmUrl}}" style="display: inline-block; padding: 10px 18px; background: #0b57d0; color: #fff; border-radius: 6px; text-decoration: none">Xem và xác nhận</a>
+    </p>
+    <p style="font-size: 0.875rem; color: #444">
+      Không liên quan tới bạn? Mở cùng liên kết và chọn <strong>"Tôi không liên quan"</strong>.
+      Liên kết hết hạn ngày {{expiresAt}} ({{expiresInDays}} ngày).
+    </p>
+    <p style="font-size: 0.875rem; color: #444">{{confirmUrl}}</p>
+  </body>
+</html>

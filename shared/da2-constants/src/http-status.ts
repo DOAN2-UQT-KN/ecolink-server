@@ -104,7 +104,7 @@ export const HTTP_STATUS = {
   ),
   ORGANIZATION_APPLICATION_NOT_EDITABLE: createStatus(
     409,
-    "Application can only be edited while more information is requested",
+    "Application can only be edited as a draft or while a revision is requested",
     "ORGANIZATION_APPLICATION_NOT_EDITABLE",
   ),
   ORGANIZATION_APPLICATION_ALREADY_DECIDED: createStatus(
@@ -127,25 +127,120 @@ export const HTTP_STATUS = {
     "Too many documents for this application",
     "ORGANIZATION_DOCUMENT_LIMIT",
   ),
-  LEGAL_REP_LIMIT_EXCEEDED: createStatus(
+  AT_LEAST_ONE_OWNER: createStatus(
     422,
-    "This legal representative already reaches the maximum number of organizations",
-    "LEGAL_REP_LIMIT_EXCEEDED",
+    "An application needs at least one owner",
+    "AT_LEAST_ONE_OWNER",
+  ),
+  TOO_MANY_OWNERS: createStatus(
+    422,
+    "Too many owners for one application",
+    "TOO_MANY_OWNERS",
+  ),
+  DUPLICATE_OWNER_EMAIL: createStatus(
+    422,
+    "The same email is listed as owner more than once",
+    "DUPLICATE_OWNER_EMAIL",
+  ),
+  SUBMITTER_MUST_BE_OWNER: createStatus(
+    422,
+    "The submitter must be one of the owners",
+    "SUBMITTER_MUST_BE_OWNER",
+  ),
+  EXACTLY_ONE_LEGAL_REP: createStatus(
+    422,
+    "Exactly one owner must be the legal representative",
+    "EXACTLY_ONE_LEGAL_REP",
+  ),
+  OWNER_SUSPENDED: createStatus(
+    422,
+    "This owner's account is suspended",
+    "OWNER_SUSPENDED",
+  ),
+  OWNER_QUOTA_EXCEEDED: createStatus(
+    422,
+    "This person already owns the maximum number of organizations",
+    "OWNER_QUOTA_EXCEEDED",
+  ),
+  TOO_MANY_PENDING_INVITES: createStatus(
+    422,
+    "This email already has too many pending owner invitations",
+    "TOO_MANY_PENDING_INVITES",
+  ),
+  OWNER_INVITE_BLOCKED: createStatus(
+    422,
+    "This email has opted out of owner invitations",
+    "OWNER_INVITE_BLOCKED",
+  ),
+  OWNER_DECLINED_MUST_BE_REPLACED: createStatus(
+    422,
+    "An owner who declined must be removed or replaced before resubmitting",
+    "OWNER_DECLINED_MUST_BE_REPLACED",
+  ),
+  OWNER_CONFIRMATION_NOT_FOUND: createStatus(
+    404,
+    "Confirmation link is invalid",
+    "OWNER_CONFIRMATION_NOT_FOUND",
+  ),
+  CONFIRM_EXPIRED: createStatus(
+    410,
+    "Confirmation link has expired",
+    "CONFIRM_EXPIRED",
+  ),
+  ALREADY_DECLINED: createStatus(
+    409,
+    "This invitation has already been declined",
+    "ALREADY_DECLINED",
+  ),
+  ALREADY_CONFIRMED: createStatus(
+    409,
+    "This invitation has already been confirmed",
+    "ALREADY_CONFIRMED",
+  ),
+  APPLICATION_NOT_ACTIVE: createStatus(
+    409,
+    "This application is no longer waiting for confirmations",
+    "APPLICATION_NOT_ACTIVE",
+  ),
+  RESEND_TOO_SOON: createStatus(
+    429,
+    "Please wait before resending the confirmation email",
+    "RESEND_TOO_SOON",
+  ),
+  NOT_PENDING_REVIEW: createStatus(
+    409,
+    "Application is not waiting for review",
+    "NOT_PENDING_REVIEW",
+  ),
+  OWNERS_NOT_ALL_CONFIRMED: createStatus(
+    409,
+    "Not every owner has confirmed",
+    "OWNERS_NOT_ALL_CONFIRMED",
+  ),
+  ORG_MUST_HAVE_OWNER: createStatus(
+    409,
+    "An organization must keep at least one owner",
+    "ORG_MUST_HAVE_OWNER",
   ),
   OTP_INVALID: createStatus(
     400,
     "Verification code is invalid or has expired",
     "OTP_INVALID",
   ),
+  ACCOUNT_PENDING_ACTIVATION: createStatus(
+    403,
+    "This account has not been activated yet. Use the activation link sent to your email, or request a new one.",
+    "ACCOUNT_PENDING_ACTIVATION",
+  ),
+  TRACKING_TOKEN_INVALID: createStatus(
+    401,
+    "Tracking link is missing, invalid or has expired",
+    "TRACKING_TOKEN_INVALID",
+  ),
   OTP_TOO_MANY_ATTEMPTS: createStatus(
     429,
     "Too many verification attempts, request a new code",
     "OTP_TOO_MANY_ATTEMPTS",
-  ),
-  SUBMISSION_TOKEN_INVALID: createStatus(
-    401,
-    "Submission token is missing, invalid or has expired",
-    "SUBMISSION_TOKEN_INVALID",
   ),
 
   TASK_NOT_FOUND: createStatus(404, "Task not found", "TASK_NOT_FOUND"),
