@@ -3,9 +3,11 @@
   <body style="font-family: system-ui, sans-serif; line-height: 1.5; color: #111">
     <p>Hello {{candidateName}},</p>
     <p>
-      <strong>{{submitterEmail}}</strong> is registering an organization on
+      {{#if isAddOwner}}<strong>{{submitterEmail}}</strong>, an owner of
+      <strong>{{organizationName}}</strong> on <strong>{{appName}}</strong>, proposed you as
+      an additional owner.{{else}}<strong>{{submitterEmail}}</strong> is registering an organization on
       <strong>{{appName}}</strong> and listed you as an owner{{#if isLegalRep}}
-      and its <strong>legal representative</strong>{{/if}}.
+      and its <strong>legal representative</strong>{{/if}}.{{/if}}
     </p>
     <table style="border-collapse: collapse; font-size: 0.95rem">
       <tr><td style="padding: 2px 12px 2px 0; color: #555">Organization</td><td><strong>{{organizationName}}</strong></td></tr>

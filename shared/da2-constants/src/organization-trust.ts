@@ -121,8 +121,32 @@ export function isOwnerRole(role: string | null | undefined): boolean {
 export enum MembershipSource {
   APPLICATION_APPROVAL = "APPLICATION_APPROVAL",
   JOIN_REQUEST = "JOIN_REQUEST",
+  INVITATION = "INVITATION",
   INTERNAL = "INTERNAL",
 }
+
+/**
+ * A member invitation. `PENDING_APPROVAL` when the inviter cannot approve members themselves;
+ * `SENT` once approved (the invitee holds a token); then the invitee answers.
+ */
+export enum InvitationStatus {
+  PENDING_APPROVAL = "PENDING_APPROVAL",
+  SENT = "SENT",
+  ACCEPTED = "ACCEPTED",
+  DECLINED = "DECLINED",
+  REJECTED = "REJECTED",
+  CANCELLED = "CANCELLED",
+  EXPIRED = "EXPIRED",
+}
+
+/** Invitations still waiting on someone. */
+export const OPEN_INVITATION_STATUSES: readonly InvitationStatus[] = [
+  InvitationStatus.PENDING_APPROVAL,
+  InvitationStatus.SENT,
+] as const;
+
+/** How long an approved invitation link stays valid. */
+export const ORG_INVITATION_TTL_DAYS = 7;
 
 /** Legal documents an applicant may attach. Stored in a private bucket, never public. */
 export enum ApplicationDocType {

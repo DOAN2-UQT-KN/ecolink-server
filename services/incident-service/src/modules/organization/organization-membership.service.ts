@@ -55,6 +55,18 @@ export class OrganizationMembershipService {
     }
   }
 
+  changeRole(
+    tx: Prisma.TransactionClient,
+    params: {
+      organizationId: string;
+      userId: string;
+      role: OrgMemberRole;
+      actorId: string;
+    },
+  ) {
+    return changeMembershipRole(tx, params);
+  }
+
   async grantMembership(
     tx: Prisma.TransactionClient,
     params: {
@@ -106,6 +118,30 @@ export class OrganizationMembershipService {
       },
     });
   }
+}
+
+/**
+ * Role change for an existing, non-owner membership. Kept apart from `grantMembership`
+ * because it must not revive a removed row or touch `source`.
+ */
+export async function changeMembershipRole(
+  tx: Prisma.TransactionClient,
+  params: {
+    organizationId: string;
+    userId: string;
+    role: OrgMemberRole;
+    actorId: string;
+  },
+) {
+  return tx.organizationMember.update({
+    where: {
+      organizationId_userId: {
+        organizationId: params.organizationId,
+        userId: params.userId,
+      },
+    },
+    data: { role: params.role, updatedBy: params.actorId },
+  });
 }
 
 /** Postgres raises this from `assert_org_has_owner` when a commit would orphan an organization. */

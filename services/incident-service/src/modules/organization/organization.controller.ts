@@ -9,7 +9,9 @@ import {
   sendSuccess,
 } from "../../constants/http-status";
 import { GlobalStatus, JoinRequestStatus } from "../../constants/status.enum";
+import { OrgMemberRole } from "@da2/constants";
 import type {
+  ChangeMemberRoleBody,
   AdminVerifyOrganizationBody,
   CreateOrganizationBody,
   GetOrganizationJoinRequestsQuery,
@@ -109,6 +111,16 @@ function parseOrganizationListRequestStatusFilterQuery(
   ];
   if (tokens.length === 0) return undefined;
   return [...new Set(tokens.map((t) => parseInt(t, 10)))];
+}
+
+/** `roles=OWNER,ADMIN` or repeated `roles=OWNER&roles=ADMIN`; unknown values are dropped. */
+function parseRolesQuery(raw: unknown): string[] | undefined {
+  if (raw === undefined) return undefined;
+  const values = (Array.isArray(raw) ? raw : [raw])
+    .flatMap((value) => String(value).split(","))
+    .map((value) => value.trim().toUpperCase())
+    .filter((value) => (Object.values(OrgMemberRole) as string[]).includes(value));
+  return values.length ? values : undefined;
 }
 
 export class OrganizationController {
@@ -341,6 +353,7 @@ export class OrganizationController {
       }),
     query("is_owner").optional().isIn(["true", "false", "1", "0"]),
     query("isOwner").optional().isIn(["true", "false", "1", "0"]),
+    query("roles").optional(),
     query("page").optional().isInt({ min: 1 }),
     query("limit").optional().isInt({ min: 1, max: 100 }),
     query("sortBy").optional().isIn(["createdAt", "updatedAt", "name"]),
@@ -365,6 +378,7 @@ export class OrganizationController {
         isEmailVerified: parseOrganizationListEmailVerifiedQuery(req),
         requestStatus: parseOrganizationListRequestStatusFilterQuery(req),
         isOwner: parseMyOrganizationsIsOwnerQuery(req),
+        roles: parseRolesQuery(req.query.roles),
         page: req.query.page ? parseInt(String(req.query.page), 10) : undefined,
         limit: req.query.limit
           ? parseInt(String(req.query.limit), 10)
@@ -898,6 +912,72 @@ export class OrganizationController {
 
       try {
         await organizationService.leaveOrganization(req.params.id, userId);
+        return sendSuccess(res, HTTP_STATUS.OK);
+      } catch (error) {
+        if (sendHttpErrorResponse(res, error)) {
+          return;
+        }
+        throw error;
+      }
+    },
+  ];
+
+  changeMemberRole = [
+    orgIdParam,
+    param("userId").isUUID(),
+    body("role")
+      .isIn(Object.values(OrgMemberRole))
+      .withMessage("role must be an OrgMemberRole"),
+
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: errors.array(),
+        });
+      }
+      const userId = req.user?.userId;
+      if (!userId) {
+        return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+      }
+      try {
+        const member = await organizationService.changeMemberRole(
+          req.params.id,
+          userId,
+          req.params.userId,
+          String((req.body as ChangeMemberRoleBody).role),
+        );
+        return sendSuccess(res, HTTP_STATUS.OK, { member });
+      } catch (error) {
+        if (sendHttpErrorResponse(res, error)) {
+          return;
+        }
+        throw error;
+      }
+    },
+  ];
+
+  removeMember = [
+    orgIdParam,
+    param("userId").isUUID(),
+
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: errors.array(),
+        });
+      }
+      const userId = req.user?.userId;
+      if (!userId) {
+        return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+      }
+      try {
+        await organizationService.removeMember(
+          req.params.id,
+          userId,
+          req.params.userId,
+        );
         return sendSuccess(res, HTTP_STATUS.OK);
       } catch (error) {
         if (sendHttpErrorResponse(res, error)) {

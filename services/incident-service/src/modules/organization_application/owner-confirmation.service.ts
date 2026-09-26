@@ -1,6 +1,7 @@
 import {
   ApplicationEventType,
   ApplicationStatus,
+  ApplicationType,
   OwnerCandidateStatus,
 } from "@da2/constants";
 import prisma from "../../config/prisma.client";
@@ -17,7 +18,10 @@ import {
   enqueueOwnerConfirmationExpiredEmail,
   enqueueOwnerDeclinedEmail,
 } from "./organization-application-notify.client";
-import { buildApplicationTrackUrl } from "./organization-application-urls";
+import {
+  buildApplicationTrackUrl,
+  buildOrganizationManageUrl,
+} from "./organization-application-urls";
 import { normalizeEmail } from "./owner-candidates";
 
 /** Application states in which a candidate may still answer. */
@@ -55,6 +59,7 @@ export class OwnerConfirmationService {
           candidate.expiresAt < now),
       expiresAt: candidate.expiresAt,
       applicationCode: application.code,
+      applicationType: application.type,
       organization: {
         name: profile.name ?? null,
         orgType: application.orgType,
@@ -208,10 +213,12 @@ export class OwnerConfirmationService {
           declineReason: reason,
         },
       });
+      // An ADD_OWNER proposal has nothing to revise: a refusal cancels it outright.
+      const nextStatus = this.statusAfterRefusal(application.type);
       await tx.organizationApplication.update({
         where: { id: application.id },
         data: {
-          status: ApplicationStatus.NEEDS_REVISION,
+          status: nextStatus,
           reviewNote: `Owner ${candidate.email} không xác nhận.`,
         },
       });
@@ -235,7 +242,7 @@ export class OwnerConfirmationService {
       });
 
       return {
-        applicationStatus: ApplicationStatus.NEEDS_REVISION as string,
+        applicationStatus: nextStatus as string,
         notify: true,
         application,
         candidate,
@@ -244,16 +251,17 @@ export class OwnerConfirmationService {
 
     if (result.notify) {
       const profile = (result.application.profile ?? {}) as Profile;
-      const tracking = await organizationApplicationOtpService.issueTrackingToken(
-        result.application.submitterEmail,
-      );
-      void enqueueOwnerDeclinedEmail({
-        toEmail: result.application.submitterEmail,
-        organizationName: profile.name ?? result.application.code,
-        ownerEmail: result.candidate.email,
-        reason: reason ?? "",
-        trackUrl: buildApplicationTrackUrl(result.application.id, tracking.token),
-      }).catch((err) => {
+      void this.submitterLink(result.application)
+        .then((trackUrl) =>
+          enqueueOwnerDeclinedEmail({
+            toEmail: result.application.submitterEmail,
+            organizationName: profile.name ?? result.application.code,
+            ownerEmail: result.candidate.email,
+            reason: reason ?? "",
+            trackUrl,
+          }),
+        )
+        .catch((err) => {
         console.warn("[owner-confirmation] failed to send the decline email", err);
       });
     }
@@ -300,7 +308,7 @@ export class OwnerConfirmationService {
         await tx.organizationApplication.update({
           where: { id: application.id },
           data: {
-            status: ApplicationStatus.NEEDS_REVISION,
+            status: this.statusAfterRefusal(application.type),
             reviewNote: `Owner ${emails.join(", ")} không xác nhận kịp hạn.`,
           },
         });
@@ -317,14 +325,11 @@ export class OwnerConfirmationService {
       expiredApplications += 1;
       const profile = (outcome.application.profile ?? {}) as Profile;
       try {
-        const tracking = await organizationApplicationOtpService.issueTrackingToken(
-          outcome.application.submitterEmail,
-        );
         await enqueueOwnerConfirmationExpiredEmail({
           toEmail: outcome.application.submitterEmail,
           organizationName: profile.name ?? outcome.application.code,
           ownerEmails: outcome.emails.join(", "),
-          trackUrl: buildApplicationTrackUrl(outcome.application.id, tracking.token),
+          trackUrl: await this.submitterLink(outcome.application),
         });
       } catch (err) {
         console.warn("[owner-confirmation] failed to send the expiry email", err);
@@ -332,6 +337,36 @@ export class OwnerConfirmationService {
     }
 
     return expiredApplications;
+  }
+
+  /**
+   * A new-organization application goes back to its submitter for changes; an ADD_OWNER
+   * proposal is simply cancelled (the proposer can start a new one).
+   */
+  private statusAfterRefusal(type: string): ApplicationStatus {
+    return type === ApplicationType.ADD_OWNER
+      ? ApplicationStatus.WITHDRAWN
+      : ApplicationStatus.NEEDS_REVISION;
+  }
+
+  /** Where the person who started the application follows it. */
+  private async submitterLink(application: {
+    id: string;
+    type: string;
+    organizationId: string | null;
+    submitterEmail: string;
+  }): Promise<string> {
+    if (application.type === ApplicationType.ADD_OWNER && application.organizationId) {
+      const organization = await prisma.organization.findUnique({
+        where: { id: application.organizationId },
+        select: { slug: true },
+      });
+      if (organization) return buildOrganizationManageUrl(organization.slug);
+    }
+    const tracking = await organizationApplicationOtpService.issueTrackingToken(
+      application.submitterEmail,
+    );
+    return buildApplicationTrackUrl(application.id, tracking.token);
   }
 
   private async findByToken(rawToken: string) {

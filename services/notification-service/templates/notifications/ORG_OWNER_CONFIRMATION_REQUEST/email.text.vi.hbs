@@ -1,6 +1,6 @@
 Xin chào {{{candidateName}}},
 
-{{{submitterEmail}}} đang đăng ký một tổ chức trên {{{appName}}} và ghi tên bạn làm owner{{#if isLegalRep}} kiêm người đại diện pháp lý{{/if}}.
+{{#if isAddOwner}}{{{submitterEmail}}}, owner của {{{organizationName}}} trên {{{appName}}}, đã đề xuất bạn làm owner.{{else}}{{{submitterEmail}}} đang đăng ký một tổ chức trên {{{appName}}} và ghi tên bạn làm owner{{#if isLegalRep}} kiêm người đại diện pháp lý{{/if}}.{{/if}}
 
 Tổ chức: {{{organizationName}}}
 Loại: {{{orgType}}}

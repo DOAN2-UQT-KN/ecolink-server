@@ -21,6 +21,11 @@ export function buildApplicationEditUrl(
   return `${frontendBaseUrl()}/organizations/apply/edit/${applicationId}?token=${encodeURIComponent(token)}`;
 }
 
+/** Public page where an invitee accepts or declines a member invitation. */
+export function buildOrgInvitationUrl(token: string): string {
+  return `${frontendBaseUrl()}/organizations/invitations?token=${encodeURIComponent(token)}`;
+}
+
 /** Where a newly created owner account sets its first password. */
 export function buildAccountActivationUrl(token: string): string {
   return `${frontendBaseUrl()}/activate-account?token=${encodeURIComponent(token)}`;

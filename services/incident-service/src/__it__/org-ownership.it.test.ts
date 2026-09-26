@@ -7,6 +7,9 @@
  *   (b) an owner who already has an account is attached, not re-created
  *   (c) an organization cannot be committed without an owner membership
  *   (d) the last owner membership cannot be removed
+ * Phase 2 adds:
+ *   (e) approving an ADD_OWNER proposal upgrades a MEMBER to OWNER in place
+ *   (f) two concurrent accepts of one invitation create exactly one membership
  *
  * identity-service and notification-service are mocked; everything in incident's own DB
  * (row locks, the advisory lock, the deferred owner trigger) is real.
@@ -42,6 +45,8 @@ jest.mock("../modules/organization_application/organization-application-notify.c
 
 import { organizationApplicationAdminService } from "../modules/organization_application/organization-application-admin.service";
 import { organizationOwnerOnboardPublisher } from "../modules/organization_application/organization-owner-onboard.publisher";
+import { organizationInvitationService } from "../modules/organization/organization-invitation.service";
+import { hashOpaqueToken } from "../utils/token-hash";
 
 const ADMIN = randomUUID();
 
@@ -256,5 +261,102 @@ describe("[it] organization ownership", () => {
         where: { organizationId: org.id, deletedAt: null },
       }),
     ).toBe(1);
+  });
+
+  it("(e) approving an ADD_OWNER proposal upgrades an existing MEMBER to OWNER, the org keeps its owners", async () => {
+    const ownerId = randomUUID();
+    const memberId = randomUUID();
+    const org = await seedOrganization(ownerId);
+    await prisma.organizationMember.create({
+      data: { organizationId: org.id, userId: memberId, role: "MEMBER", source: "JOIN_REQUEST" },
+    });
+    const proposal = await prisma.organizationApplication.create({
+      data: {
+        code: `ORG-${randomUUID().slice(0, 8).toUpperCase()}`,
+        type: "ADD_OWNER",
+        organizationId: org.id,
+        orgType: "CLUB",
+        status: "PENDING_REVIEW",
+        submitterEmail: "owner@clb.vn",
+        submittedByUserId: ownerId,
+        submittedAt: new Date(),
+        consentedAt: new Date(),
+        profile: { name: org.name, logoUrl: org.logoUrl },
+        owners: {
+          create: {
+            email: "member@clb.vn",
+            fullName: "Member",
+            status: "CONFIRMED",
+            respondedAt: new Date(),
+          },
+        },
+      },
+    });
+    ensureUsersMock.mockResolvedValue(
+      new Map([["member@clb.vn", identityUser(memberId, "member@clb.vn")]]),
+    );
+
+    await organizationApplicationAdminService.decide(proposal.id, ADMIN, {
+      decision: "APPROVE",
+    });
+
+    const members = await prisma.organizationMember.findMany({
+      where: { organizationId: org.id, deletedAt: null },
+      orderBy: { createdAt: "asc" },
+    });
+    expect(members.map((m) => [m.userId, m.role])).toEqual([
+      [ownerId, "OWNER"],
+      [memberId, "OWNER"],
+    ]);
+    const upgraded = members.find((m) => m.userId === memberId)!;
+    expect(upgraded.source).toBe("APPLICATION_APPROVAL");
+    expect(upgraded.sourceRef).toBe(proposal.id);
+
+    const after = await prisma.organizationApplication.findUniqueOrThrow({
+      where: { id: proposal.id },
+    });
+    expect(after.status).toBe("APPROVED");
+    // The organization's own application link is untouched by the proposal.
+    const orgAfter = await prisma.organization.findUniqueOrThrow({ where: { id: org.id } });
+    expect(orgAfter.applicationId).toBeNull();
+    expect(await prisma.organization.count()).toBe(1);
+    expect(
+      await prisma.outboxEvent.count({ where: { eventType: "ORG_OWNER_ONBOARD" } }),
+    ).toBe(1);
+  });
+
+  it("(f) two concurrent accepts of the same invitation create exactly one membership", async () => {
+    const ownerId = randomUUID();
+    const inviteeId = randomUUID();
+    const org = await seedOrganization(ownerId);
+    await prisma.organizationInvitation.create({
+      data: {
+        organizationId: org.id,
+        inviterId: ownerId,
+        inviteeUserId: inviteeId,
+        inviteeEmail: "binh@gmail.com",
+        status: "SENT",
+        approvedBy: ownerId,
+        approvedAt: new Date(),
+        tokenHash: hashOpaqueToken("raw-invite"),
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      },
+    });
+
+    const results = await Promise.allSettled([
+      organizationInvitationService.accept("raw-invite"),
+      organizationInvitationService.accept("raw-invite"),
+    ]);
+
+    expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled"]);
+    const memberships = await prisma.organizationMember.findMany({
+      where: { organizationId: org.id, userId: inviteeId },
+    });
+    expect(memberships).toHaveLength(1);
+    expect(memberships[0]).toMatchObject({ role: "MEMBER", source: "INVITATION", deletedAt: null });
+    const invitation = await prisma.organizationInvitation.findFirstOrThrow({
+      where: { organizationId: org.id },
+    });
+    expect(invitation.status).toBe("ACCEPTED");
   });
 });

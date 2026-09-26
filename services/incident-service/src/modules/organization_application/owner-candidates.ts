@@ -214,6 +214,8 @@ export function sendConfirmationEmails(params: {
   submitterEmail: string;
   orgType: string | null;
   profile: ProfileShape;
+  /** An owner proposing new owners for an existing organization (ADD_OWNER). */
+  isAddOwner?: boolean;
 }): void {
   for (const { candidate, rawToken } of params.issued) {
     const others = params.allOwners
@@ -234,6 +236,7 @@ export function sendConfirmationEmails(params: {
         Date.now() + OWNER_CONFIRM_TTL_DAYS * 24 * 60 * 60 * 1000,
       ),
       expiresInDays: OWNER_CONFIRM_TTL_DAYS,
+      isAddOwner: Boolean(params.isAddOwner),
     }).catch((err) => {
       console.warn(
         "[organization-application] failed to send an owner confirmation email",

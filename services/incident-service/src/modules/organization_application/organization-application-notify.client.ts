@@ -111,6 +111,27 @@ export function enqueueApplicationDraftUpdatedEmail(params: {
   });
 }
 
+/** Invitation to join an organization as a member, with the accept / decline link. */
+export function enqueueOrgInvitationEmail(params: {
+  toEmail: string;
+  inviteeName: string;
+  inviterName: string;
+  organizationName: string;
+  invitationUrl: string;
+  expiresInDays: number;
+  locale?: string;
+}): Promise<void> {
+  return enqueueJob("ORG_INVITATION", {
+    toEmail: params.toEmail,
+    inviteeName: params.inviteeName,
+    inviterName: params.inviterName,
+    organizationName: params.organizationName,
+    invitationUrl: params.invitationUrl,
+    expiresInDays: String(params.expiresInDays),
+    locale: params.locale ?? "vi",
+  });
+}
+
 /** Acknowledgement carrying the tracking code and link. */
 export function enqueueApplicationReceivedEmail(params: {
   toEmail: string;
@@ -179,9 +200,12 @@ export function enqueueOwnerConfirmationRequestEmail(params: {
   confirmUrl: string;
   expiresAt: Date;
   expiresInDays: number;
+  /** Proposal to add owners to an existing organization, not a new registration. */
+  isAddOwner?: boolean;
   locale?: string;
 }): Promise<void> {
   return enqueueJob("ORG_OWNER_CONFIRMATION_REQUEST", {
+    isAddOwner: params.isAddOwner ? "true" : "",
     toEmail: params.toEmail,
     candidateName: params.candidateName,
     organizationName: params.organizationName,

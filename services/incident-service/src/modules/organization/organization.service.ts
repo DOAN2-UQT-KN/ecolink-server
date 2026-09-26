@@ -6,7 +6,10 @@ import {
   type KycStatus,
   type OrgType,
   type TrustTier,
+  MembershipSource,
   OrgMemberRole,
+  OrgPermission,
+  canActOnMember,
   isOwnerRole,
   nextUniqueOrganizationSlug,
   slugifyOrganizationName,
@@ -43,6 +46,9 @@ import { buildVerifyContactEmailRequestUrl } from "./organization-contact-email-
 import { organizationJoiningRequestRepository } from "./organization_joining_request.repository";
 import { organizationMemberRepository } from "./organization_member.repository";
 import { organizationRepository } from "./organization.repository";
+import { orgAccessService } from "./org-access.service";
+import { organizationMembershipService } from "./organization-membership.service";
+import { enqueueOrgMembershipChangedWebsiteNotification } from "./organization-member-notify.client";
 import { backgroundJobDispatcher } from "../../queue/register";
 import {
   ReportJobType,
@@ -144,18 +150,13 @@ export class OrganizationService {
     }));
   }
 
-  private async assertOwner(
+  /** Thin wrapper so every check in this file reads the same; the matrix is in `org-access`. */
+  private assertPermission(
     organizationId: string,
     userId: string,
-    message: string,
-  ): Promise<void> {
-    const isOwner = await organizationMemberRepository.isOwner(
-      organizationId,
-      userId,
-    );
-    if (!isOwner) {
-      throw new HttpError(HTTP_STATUS.FORBIDDEN.withMessage(message));
-    }
+    permission: OrgPermission,
+  ): Promise<string> {
+    return orgAccessService.assertOrgPermission(organizationId, userId, permission);
   }
 
   private joinRequestResponseFromRow(
@@ -521,11 +522,7 @@ export class OrganizationService {
         HTTP_STATUS.NOT_FOUND.withMessage("Organization not found"),
       );
     }
-    await this.assertOwner(
-      organizationId,
-      ownerId,
-      "Only an organization owner can update this organization",
-    );
+    await this.assertPermission(organizationId, ownerId, OrgPermission.ORG_EDIT);
 
     const prevEmailNorm = org.contactEmail?.toLowerCase().trim() ?? "";
     const nextName = body.name !== undefined ? body.name.trim() : org.name;
@@ -630,11 +627,7 @@ export class OrganizationService {
         HTTP_STATUS.NOT_FOUND.withMessage("Organization not found"),
       );
     }
-    await this.assertOwner(
-      organizationId,
-      ownerId,
-      "Only an organization owner can resend the verification email",
-    );
+    await this.assertPermission(organizationId, ownerId, OrgPermission.ORG_EDIT);
     const email = org.contactEmail?.trim();
     if (!email) {
       throw new HttpError(
@@ -717,6 +710,7 @@ export class OrganizationService {
       ...organization,
       myRole: role,
       isOwner: isOwnerRole(role),
+      permissions: orgAccessService.permissionsFor(role),
       ...(isMember ? { isMember } : {}),
     };
     if (requestStatus === undefined || latest === undefined) {
@@ -872,6 +866,7 @@ export class OrganizationService {
           isEmailVerified: query.isEmailVerified,
           organizationIdIn: joinRequestOrgIds,
           isOwner: query.isOwner,
+          roles: query.roles,
         },
         { skip, take: limit, sortBy, sortOrder },
       );
@@ -987,11 +982,12 @@ export class OrganizationService {
       row.requesterId,
     ]);
 
-    void organizationMemberRepository
-      .findOwnerUserIds(organizationId)
-      .then((ownerIds) =>
+    // Everyone who may approve it hears about it, not just the owners.
+    void orgAccessService
+      .userIdsWith(organizationId, OrgPermission.MEMBER_APPROVE)
+      .then((approverIds) =>
         Promise.all(
-          ownerIds.map((ownerId) =>
+          approverIds.map((ownerId) =>
             this.notifyOrganizationOwnerOfJoinRequest({
               ownerId,
               organizationId,
@@ -1053,10 +1049,10 @@ export class OrganizationService {
         HTTP_STATUS.NOT_FOUND.withMessage("Organization not found"),
       );
     }
-    await this.assertOwner(
+    await this.assertPermission(
       organizationId,
       ownerId,
-      "Only an organization owner can view join requests",
+      OrgPermission.MEMBER_APPROVE,
     );
 
     const page = query.page ?? 1;
@@ -1150,10 +1146,10 @@ export class OrganizationService {
       );
     }
 
-    await this.assertOwner(
+    await this.assertPermission(
       request.organizationId,
       ownerId,
-      "Only an organization owner can process join requests",
+      OrgPermission.MEMBER_APPROVE,
     );
 
     if (request.status !== JoinRequestStatus._STATUS_PENDING) {
@@ -1161,36 +1157,20 @@ export class OrganizationService {
     }
 
     if (status === JoinRequestStatus._STATUS_APPROVED) {
-      await prisma.$transaction([
-        prisma.organizationJoiningRequest.update({
+      await prisma.$transaction(async (tx) => {
+        await tx.organizationJoiningRequest.update({
           where: { id: requestId },
           data: { status },
-        }),
-        prisma.organizationMember.upsert({
-          where: {
-            organizationId_userId: {
-              organizationId: request.organizationId,
-              userId: request.requesterId,
-            },
-          },
-          create: {
-            organizationId: request.organizationId,
-            userId: request.requesterId,
-            role: OrgMemberRole.MEMBER,
-            source: "JOIN_REQUEST",
-            sourceRef: request.id,
-            createdBy: ownerId,
-          },
-          update: {
-            deletedAt: null,
-            role: OrgMemberRole.MEMBER,
-            source: "JOIN_REQUEST",
-            sourceRef: request.id,
-            updatedAt: new Date(),
-            updatedBy: ownerId,
-          },
-        }),
-      ]);
+        });
+        await organizationMembershipService.grantMembership(tx, {
+          userId: request.requesterId,
+          organizationId: request.organizationId,
+          role: OrgMemberRole.MEMBER,
+          source: MembershipSource.JOIN_REQUEST,
+          sourceRef: request.id,
+          actorId: ownerId,
+        });
+      });
       void enqueueVolunteerApprovedWebsiteNotification({
         userId: request.requesterId,
         reportTitle: request.organization.name,
@@ -1366,6 +1346,107 @@ export class OrganizationService {
       limit,
       totalPages: Math.ceil(total / limit) || 0,
     };
+  }
+
+  /**
+   * Change a member's role. Owners are out of reach here (becoming one is an ADD_OWNER
+   * application, losing it is phase 3); an admin cannot touch another admin, and only an
+   * owner may hand out ADMIN.
+   */
+  async changeMemberRole(
+    organizationId: string,
+    actorId: string,
+    targetUserId: string,
+    newRole: string,
+  ): Promise<OrganizationMemberResponse> {
+    const actorRole = await this.assertPermission(
+      organizationId,
+      actorId,
+      OrgPermission.MEMBER_MANAGE,
+    );
+    if (!orgAccessService.permissionsFor(actorRole).assignableRoles.includes(
+      newRole as OrgMemberRole,
+    )) {
+      throw new HttpError(HTTP_STATUS.ROLE_NOT_ASSIGNABLE);
+    }
+    const targetRole = await orgAccessService.getRole(organizationId, targetUserId);
+    if (!targetRole) {
+      throw new HttpError(HTTP_STATUS.MEMBER_NOT_FOUND);
+    }
+    if (targetUserId === actorId || !canActOnMember(actorRole, targetRole)) {
+      throw new HttpError(HTTP_STATUS.CANNOT_ACT_ON_MEMBER);
+    }
+
+    const org = await organizationRepository.findById(organizationId);
+    const row = await prisma.$transaction((tx) =>
+      organizationMembershipService.changeRole(tx, {
+        organizationId,
+        userId: targetUserId,
+        role: newRole as OrgMemberRole,
+        actorId,
+      }),
+    );
+
+    if (org && targetRole !== newRole) {
+      void enqueueOrgMembershipChangedWebsiteNotification({
+        userId: targetUserId,
+        organizationId,
+        organizationName: org.name,
+        organizationSlug: org.slug,
+        role: newRole,
+      }).catch((err) => {
+        console.warn("[organization] failed to notify member of role change", err);
+      });
+    }
+
+    const profiles = await fetchOrganizationOwnersByUserIds([targetUserId]);
+    return {
+      organizationId: row.organizationId,
+      userId: row.userId,
+      role: row.role,
+      user:
+        getUserProfile(profiles, targetUserId) ?? this.ownerFallback(targetUserId),
+      createdAt: row.createdAt,
+    };
+  }
+
+  /** Remove a non-owner member (soft delete). Same bounds as `changeMemberRole`. */
+  async removeMember(
+    organizationId: string,
+    actorId: string,
+    targetUserId: string,
+  ): Promise<void> {
+    const actorRole = await this.assertPermission(
+      organizationId,
+      actorId,
+      OrgPermission.MEMBER_MANAGE,
+    );
+    const targetRole = await orgAccessService.getRole(organizationId, targetUserId);
+    if (!targetRole) {
+      throw new HttpError(HTTP_STATUS.MEMBER_NOT_FOUND);
+    }
+    if (targetUserId === actorId || !canActOnMember(actorRole, targetRole)) {
+      throw new HttpError(HTTP_STATUS.CANNOT_ACT_ON_MEMBER);
+    }
+
+    await organizationMemberRepository.softDeleteMembership(
+      organizationId,
+      targetUserId,
+      actorId,
+    );
+
+    const org = await organizationRepository.findById(organizationId);
+    if (org) {
+      void enqueueOrgMembershipChangedWebsiteNotification({
+        userId: targetUserId,
+        organizationId,
+        organizationName: org.name,
+        organizationSlug: org.slug,
+        removed: true,
+      }).catch((err) => {
+        console.warn("[organization] failed to notify removed member", err);
+      });
+    }
   }
 
   async leaveOrganization(

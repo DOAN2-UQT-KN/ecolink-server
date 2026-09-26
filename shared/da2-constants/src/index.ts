@@ -4,3 +4,4 @@ export * from "./i18n";
 export * from "./notification-preferences";
 export * from "./organization-slug";
 export * from "./organization-trust";
+export * from "./org-permissions";

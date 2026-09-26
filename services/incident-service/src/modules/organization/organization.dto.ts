@@ -1,4 +1,9 @@
-import type { KycStatus, OrgType, TrustTier } from "@da2/constants";
+import type {
+  KycStatus,
+  OrgPermissionSet,
+  OrgType,
+  TrustTier,
+} from "@da2/constants";
 
 /**
  * Body for POST /api/v1/organizations (internal only; JSON keys may be snake_case and the
@@ -97,6 +102,12 @@ export interface OrganizationResponse {
   myRole?: string | null;
   /** True when the viewer holds an owner role. Only on viewer-aware endpoints. */
   isOwner?: boolean;
+  /**
+   * What the viewer may do here, resolved from their role (`@da2/constants` org-permissions).
+   * The client shows or hides management actions from this instead of re-deriving the matrix.
+   * Only on viewer-aware endpoints.
+   */
+  permissions?: OrgPermissionSet;
   /**
    * Active member count, owners included.
    * Included on GET /organizations and GET /organizations/my.
@@ -199,10 +210,18 @@ export interface MyOrganizationsListQuery {
    * where I am a member without one. Omit for both.
    */
   isOwner?: boolean;
+  /** Only memberships with one of these roles (`OrgMemberRole`); takes precedence over `isOwner`. */
+  roles?: string[];
   page?: number;
   limit?: number;
   sortBy?: "createdAt" | "updatedAt" | "name";
   sortOrder?: "asc" | "desc";
+}
+
+/** Body for PATCH /api/v1/organizations/:id/members/:userId/role. */
+export interface ChangeMemberRoleBody {
+  /** `OrgMemberRole`; must be in the actor's `assignableRoles`. */
+  role: string;
 }
 
 /** Query for GET /api/v1/organizations/:id/join-requests (owner). */

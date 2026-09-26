@@ -19,6 +19,7 @@ export const KINDS_ALLOWING_DIRECT_TO_EMAIL: ReadonlySet<NotificationKind> =
     NotificationKind.ORG_APPLICATION_REJECTED,
     NotificationKind.ORG_APPLICATION_DRAFT_STARTED,
     NotificationKind.ORG_APPLICATION_DRAFT_UPDATED,
+    NotificationKind.ORG_INVITATION,
     NotificationKind.ACCOUNT_ACTIVATION,
     NotificationKind.ORG_OWNER_CONFIRMATION_REQUEST,
     NotificationKind.ORG_OWNER_DECLINED,

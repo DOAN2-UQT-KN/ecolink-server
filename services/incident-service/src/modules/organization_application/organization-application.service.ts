@@ -793,10 +793,10 @@ export class OrganizationApplicationService {
    *   - listed on too many other in-flight applications → TOO_MANY_PENDING_INVITES
    *   - opted out via "I'm not involved" → OWNER_INVITE_BLOCKED
    */
-  private async assertOwnersEligible(
+  async assertOwnersEligible(
     applicationId: string,
     submitterEmail: string,
-    owners: CandidateRow[],
+    owners: { email: string }[],
   ): Promise<void> {
     const emails = owners.map((o) => o.email);
 
@@ -856,6 +856,21 @@ export class OrganizationApplicationService {
     candidateId: string,
   ): Promise<ApplicationPublicResponse> {
     const application = await this.loadForApplicant(applicationId, trackingToken);
+    await this.resendCandidate(application.id, candidateId);
+    return this.getForApplicant(application.id, trackingToken);
+  }
+
+  /**
+   * New confirmation link for one pending candidate, shared by the anonymous applicant
+   * (tracking link) and an owner resending an ADD_OWNER proposal (membership). The caller
+   * has already been authorised.
+   */
+  async resendCandidate(applicationId: string, candidateId: string): Promise<void> {
+    const application =
+      await organizationApplicationRepository.findById(applicationId);
+    if (!application) {
+      throw new HttpError(HTTP_STATUS.ORGANIZATION_APPLICATION_NOT_FOUND);
+    }
     const now = new Date();
 
     const { candidate, rawToken, owners } = await prisma.$transaction(
@@ -910,9 +925,8 @@ export class OrganizationApplicationService {
       submitterEmail: application.submitterEmail,
       orgType: application.orgType,
       profile: (application.profile ?? {}) as Partial<ApplicationProfileInput>,
+      isAddOwner: application.type === ApplicationType.ADD_OWNER,
     });
-
-    return this.getForApplicant(application.id, trackingToken);
   }
 
   /**
@@ -1226,7 +1240,7 @@ export class OrganizationApplicationService {
   }
 
   /** `ORG-XXXXXXXX`; retried on the (unlikely) unique clash. */
-  private async createWithUniqueCode(
+  async createWithUniqueCode(
     data: Omit<Prisma.OrganizationApplicationCreateInput, "code">,
   ) {
     for (let attempt = 0; attempt < 5; attempt += 1) {

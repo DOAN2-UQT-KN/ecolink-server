@@ -9,12 +9,14 @@ const txFake = {
   organizationChannel: { createMany: jest.fn() },
   organizationApplication: { update: jest.fn(), findUniqueOrThrow: jest.fn() },
   organizationApplicationOwner: { update: jest.fn() },
-  organizationApplicationEvent: { createMany: jest.fn() },
+  organizationApplicationEvent: { createMany: jest.fn(), create: jest.fn() },
+  organizationMember: { findFirst: jest.fn() },
 };
 const transactionMock = jest.fn(
   async (cb: (tx: unknown) => unknown) => cb(txFake),
 );
 const findOrganizationsMock = jest.fn();
+const findOrganizationMock = jest.fn();
 const emitOutboxMock = jest.fn();
 const findByIdMock = jest.fn();
 const findByIdWithOwnersMock = jest.fn();
@@ -38,7 +40,10 @@ jest.mock("../../../config/prisma.client", () => ({
   __esModule: true,
   default: {
     $transaction: (cb: never) => transactionMock(cb),
-    organization: { findMany: (...a: unknown[]) => findOrganizationsMock(...a) },
+    organization: {
+      findMany: (...a: unknown[]) => findOrganizationsMock(...a),
+      findUnique: (...a: unknown[]) => findOrganizationMock(...a),
+    },
   },
 }));
 
@@ -532,5 +537,133 @@ describe("OrganizationApplicationAdminService.getById — thẩm định con ng�
     await expect(organizationApplicationAdminService.getById("app-1")).rejects.toMatchObject({
       statusResponse: { code: "ORGANIZATION_APPLICATION_NOT_FOUND" },
     });
+  });
+});
+
+describe("OrganizationApplicationAdminService — duyệt đề xuất thêm owner (ADD_OWNER)", () => {
+  const proposal = (overrides: Row = {}) =>
+    application({
+      type: "ADD_OWNER",
+      organizationId: "org-1",
+      lane: null,
+      owners: [binh()],
+      ...overrides,
+    });
+
+  beforeEach(() => {
+    useApplication(proposal());
+    findOrganizationMock.mockResolvedValue({
+      id: "org-1",
+      name: "CLB Xanh",
+      slug: "clb-xanh",
+      deletedAt: null,
+    });
+    txFake.organizationMember.findFirst.mockResolvedValue({ role: "MEMBER" });
+    countDocumentsMock.mockResolvedValue(0);
+  });
+
+  it("không cần lane hay giấy tờ; nâng MEMBER lên OWNER, outbox cho từng người, không tạo tổ chức", async () => {
+    await organizationApplicationAdminService.decide("app-1", ADMIN, {
+      decision: "APPROVE",
+    });
+
+    expect(ensureUsersMock).toHaveBeenCalledWith([
+      { email: "binh@gmail.com", fullName: "Tran Binh" },
+    ]);
+    expect(txFake.organization.create).not.toHaveBeenCalled();
+    expect(assertOwnerQuotaMock).toHaveBeenCalledWith(txFake, "u-binh", "binh@gmail.com");
+    expect(grantMembershipMock.mock.calls[0][1]).toMatchObject({
+      userId: "u-binh",
+      organizationId: "org-1",
+      role: "OWNER",
+      source: "APPLICATION_APPROVAL",
+      sourceRef: "app-1",
+    });
+    expect(emitOutboxMock.mock.calls[0][1]).toMatchObject({
+      eventType: "ORG_OWNER_ONBOARD",
+      dedupKey: "ORG_OWNER_ONBOARD:c-binh",
+      payload: expect.objectContaining({
+        organizationSlug: "clb-xanh",
+        userId: "u-binh",
+        isLegalRep: false,
+      }),
+    });
+    expect(txFake.organizationApplication.update.mock.calls[0][0].data).toMatchObject({
+      status: "APPROVED",
+      reviewerId: ADMIN,
+    });
+    expect(txFake.organizationApplicationEvent.create.mock.calls[0][0].data.payload).toMatchObject({
+      type: "ADD_OWNER",
+      ownerUserIds: ["u-binh"],
+    });
+  });
+
+  it("người đó đã là owner từ trước: không cấp lại nhưng vẫn gửi email onboard", async () => {
+    txFake.organizationMember.findFirst.mockResolvedValue({ role: "OWNER" });
+
+    await organizationApplicationAdminService.decide("app-1", ADMIN, {
+      decision: "APPROVE",
+    });
+
+    expect(grantMembershipMock).not.toHaveBeenCalled();
+    expect(assertOwnerQuotaMock).not.toHaveBeenCalled();
+    expect(emitOutboxMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("vượt trần 3 tổ chức → lỗi, không cấp gì", async () => {
+    assertOwnerQuotaMock.mockRejectedValue(new HttpError(HTTP_STATUS.OWNER_QUOTA_EXCEEDED));
+
+    await expect(
+      organizationApplicationAdminService.decide("app-1", ADMIN, { decision: "APPROVE" }),
+    ).rejects.toMatchObject({ statusResponse: { code: "OWNER_QUOTA_EXCEEDED" } });
+    expect(grantMembershipMock).not.toHaveBeenCalled();
+  });
+
+  it("có người chưa xác nhận (đọc lại trong transaction) → OWNERS_NOT_ALL_CONFIRMED", async () => {
+    findByIdMock.mockResolvedValue(proposal());
+    findByIdWithOwnersMock
+      .mockResolvedValueOnce(proposal())
+      .mockResolvedValueOnce(proposal({ owners: [binh({ status: "PENDING" })] }));
+
+    await expect(
+      organizationApplicationAdminService.decide("app-1", ADMIN, { decision: "APPROVE" }),
+    ).rejects.toMatchObject({ statusResponse: { code: "OWNERS_NOT_ALL_CONFIRMED" } });
+  });
+
+  it("trạng thái đổi trong lúc duyệt → NOT_PENDING_REVIEW", async () => {
+    findByIdMock.mockResolvedValue(proposal());
+    findByIdWithOwnersMock
+      .mockResolvedValueOnce(proposal())
+      .mockResolvedValueOnce(proposal({ status: "WITHDRAWN" }));
+
+    await expect(
+      organizationApplicationAdminService.decide("app-1", ADMIN, { decision: "APPROVE" }),
+    ).rejects.toMatchObject({ statusResponse: { code: "NOT_PENDING_REVIEW" } });
+  });
+
+  it("tổ chức đã bị xoá → CONFLICT, không gọi identity", async () => {
+    findOrganizationMock.mockResolvedValue(null);
+
+    await expect(
+      organizationApplicationAdminService.decide("app-1", ADMIN, { decision: "APPROVE" }),
+    ).rejects.toMatchObject({ statusResponse: { code: "CONFLICT" } });
+    expect(ensureUsersMock).not.toHaveBeenCalled();
+  });
+
+  it("owner được đề xuất bị khoá tài khoản → OWNER_SUSPENDED", async () => {
+    ensureUsersMock.mockResolvedValue(
+      new Map([["binh@gmail.com", { id: "u-binh", email: "binh@gmail.com", status: 2 }]]),
+    );
+
+    await expect(
+      organizationApplicationAdminService.decide("app-1", ADMIN, { decision: "APPROVE" }),
+    ).rejects.toMatchObject({ statusResponse: { code: "OWNER_SUSPENDED" } });
+  });
+
+  it("đề xuất owner không trả về để sửa được → INVALID_INPUT", async () => {
+    await expect(
+      organizationApplicationAdminService.requestMoreInfo("app-1", ADMIN, "Bổ sung"),
+    ).rejects.toMatchObject({ statusResponse: { code: "INVALID_INPUT" } });
+    expect(updateMock).not.toHaveBeenCalled();
   });
 });

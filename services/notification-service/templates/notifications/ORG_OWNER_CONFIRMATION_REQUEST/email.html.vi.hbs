@@ -3,9 +3,11 @@
   <body style="font-family: system-ui, sans-serif; line-height: 1.5; color: #111">
     <p>Xin chào {{candidateName}},</p>
     <p>
-      <strong>{{submitterEmail}}</strong> đang đăng ký một tổ chức trên
+      {{#if isAddOwner}}<strong>{{submitterEmail}}</strong>, owner của
+      <strong>{{organizationName}}</strong> trên <strong>{{appName}}</strong>, đã đề xuất bạn
+      làm owner.{{else}}<strong>{{submitterEmail}}</strong> đang đăng ký một tổ chức trên
       <strong>{{appName}}</strong> và ghi tên bạn làm owner{{#if isLegalRep}}
-      kiêm <strong>người đại diện pháp lý</strong>{{/if}}.
+      kiêm <strong>người đại diện pháp lý</strong>{{/if}}.{{/if}}
     </p>
     <table style="border-collapse: collapse; font-size: 0.95rem">
       <tr><td style="padding: 2px 12px 2px 0; color: #555">Tổ chức</td><td><strong>{{organizationName}}</strong></td></tr>

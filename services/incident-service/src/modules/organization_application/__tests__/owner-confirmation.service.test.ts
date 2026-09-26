@@ -12,6 +12,7 @@ const recordEventMock = jest.fn();
 const issueTrackingTokenMock = jest.fn();
 const declinedEmailMock = jest.fn();
 const expiredEmailMock = jest.fn();
+const orgFindUniqueMock = jest.fn();
 
 const txFake = {
   organizationApplicationOwner: {
@@ -29,7 +30,10 @@ const transactionMock = jest.fn(
 
 jest.mock("../../../config/prisma.client", () => ({
   __esModule: true,
-  default: { $transaction: (cb: never) => transactionMock(cb) },
+  default: {
+    $transaction: (cb: never) => transactionMock(cb),
+    organization: { findUnique: (...a: unknown[]) => orgFindUniqueMock(...a) },
+  },
 }));
 
 jest.mock("../organization-application.repository", () => ({
@@ -237,6 +241,8 @@ describe("OwnerConfirmationService.decline", () => {
     useCandidate(cand());
 
     const result = await ownerConfirmationService.decline("t", { reason: "Gõ nhầm email" });
+    // The submitter email goes out after the link is resolved (async).
+    await new Promise((resolve) => setImmediate(resolve));
 
     expect(result.applicationStatus).toBe("NEEDS_REVISION");
     expect(txFake.organizationApplicationOwner.update.mock.calls[0][0].data).toMatchObject({
@@ -324,5 +330,58 @@ describe("OwnerConfirmationService.expireOverdue", () => {
     expect(count).toBe(0);
     expect(txFake.organizationApplication.update).not.toHaveBeenCalled();
     expect(expiredEmailMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("OwnerConfirmationService — đề xuất thêm owner (ADD_OWNER)", () => {
+  const addOwner = { type: "ADD_OWNER", organizationId: "org-1" };
+
+  it("owner được đề xuất từ chối → huỷ đề xuất (WITHDRAWN), link email về trang tổ chức", async () => {
+    orgFindUniqueMock.mockResolvedValue({ slug: "clb-xanh" });
+    useCandidate(cand({}, addOwner));
+
+    const result = await ownerConfirmationService.decline("t", { reason: "Không liên quan" });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(result.applicationStatus).toBe("WITHDRAWN");
+    expect(txFake.organizationApplication.update.mock.calls[0][0].data.status).toBe(
+      "WITHDRAWN",
+    );
+    expect(issueTrackingTokenMock).not.toHaveBeenCalled();
+    expect(declinedEmailMock.mock.calls[0][0].trackUrl).toContain("/organizations/clb-xanh");
+  });
+
+  it("hết hạn xác nhận → huỷ đề xuất (WITHDRAWN), không phải NEEDS_REVISION", async () => {
+    orgFindUniqueMock.mockResolvedValue({ slug: "clb-xanh" });
+    findOverdueCandidatesMock.mockResolvedValue([{ applicationId: "app-1" }]);
+    findByIdWithOwnersMock.mockResolvedValue(
+      app({
+        ...addOwner,
+        owners: [
+          {
+            id: "c-binh",
+            email: "binh@gmail.com",
+            status: "PENDING",
+            expiresAt: new Date(Date.now() - 1000),
+          },
+        ],
+      }),
+    );
+
+    const count = await ownerConfirmationService.expireOverdue();
+
+    expect(count).toBe(1);
+    expect(txFake.organizationApplication.update.mock.calls[0][0].data.status).toBe(
+      "WITHDRAWN",
+    );
+    expect(expiredEmailMock.mock.calls[0][0].trackUrl).toContain("/organizations/clb-xanh");
+  });
+
+  it("tóm tắt trả về loại hồ sơ để trang xác nhận đổi lời dẫn", async () => {
+    useCandidate(cand({}, addOwner));
+
+    const summary = await ownerConfirmationService.getSummary("t");
+
+    expect(summary.applicationType).toBe("ADD_OWNER");
   });
 });

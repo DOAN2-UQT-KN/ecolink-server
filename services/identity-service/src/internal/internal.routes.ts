@@ -4,6 +4,7 @@ import { HTTP_STATUS, sendError, sendSuccess } from "../constants/http-status";
 import { requireInternalIdentityApiKey } from "../middleware/internal-identity-auth.middleware";
 import { authService } from "../modules/auth/auth.service";
 import { userService } from "../modules/user/user.service";
+import { userRepository } from "../modules/user/user.repository";
 
 const router = Router();
 
@@ -87,6 +88,58 @@ router.post(
       sendSuccess(res, HTTP_STATUS.OK, { users: users.map(toOwnerLookupRow) });
     } catch (e) {
       console.error("Internal users lookup-by-emails error:", e);
+      sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+    }
+  },
+);
+
+/**
+ * Incident-service: accounts by id with email and status (invitations, owner proposals).
+ */
+router.post(
+  "/users/lookup-by-ids",
+  body("ids").isArray({ min: 1, max: 50 }),
+  body("ids.*").isUUID(),
+  async (req, res): Promise<void> => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
+      return;
+    }
+    try {
+      const users = await userRepository.findByIds((req.body as { ids: string[] }).ids);
+      sendSuccess(res, HTTP_STATUS.OK, {
+        users: users.map((u) => ({ ...toOwnerLookupRow(u), avatar: u.avatar })),
+      });
+    } catch (e) {
+      console.error("Internal users lookup-by-ids error:", e);
+      sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+    }
+  },
+);
+
+/**
+ * Incident-service: people matching `q` (email or name) for the member / owner pickers.
+ * Returns full emails; incident-service decides whether to mask them for the caller.
+ */
+router.post(
+  "/users/search",
+  body("q").isString().isLength({ min: 2, max: 100 }),
+  body("limit").optional().isInt({ min: 1, max: 20 }).toInt(),
+  async (req, res): Promise<void> => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
+      return;
+    }
+    try {
+      const { q, limit } = req.body as { q: string; limit?: number };
+      const users = await userRepository.searchActive(q, limit ?? 10);
+      sendSuccess(res, HTTP_STATUS.OK, {
+        users: users.map((u) => ({ ...toOwnerLookupRow(u), avatar: u.avatar })),
+      });
+    } catch (e) {
+      console.error("Internal users search error:", e);
       sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
     }
   },

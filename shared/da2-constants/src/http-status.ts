@@ -217,6 +217,66 @@ export const HTTP_STATUS = {
     "Not every owner has confirmed",
     "OWNERS_NOT_ALL_CONFIRMED",
   ),
+  ORG_PERMISSION_DENIED: createStatus(
+    403,
+    "Your role in this organization does not allow this action",
+    "ORG_PERMISSION_DENIED",
+  ),
+  ROLE_NOT_ASSIGNABLE: createStatus(
+    403,
+    "You cannot assign this role",
+    "ROLE_NOT_ASSIGNABLE",
+  ),
+  CANNOT_ACT_ON_MEMBER: createStatus(
+    403,
+    "You cannot change or remove this member",
+    "CANNOT_ACT_ON_MEMBER",
+  ),
+  MEMBER_NOT_FOUND: createStatus(
+    404,
+    "This person is not a member of the organization",
+    "MEMBER_NOT_FOUND",
+  ),
+  ALREADY_MEMBER: createStatus(
+    409,
+    "This person is already a member of the organization",
+    "ALREADY_MEMBER",
+  ),
+  INVITATION_ALREADY_PENDING: createStatus(
+    409,
+    "This person already has a pending invitation",
+    "INVITATION_ALREADY_PENDING",
+  ),
+  INVITATION_NOT_FOUND: createStatus(
+    404,
+    "Invitation not found",
+    "INVITATION_NOT_FOUND",
+  ),
+  INVITATION_EXPIRED: createStatus(
+    410,
+    "This invitation has expired",
+    "INVITATION_EXPIRED",
+  ),
+  INVITATION_NOT_ACTIVE: createStatus(
+    409,
+    "This invitation is no longer active",
+    "INVITATION_NOT_ACTIVE",
+  ),
+  INVITEE_NOT_AVAILABLE: createStatus(
+    422,
+    "This account cannot be invited",
+    "INVITEE_NOT_AVAILABLE",
+  ),
+  ALREADY_OWNER: createStatus(
+    409,
+    "This person is already an owner of the organization",
+    "ALREADY_OWNER",
+  ),
+  OWNER_PROPOSAL_ALREADY_OPEN: createStatus(
+    409,
+    "This organization already has an open owner proposal",
+    "OWNER_PROPOSAL_ALREADY_OPEN",
+  ),
   ORG_MUST_HAVE_OWNER: createStatus(
     409,
     "An organization must keep at least one owner",

@@ -215,6 +215,7 @@ export class OrganizationMemberRepository {
   async softDeleteMembership(
     organizationId: string,
     userId: string,
+    actorId: string = userId,
   ): Promise<boolean> {
     const result = await this.prisma.organizationMember.updateMany({
       where: {
@@ -225,7 +226,7 @@ export class OrganizationMemberRepository {
       data: {
         deletedAt: new Date(),
         updatedAt: new Date(),
-        updatedBy: userId,
+        updatedBy: actorId,
       },
     });
     return result.count > 0;

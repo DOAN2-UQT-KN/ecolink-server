@@ -243,6 +243,8 @@ export class OrganizationRepository {
       organizationIdIn?: string[];
       /** Narrow to owned only (`true`) or member-but-not-owner (`false`). */
       isOwner?: boolean;
+      /** Narrow to memberships holding one of these roles. */
+      roles?: string[];
     },
     options: {
       skip: number;
@@ -263,11 +265,13 @@ export class OrganizationRepository {
         some: {
           userId,
           deletedAt: null,
-          ...(filters.isOwner === true
-            ? { role: { in: ownerRoles } }
-            : filters.isOwner === false
-              ? { role: { notIn: ownerRoles } }
-              : {}),
+          ...(filters.roles?.length
+            ? { role: { in: filters.roles } }
+            : filters.isOwner === true
+              ? { role: { in: ownerRoles } }
+              : filters.isOwner === false
+                ? { role: { notIn: ownerRoles } }
+                : {}),
         },
       },
     };

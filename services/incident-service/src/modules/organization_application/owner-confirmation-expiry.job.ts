@@ -1,4 +1,5 @@
 import { ownerConfirmationService } from "./owner-confirmation.service";
+import { organizationInvitationService } from "../organization/organization-invitation.service";
 
 const INTERVAL_MS = Number(
   process.env.OWNER_CONFIRMATION_EXPIRY_INTERVAL_MS ?? 60 * 60 * 1000,
@@ -16,6 +17,10 @@ async function tick(): Promise<void> {
       console.log(
         `[OwnerConfirmationExpiry] ${expired} application(s) sent back for revision`,
       );
+    }
+    const invitations = await organizationInvitationService.expireOverdue();
+    if (invitations > 0) {
+      console.log(`[OwnerConfirmationExpiry] ${invitations} invitation(s) expired`);
     }
   } catch (error) {
     console.error("[OwnerConfirmationExpiry] sweep failed", error);

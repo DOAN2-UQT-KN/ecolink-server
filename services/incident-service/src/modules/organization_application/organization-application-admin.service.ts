@@ -4,8 +4,10 @@ import {
   ApplicationLane,
   ApplicationStatus,
   GlobalStatus,
+  ApplicationType,
   KycStatus,
   LANE_B_VERIFICATION_VALID_DAYS,
+  isOwnerRole,
   MembershipSource,
   OrgMemberRole,
   OwnerCandidateStatus,
@@ -228,6 +230,14 @@ export class OrganizationApplicationAdminService {
     message: string,
   ): Promise<ApplicationAdminResponse> {
     const application = await this.loadPendingReview(applicationId);
+    if (application.type === ApplicationType.ADD_OWNER) {
+      // An owner proposal has nothing to edit; approve it or reject it with a reason.
+      throw new HttpError(
+        HTTP_STATUS.INVALID_INPUT.withMessage(
+          "An owner proposal cannot be sent back for changes; approve or reject it",
+        ),
+      );
+    }
 
     await organizationApplicationRepository.update(applicationId, {
       status: ApplicationStatus.NEEDS_REVISION,
@@ -350,11 +360,158 @@ export class OrganizationApplicationAdminService {
    *   4. per candidate: 3-org cap under a per-user lock, then the membership
    *   5. one outbox event per candidate for the activation / "you were added" email
    */
+  /**
+   * ADD_OWNER: no organization to create, no lane or documents. Every confirmed person gets
+   * an OWNER membership (a MEMBER / ADMIN / … is upgraded), under the same 3-organization
+   * cap and per-user lock as a new organization, and the same onboarding email.
+   */
+  private async approveAddOwner(
+    application: ApplicationRow,
+    adminUserId: string,
+  ): Promise<ApplicationAdminResponse> {
+    const organizationId = application.organizationId;
+    const organization = organizationId
+      ? await prisma.organization.findUnique({ where: { id: organizationId } })
+      : null;
+    if (!organizationId || !organization || organization.deletedAt) {
+      throw new HttpError(
+        HTTP_STATUS.CONFLICT.withMessage("The organization of this proposal no longer exists"),
+      );
+    }
+
+    const withOwners = await organizationApplicationRepository.findByIdWithOwners(
+      application.id,
+    );
+    const candidates = withOwners?.owners ?? [];
+    if (candidates.length === 0) {
+      throw new HttpError(HTTP_STATUS.AT_LEAST_ONE_OWNER);
+    }
+
+    let users: Map<string, IdentityUserSummary>;
+    try {
+      users = await ensureUsers(
+        candidates.map((c) => ({ email: c.email, fullName: c.fullName })),
+      );
+    } catch (error) {
+      console.error("[organization-application] ensure-users failed", error);
+      throw new HttpError(
+        HTTP_STATUS.SERVICE_UNAVAILABLE.withMessage(
+          "Could not prepare the owners' accounts, please try again",
+        ),
+      );
+    }
+    for (const candidate of candidates) {
+      const user = users.get(candidate.email);
+      if (!user) {
+        throw new HttpError(
+          HTTP_STATUS.SERVICE_UNAVAILABLE.withMessage(
+            `Identity service returned no account for ${candidate.email}`,
+          ),
+        );
+      }
+      if (user.status === IdentityUserStatus.INACTIVE) {
+        throw new HttpError(
+          HTTP_STATUS.OWNER_SUSPENDED.withMessage(
+            `${HTTP_STATUS.OWNER_SUSPENDED.message}: ${candidate.email}`,
+          ),
+        );
+      }
+    }
+
+    const now = new Date();
+    await prisma.$transaction(async (tx) => {
+      await organizationApplicationRepository.lockForUpdate(tx, application.id);
+      const fresh = await organizationApplicationRepository.findByIdWithOwners(
+        application.id,
+        tx,
+      );
+      if (!fresh || fresh.status !== ApplicationStatus.PENDING_REVIEW) {
+        throw new HttpError(HTTP_STATUS.NOT_PENDING_REVIEW);
+      }
+      if (
+        fresh.owners.length === 0 ||
+        fresh.owners.some((o) => o.status !== OwnerCandidateStatus.CONFIRMED)
+      ) {
+        throw new HttpError(HTTP_STATUS.OWNERS_NOT_ALL_CONFIRMED);
+      }
+
+      const granted: string[] = [];
+      for (const candidate of fresh.owners) {
+        const user = users.get(candidate.email)!;
+        const current = await tx.organizationMember.findFirst({
+          where: { organizationId, userId: user.id, deletedAt: null },
+          select: { role: true },
+        });
+        // Became an owner some other way meanwhile: nothing to grant.
+        if (!isOwnerRole(current?.role)) {
+          await organizationMembershipService.assertOwnerQuota(tx, user.id, candidate.email);
+          await organizationMembershipService.grantMembership(tx, {
+            userId: user.id,
+            organizationId,
+            role: OrgMemberRole.OWNER,
+            source: MembershipSource.APPLICATION_APPROVAL,
+            sourceRef: fresh.id,
+            actorId: adminUserId,
+          });
+          granted.push(user.id);
+        }
+        await tx.organizationApplicationOwner.update({
+          where: { id: candidate.id },
+          data: { resolvedUserId: user.id },
+        });
+        await emitOutbox(tx, {
+          aggregateType: "organization_application",
+          aggregateId: fresh.id,
+          eventType: OutboxEventType.ORG_OWNER_ONBOARD,
+          dedupKey: `${OutboxEventType.ORG_OWNER_ONBOARD}:${candidate.id}`,
+          payload: {
+            applicationId: fresh.id,
+            candidateId: candidate.id,
+            organizationId,
+            organizationName: organization.name,
+            organizationSlug: organization.slug,
+            userId: user.id,
+            email: candidate.email,
+            fullName: candidate.fullName,
+            isLegalRep: false,
+          },
+        });
+      }
+
+      await tx.organizationApplication.update({
+        where: { id: fresh.id },
+        data: {
+          status: ApplicationStatus.APPROVED,
+          reviewerId: adminUserId,
+          reviewedAt: now,
+          rejectReason: null,
+        },
+      });
+      await tx.organizationApplicationEvent.create({
+        data: {
+          applicationId: fresh.id,
+          eventType: ApplicationEventType.APPROVED,
+          actorId: adminUserId,
+          payload: {
+            type: ApplicationType.ADD_OWNER,
+            organizationId,
+            ownerUserIds: granted,
+          },
+        },
+      });
+    });
+
+    return this.getById(application.id);
+  }
+
   private async approve(
     application: ApplicationRow,
     adminUserId: string,
     body: ApplicationDecisionBody,
   ): Promise<ApplicationAdminResponse> {
+    if (application.type === ApplicationType.ADD_OWNER) {
+      return this.approveAddOwner(application, adminUserId);
+    }
     const lane = (body.lane ?? "").toUpperCase();
     if (lane !== ApplicationLane.A && lane !== ApplicationLane.B) {
       throw new HttpError(

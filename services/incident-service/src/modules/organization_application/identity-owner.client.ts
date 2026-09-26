@@ -25,6 +25,7 @@ interface IdentityUserBody {
   name: string;
   status: number;
   created_at: string;
+  avatar?: string | null;
 }
 
 export interface IdentityUserSummary {
@@ -33,6 +34,7 @@ export interface IdentityUserSummary {
   name: string;
   status: number;
   createdAt: Date;
+  avatar?: string | null;
 }
 
 function identityCircuit() {
@@ -61,6 +63,7 @@ function toSummary(body: IdentityUserBody): IdentityUserSummary {
     name: body.name,
     status: body.status,
     createdAt: new Date(body.created_at),
+    avatar: body.avatar ?? null,
   };
 }
 
@@ -123,5 +126,37 @@ export async function issueActivationToken(
     const token = data.data?.activation_token;
     if (!token) return null;
     return { token, expiresInHours: data.data?.expires_in_hours ?? 72 };
+  });
+}
+
+/** Accounts by id (with email and status), keyed by id. */
+export async function lookupUsersByIds(
+  ids: string[],
+): Promise<Map<string, IdentityUserSummary>> {
+  if (ids.length === 0) return new Map();
+  return identityCircuit().run(async () => {
+    const { data } = await getClient().post<
+      SuccessEnvelope<{ users?: IdentityUserBody[] }>
+    >("/internal/v1/users/lookup-by-ids", { ids });
+    if (!data?.success) {
+      throw new Error("Identity service rejected the user lookup by id");
+    }
+    return new Map((data.data?.users ?? []).map((u) => [u.id, toSummary(u)]));
+  });
+}
+
+/** Active people whose email or name contains `q`. Emails come back in full. */
+export async function searchUsers(
+  q: string,
+  limit: number,
+): Promise<IdentityUserSummary[]> {
+  return identityCircuit().run(async () => {
+    const { data } = await getClient().post<
+      SuccessEnvelope<{ users?: IdentityUserBody[] }>
+    >("/internal/v1/users/search", { q, limit });
+    if (!data?.success) {
+      throw new Error("Identity service rejected the user search");
+    }
+    return (data.data?.users ?? []).map(toSummary);
   });
 }

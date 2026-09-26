@@ -1,6 +1,6 @@
 Hello {{{candidateName}}},
 
-{{{submitterEmail}}} is registering an organization on {{{appName}}} and listed you as an owner{{#if isLegalRep}} and its legal representative{{/if}}.
+{{#if isAddOwner}}{{{submitterEmail}}}, an owner of {{{organizationName}}} on {{{appName}}}, proposed you as an additional owner.{{else}}{{{submitterEmail}}} is registering an organization on {{{appName}}} and listed you as an owner{{#if isLegalRep}} and its legal representative{{/if}}.{{/if}}
 
 Organization: {{{organizationName}}}
 Type: {{{orgType}}}
