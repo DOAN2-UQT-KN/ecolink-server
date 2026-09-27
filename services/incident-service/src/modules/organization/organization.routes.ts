@@ -3,7 +3,7 @@ import { authenticate } from "../../middleware/auth.middleware";
 import { requireInternalIncidentApiKey } from "../../middleware/internal-auth.middleware";
 import { organizationController } from "./organization.controller";
 import { organizationInvitationController } from "./organization-invitation.controller";
-import { ownerProposalController } from "../organization_application/owner-proposal.controller";
+import { ownerChangeController } from "../organization_application/owner-change.controller";
 
 const router = Router();
 
@@ -163,13 +163,27 @@ router.get(
 
 /**
  * @route   DELETE /api/v1/organizations/:id/members/me
- * @desc    Leave organization (active member only; owners cannot leave).
+ * @desc    Leave the organization. An owner may leave as long as another owner remains
+ *          (ORG_MUST_HAVE_OWNER otherwise); their open owner changes are cancelled.
  * @access  Private
  */
 router.delete(
   "/:id/members/me",
   authenticate,
   organizationController.leaveOrganization,
+);
+
+/**
+ * @route   PATCH /api/v1/organizations/:id/members/me/role
+ * @desc    An owner steps down to ADMIN or MEMBER, effective immediately, as long as another
+ *          owner remains.
+ * @access  Private
+ * @body    { role?: "ADMIN" | "MEMBER" } (default MEMBER)
+ */
+router.patch(
+  "/:id/members/me/role",
+  authenticate,
+  organizationController.stepDown,
 );
 
 /**
@@ -279,49 +293,63 @@ router.delete(
 );
 
 /**
- * @route   POST /api/v1/organizations/:id/owner-proposals
- * @desc    Propose new owners (ADD_OWNER application). Needs OWNER_PROPOSE. Each person is
- *          an existing account (`user_id`) or an email; every one confirms by email, then a
- *          platform admin reviews. One open proposal per organization.
- * @access  Private
- * @body    { owners: [{ user_id? , email?, full_name }], reason? }
- */
-router.post(
-  "/:id/owner-proposals",
-  authenticate,
-  ownerProposalController.create,
-);
-
-/**
- * @route   GET /api/v1/organizations/:id/owner-proposals
- * @desc    Recent ADD_OWNER proposals with each person's confirmation status (owners only).
+ * @route   POST /api/v1/organizations/:id/owner-changes
+ * @desc    Propose an owner change (needs OWNER_PROPOSE), decided inside the organization:
+ *          - ADD_OWNER { owners: [{ user_id? , email?, full_name }] }: each person confirms by
+ *            email and every other owner approves. One open per organization.
+ *          - REMOVE_OWNER { target_user_id, demote_to?, replacement? }: every owner but the
+ *            proposer and the target approves; applied at once when nobody is left to ask.
+ *            The legal representative needs `replacement` { user_id? , email?, full_name }
+ *            (a current owner, an account or a new email) who confirms by email and becomes
+ *            the legal representative; this is also how the LR steps down (target = self).
+ *          `demote_to` = ADMIN | MEMBER, default MEMBER (the removed owner stays a member).
  * @access  Private
  */
-router.get(
-  "/:id/owner-proposals",
-  authenticate,
-  ownerProposalController.list,
-);
+router.post("/:id/owner-changes", authenticate, ownerChangeController.create);
 
 /**
- * @route   POST /api/v1/organizations/:id/owner-proposals/:applicationId/cancel
- * @access  Private (OWNER_PROPOSE)
+ * @route   GET /api/v1/organizations/:id/owner-changes
+ * @desc    Recent owner changes with each candidate's and each approver's answer (owners only).
+ * @access  Private
+ */
+router.get("/:id/owner-changes", authenticate, ownerChangeController.list);
+
+/**
+ * @route   POST /api/v1/organizations/:id/owner-changes/:applicationId/approve
+ * @route   POST /api/v1/organizations/:id/owner-changes/:applicationId/reject { note? }
+ * @desc    A co-owner answers; one rejection ends the change.
+ * @access  Private (asked approver)
  */
 router.post(
-  "/:id/owner-proposals/:applicationId/cancel",
+  "/:id/owner-changes/:applicationId/approve",
   authenticate,
-  ownerProposalController.cancel,
+  ownerChangeController.approve,
+);
+router.post(
+  "/:id/owner-changes/:applicationId/reject",
+  authenticate,
+  ownerChangeController.reject,
 );
 
 /**
- * @route   POST /api/v1/organizations/:id/owner-proposals/:applicationId/owners/:candidateId/resend
+ * @route   POST /api/v1/organizations/:id/owner-changes/:applicationId/cancel
+ * @access  Private (the proposer)
+ */
+router.post(
+  "/:id/owner-changes/:applicationId/cancel",
+  authenticate,
+  ownerChangeController.cancel,
+);
+
+/**
+ * @route   POST /api/v1/organizations/:id/owner-changes/:applicationId/owners/:candidateId/resend
  * @desc    New confirmation link for one pending person (at least an hour apart).
  * @access  Private (OWNER_PROPOSE)
  */
 router.post(
-  "/:id/owner-proposals/:applicationId/owners/:candidateId/resend",
+  "/:id/owner-changes/:applicationId/owners/:candidateId/resend",
   authenticate,
-  ownerProposalController.resend,
+  ownerChangeController.resend,
 );
 
 export default router;

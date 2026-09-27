@@ -14,7 +14,7 @@ export enum OrgPermission {
   MEMBER_INVITE = "MEMBER_INVITE",
   /** Change a member's role or remove them (bounded by `canActOnMember`). */
   MEMBER_MANAGE = "MEMBER_MANAGE",
-  /** Propose new owners (ADD_OWNER application). */
+  /** Propose owner changes: add owners, remove another owner. */
   OWNER_PROPOSE = "OWNER_PROPOSE",
   /** Declared now, enforced in phase 4 (campaign permissions). */
   CAMPAIGN_CREATE = "CAMPAIGN_CREATE",
@@ -31,8 +31,7 @@ const ROLE_PERMISSIONS: Record<OrgMemberRole, readonly OrgPermission[]> = {
     OrgPermission.MEMBER_APPROVE,
     OrgPermission.MEMBER_INVITE,
     OrgPermission.MEMBER_MANAGE,
-    OrgPermission.CAMPAIGN_CREATE,
-    OrgPermission.CAMPAIGN_MANAGE_ANY,
+    // No campaign rights: campaigns belong to the owners and the campaign managers.
   ],
   [OrgMemberRole.CAMPAIGN_MANAGER]: [
     OrgPermission.MEMBER_INVITE,
@@ -51,8 +50,8 @@ export function hasOrgPermission(
 
 /**
  * Roles an actor may hand out through "change role". Owners and the legal representative
- * are never assignable here: becoming an owner goes through an ADD_OWNER application, and
- * losing it is phase 3.
+ * are never assignable here: becoming or ceasing to be an owner goes through an owner change
+ * (ADD_OWNER / REMOVE_OWNER) or the owner stepping down themselves.
  */
 export function assignableRoles(actorRole: string | null | undefined): OrgMemberRole[] {
   if (isOwnerRole(actorRole)) {
@@ -66,7 +65,8 @@ export function assignableRoles(actorRole: string | null | undefined): OrgMember
 
 /**
  * Whether the actor may change the role of, or remove, a member currently holding
- * `targetRole`. Owners are untouchable in this phase; an admin cannot act on another admin.
+ * `targetRole`. Owners are out of reach here (only an owner change approved by the other owners
+ * touches them); an admin cannot act on another admin.
  */
 export function canActOnMember(
   actorRole: string | null | undefined,

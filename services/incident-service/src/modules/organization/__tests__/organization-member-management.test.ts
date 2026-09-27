@@ -19,7 +19,16 @@ const changeRoleMock = jest.fn();
 const membershipChangedMock = jest.fn();
 const fetchProfilesMock = jest.fn();
 
-const txFake = { organizationJoiningRequest: { update: jest.fn() } };
+const ownerRowsMock = jest.fn();
+const memberUpdateMock = jest.fn();
+const reconcileMock = jest.fn();
+const ownerLeftMock = jest.fn();
+
+const txFake = {
+  organizationJoiningRequest: { update: jest.fn() },
+  organizationMember: { update: (...a: unknown[]) => memberUpdateMock(...a) },
+  $queryRaw: (...a: unknown[]) => ownerRowsMock(...a),
+};
 const transactionMock = jest.fn(async (cb: (tx: unknown) => unknown) => cb(txFake));
 
 jest.mock("../../../config/prisma.client", () => ({
@@ -61,6 +70,18 @@ jest.mock("../organization-membership.service", () => ({
     grantMembership: (...a: unknown[]) => grantMembershipMock(...a),
     changeRole: (...a: unknown[]) => changeRoleMock(...a),
   },
+  isOrgMustHaveOwnerViolation: (e: unknown) =>
+    String((e as Error)?.message ?? e).includes("ORG_MUST_HAVE_OWNER"),
+}));
+
+jest.mock("../../organization_application/owner-change-executor", () => ({
+  ownerChangeExecutor: {
+    reconcileOpenChanges: (...a: unknown[]) => reconcileMock(...a),
+  },
+}));
+
+jest.mock("../../organization_application/owner-change-notify.client", () => ({
+  notifyOwnerLeft: (...a: unknown[]) => ownerLeftMock(...a),
 }));
 
 jest.mock("../organization-member-notify.client", () => ({
@@ -315,5 +336,103 @@ describe("OrganizationService.updateOrganization — quyền sửa hồ sơ", ()
       organizationService.updateOrganization(ORG, ACTOR, { name: "X" }),
     ).rejects.toMatchObject({ statusResponse: { code: "ORG_PERMISSION_DENIED" } });
     expect(orgUpdateMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("OrganizationService — owner tự rút lui", () => {
+  const owners = (...ids: string[]) =>
+    ownerRowsMock.mockResolvedValue(ids.map((id) => ({ user_id: id })));
+
+  beforeEach(() => {
+    reconcileMock.mockResolvedValue(undefined);
+    memberUpdateMock.mockResolvedValue({});
+    fetchProfilesMock.mockResolvedValue(new Map([[ACTOR, { id: ACTOR, name: "An" }]]));
+  });
+
+  it("owner cuối cùng rời → ORG_MUST_HAVE_OWNER, không ghi gì", async () => {
+    roles({ [ACTOR]: "OWNER" });
+    owners(ACTOR);
+
+    await expect(organizationService.leaveOrganization(ORG, ACTOR)).rejects.toMatchObject({
+      statusResponse: { code: "ORG_MUST_HAVE_OWNER" },
+    });
+    expect(memberUpdateMock).not.toHaveBeenCalled();
+    expect(reconcileMock).not.toHaveBeenCalled();
+  });
+
+  it("người đại diện pháp lý không tự rời / hạ vai được: phải có người thay", async () => {
+    roles({ [ACTOR]: "LEGAL_REPRESENTATIVE" });
+    owners(ACTOR, TARGET);
+
+    await expect(organizationService.leaveOrganization(ORG, ACTOR)).rejects.toMatchObject({
+      statusResponse: { code: "LEGAL_REP_REPLACEMENT_REQUIRED" },
+    });
+    await expect(organizationService.stepDown(ORG, ACTOR, "MEMBER")).rejects.toMatchObject({
+      statusResponse: { code: "LEGAL_REP_REPLACEMENT_REQUIRED" },
+    });
+    expect(memberUpdateMock).not.toHaveBeenCalled();
+  });
+
+  it("còn owner khác: rời ngay, dọn các đề xuất đang mở, báo các owner còn lại", async () => {
+    roles({ [ACTOR]: "OWNER" });
+    owners(ACTOR, TARGET);
+
+    await organizationService.leaveOrganization(ORG, ACTOR);
+
+    expect(memberUpdateMock).toHaveBeenCalledWith({
+      where: { organizationId_userId: { organizationId: ORG, userId: ACTOR } },
+      data: expect.objectContaining({ deletedAt: expect.any(Date), updatedBy: ACTOR }),
+    });
+    expect(softDeleteMembershipMock).not.toHaveBeenCalled();
+    expect(reconcileMock).toHaveBeenCalledWith(ORG);
+    expect(ownerLeftMock).toHaveBeenCalledWith(
+      [TARGET],
+      expect.objectContaining({ memberName: "An", newRole: null }),
+    );
+  });
+
+  it("hạ vai xuống ADMIN khi còn owner khác", async () => {
+    roles({ [ACTOR]: "OWNER" });
+    owners(ACTOR, TARGET);
+
+    await organizationService.stepDown(ORG, ACTOR, "ADMIN");
+
+    expect(memberUpdateMock.mock.calls[0][0].data).toEqual({ role: "ADMIN", updatedBy: ACTOR });
+    expect(ownerLeftMock).toHaveBeenCalledWith(
+      [TARGET],
+      expect.objectContaining({ newRole: "ADMIN" }),
+    );
+  });
+
+  it("owner khác vừa rời cùng lúc (trigger DB chặn lúc commit) → ORG_MUST_HAVE_OWNER", async () => {
+    roles({ [ACTOR]: "OWNER" });
+    owners(ACTOR, TARGET);
+    memberUpdateMock.mockRejectedValue(
+      new Error("ORG_MUST_HAVE_OWNER: organization org-1 has no owner"),
+    );
+
+    await expect(organizationService.stepDown(ORG, ACTOR, "MEMBER")).rejects.toMatchObject({
+      statusResponse: { code: "ORG_MUST_HAVE_OWNER" },
+    });
+  });
+
+  it("không phải owner mà hạ vai → TARGET_NOT_OWNER; vai không hợp lệ → ROLE_NOT_ASSIGNABLE", async () => {
+    roles({ [ACTOR]: "ADMIN" });
+    await expect(organizationService.stepDown(ORG, ACTOR, "MEMBER")).rejects.toMatchObject({
+      statusResponse: { code: "TARGET_NOT_OWNER" },
+    });
+    roles({ [ACTOR]: "OWNER" });
+    await expect(organizationService.stepDown(ORG, ACTOR, "OWNER")).rejects.toMatchObject({
+      statusResponse: { code: "ROLE_NOT_ASSIGNABLE" },
+    });
+  });
+
+  it("thành viên thường rời: vẫn xoá mềm như cũ", async () => {
+    roles({ [ACTOR]: "MEMBER" });
+
+    await organizationService.leaveOrganization(ORG, ACTOR);
+
+    expect(softDeleteMembershipMock).toHaveBeenCalledWith(ORG, ACTOR);
+    expect(memberUpdateMock).not.toHaveBeenCalled();
   });
 });

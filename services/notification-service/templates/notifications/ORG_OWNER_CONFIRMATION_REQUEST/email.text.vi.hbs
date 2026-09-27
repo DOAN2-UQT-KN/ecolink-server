@@ -1,13 +1,13 @@
 Xin chào {{{candidateName}}},
 
-{{#if isAddOwner}}{{{submitterEmail}}}, owner của {{{organizationName}}} trên {{{appName}}}, đã đề xuất bạn làm owner.{{else}}{{{submitterEmail}}} đang đăng ký một tổ chức trên {{{appName}}} và ghi tên bạn làm owner{{#if isLegalRep}} kiêm người đại diện pháp lý{{/if}}.{{/if}}
+{{#if isAddOwner}}{{{submitterEmail}}}, owner của {{{organizationName}}} trên {{{appName}}}, đã đề xuất bạn làm owner{{#if isLegalRep}} kiêm người đại diện pháp lý mới{{/if}}.{{else}}{{{submitterEmail}}} đang đăng ký một tổ chức trên {{{appName}}} và ghi tên bạn làm owner{{#if isLegalRep}} kiêm người đại diện pháp lý{{/if}}.{{/if}}
 
 Tổ chức: {{{organizationName}}}
 Loại: {{{orgType}}}
 {{#if address}}Địa chỉ: {{{address}}}
 {{/if}}{{#if otherOwners}}Owner khác: {{{otherOwners}}}
 {{/if}}
-Không ai được gán vai thay bạn: hồ sơ chỉ được thẩm định khi mọi owner đã xác nhận.
+{{#if isAddOwner}}Không ai được gán vai thay bạn: bạn chỉ trở thành owner khi đã xác nhận và các owner khác đồng ý.{{else}}Không ai được gán vai thay bạn: hồ sơ chỉ được thẩm định khi mọi owner đã xác nhận.{{/if}}
 
 Xem và xác nhận (hoặc chọn "Tôi không liên quan"):
 {{{confirmUrl}}}

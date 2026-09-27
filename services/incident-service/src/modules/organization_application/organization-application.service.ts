@@ -862,7 +862,7 @@ export class OrganizationApplicationService {
 
   /**
    * New confirmation link for one pending candidate, shared by the anonymous applicant
-   * (tracking link) and an owner resending an ADD_OWNER proposal (membership). The caller
+   * (tracking link) and an owner resending an owner change (membership). The caller
    * has already been authorised.
    */
   async resendCandidate(applicationId: string, candidateId: string): Promise<void> {

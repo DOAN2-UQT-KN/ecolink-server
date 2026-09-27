@@ -55,6 +55,18 @@ async function enqueueJob(
   });
 }
 
+/**
+ * Email to a user with an account; notification-service resolves the address through
+ * identity-service, so no email is passed around.
+ */
+export function enqueueEmailToUser(
+  kind: string,
+  userId: string,
+  payload: Record<string, string>,
+): Promise<void> {
+  return enqueueJob(kind, payload, "email", userId);
+}
+
 /** The 6-digit code that gates the anonymous application form. */
 export function enqueueApplicationOtpEmail(params: {
   toEmail: string;

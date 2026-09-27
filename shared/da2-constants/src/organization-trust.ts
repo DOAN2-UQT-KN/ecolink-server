@@ -81,10 +81,32 @@ export const EDITABLE_APPLICATION_STATUSES: readonly ApplicationStatus[] = [
   ApplicationStatus.NEEDS_REVISION,
 ] as const;
 
-/** `NEW_ORG` creates an organization; `ADD_OWNER` (phase 2) adds owners to an existing one. */
+/**
+ * `NEW_ORG` creates an organization (reviewed by a platform admin). The other two are
+ * "owner changes" on an existing organization, decided inside it: the people concerned
+ * confirm by email and the other owners approve; no platform admin is involved.
+ */
 export enum ApplicationType {
   NEW_ORG = "NEW_ORG",
   ADD_OWNER = "ADD_OWNER",
+  REMOVE_OWNER = "REMOVE_OWNER",
+}
+
+export const OWNER_CHANGE_TYPES: readonly ApplicationType[] = [
+  ApplicationType.ADD_OWNER,
+  ApplicationType.REMOVE_OWNER,
+] as const;
+
+export function isOwnerChangeType(type: string | null | undefined): boolean {
+  return (OWNER_CHANGE_TYPES as readonly string[]).includes(type ?? "");
+}
+
+/** One co-owner's answer on an owner change. */
+export enum OwnerApprovalStatus {
+  PENDING = "PENDING",
+  APPROVED = "APPROVED",
+  REJECTED = "REJECTED",
+  EXPIRED = "EXPIRED",
 }
 
 /** Where one owner candidate stands on their confirmation email. */
@@ -192,6 +214,11 @@ export enum ApplicationEventType {
   OWNER_ATTACHED = "OWNER_ATTACHED",
   /** The submitter saved the draft by hand and was mailed a "draft updated" notice. */
   DRAFT_UPDATE_NOTIFIED = "DRAFT_UPDATE_NOTIFIED",
+  /** A co-owner approved / rejected an owner change. */
+  OWNER_CHANGE_APPROVED_BY = "OWNER_CHANGE_APPROVED_BY",
+  OWNER_CHANGE_REJECTED_BY = "OWNER_CHANGE_REJECTED_BY",
+  /** Every condition met: the membership changes were applied. */
+  OWNER_CHANGE_APPLIED = "OWNER_CHANGE_APPLIED",
 }
 
 /** Severity of an organization violation (writer lands in a later phase). */

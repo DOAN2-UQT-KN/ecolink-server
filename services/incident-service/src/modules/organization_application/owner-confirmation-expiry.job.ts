@@ -1,5 +1,6 @@
 import { ownerConfirmationService } from "./owner-confirmation.service";
 import { organizationInvitationService } from "../organization/organization-invitation.service";
+import { ownerChangeExecutor } from "./owner-change-executor";
 
 const INTERVAL_MS = Number(
   process.env.OWNER_CONFIRMATION_EXPIRY_INTERVAL_MS ?? 60 * 60 * 1000,
@@ -15,7 +16,13 @@ async function tick(): Promise<void> {
     const expired = await ownerConfirmationService.expireOverdue();
     if (expired > 0) {
       console.log(
-        `[OwnerConfirmationExpiry] ${expired} application(s) sent back for revision`,
+        `[OwnerConfirmationExpiry] ${expired} application(s) sent back or cancelled`,
+      );
+    }
+    const changes = await ownerChangeExecutor.sweep();
+    if (changes.expired + changes.applied > 0) {
+      console.log(
+        `[OwnerConfirmationExpiry] owner changes: ${changes.expired} cancelled (approval overdue), ${changes.applied} applied on retry`,
       );
     }
     const invitations = await organizationInvitationService.expireOverdue();
@@ -30,9 +37,10 @@ async function tick(): Promise<void> {
 }
 
 /**
- * Hourly sweep for owner confirmations that ran past their 14 days. Moving an application to
- * PENDING_REVIEW never waits on this — that happens inside the last confirmation's
- * transaction — but an unanswered link needs a clock.
+ * Hourly sweep for owner confirmations and co-owner approvals that ran past their 14 days,
+ * expired member invitations, and owner changes whose application failed on a transient
+ * error. Moving an application forward never waits on this — that happens right after the
+ * last answer — but an unanswered link needs a clock.
  */
 export function startOwnerConfirmationExpiryJob(): void {
   if (process.env.OWNER_CONFIRMATION_EXPIRY_ENABLED === "false") {

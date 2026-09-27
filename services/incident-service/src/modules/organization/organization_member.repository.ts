@@ -167,7 +167,7 @@ export class OrganizationMemberRepository {
 
   async findByOrganizationPaginated(
     organizationId: string,
-    filters: { userId?: string },
+    filters: { userId?: string; roles?: string[] },
     options: {
       skip: number;
       take: number;
@@ -179,6 +179,7 @@ export class OrganizationMemberRepository {
       organizationId,
       deletedAt: null as null,
       ...(filters.userId ? { userId: filters.userId } : {}),
+      ...(filters.roles?.length ? { role: { in: filters.roles } } : {}),
     };
     const orderBy =
       options.sortBy === "updatedAt"

@@ -249,6 +249,8 @@ export interface OrganizationMembersListQuery {
   userId?: string;
   /** Case-insensitive substring match on member display name (from identity-service). */
   search?: string;
+  /** Only members holding one of these `OrgMemberRole`s. */
+  roles?: string[];
   page?: number;
   limit?: number;
   sortBy?: "createdAt" | "updatedAt";
