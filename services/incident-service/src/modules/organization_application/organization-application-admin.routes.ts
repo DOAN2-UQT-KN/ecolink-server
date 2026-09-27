@@ -41,7 +41,8 @@ router.get(
 
 /**
  * @route   PUT /api/v1/admin/organization-applications/:id/claim
- * @desc    Take the application (status -> UNDER_REVIEW) so two admins do not collide.
+ * @desc    Take the application (sets the reviewer; status stays PENDING_REVIEW) so two admins
+ *          do not collide.
  * @access  Private (admin)
  */
 router.put(
@@ -52,7 +53,7 @@ router.put(
 
 /**
  * @route   PUT /api/v1/admin/organization-applications/:id/request-info
- * @desc    Ask the applicant for missing paperwork (status -> NEEDS_MORE_INFO).
+ * @desc    Ask the applicant for changes (status -> NEEDS_REVISION).
  * @access  Private (admin)
  * @body    { message }
  */

@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+  <body style="font-family: system-ui, sans-serif; line-height: 1.5; color: #111">
+    <p>Xin chào {{fullName}},</p>
+    {{#if organizationName}}
+    <p>
+      Tổ chức <strong>{{organizationName}}</strong> đã được duyệt trên
+      <strong>{{appName}}</strong>, và bạn là một trong các owner của tổ chức.
+    </p>
+    {{/if}}
+    <p>
+      Hệ thống đã tạo tài khoản cho bạn bằng email này.
+      <a href="{{activationUrl}}" style="color: #0b57d0">Đặt mật khẩu tại đây</a> —
+      liên kết có hiệu lực {{expiresInHours}} giờ và chỉ dùng được một lần.
+    </p>
+    <p style="font-size: 0.875rem; color: #444">{{activationUrl}}</p>
+    <p style="font-size: 0.875rem; color: #666">
+      Đây là tài khoản cá nhân của bạn: mọi thao tác bạn làm cho tổ chức đều được ghi nhận
+      dưới tên bạn. Nếu liên kết hết hạn, hãy yêu cầu gửi lại từ trang đăng nhập.
+    </p>
+  </body>
+</html>

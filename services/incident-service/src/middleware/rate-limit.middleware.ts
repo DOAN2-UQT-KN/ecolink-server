@@ -10,11 +10,15 @@ import { HTTP_STATUS, sendError } from "../constants/http-status";
  * `X-Forwarded-For`; we fall back to `req.ip` when the header is absent (direct calls in
  * tests / local dev).
  */
-function clientIpKey(req: Request): string {
+export function clientIp(req: Request): string | null {
   const forwarded = req.headers["x-forwarded-for"];
   const raw = Array.isArray(forwarded) ? forwarded[0] : forwarded;
   const first = raw?.split(",")[0]?.trim();
-  return `ip:${(first || req.ip || "unknown").toLowerCase()}`;
+  return first || req.ip || null;
+}
+
+function clientIpKey(req: Request): string {
+  return `ip:${(clientIp(req) ?? "unknown").toLowerCase()}`;
 }
 
 function tooManyRequests(message: string) {

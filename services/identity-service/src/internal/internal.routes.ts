@@ -4,6 +4,7 @@ import { HTTP_STATUS, sendError, sendSuccess } from "../constants/http-status";
 import { requireInternalIdentityApiKey } from "../middleware/internal-identity-auth.middleware";
 import { authService } from "../modules/auth/auth.service";
 import { userService } from "../modules/user/user.service";
+import { userRepository } from "../modules/user/user.repository";
 
 const router = Router();
 
@@ -49,54 +50,151 @@ router.post(
   },
 );
 
+function toOwnerLookupRow(user: {
+  id: string;
+  email: string;
+  name: string;
+  status: number;
+  createdAt: Date;
+}) {
+  return {
+    id: user.id,
+    email: user.email.toLowerCase(),
+    name: user.name,
+    status: user.status,
+    createdAt: user.createdAt,
+  };
+}
+
 /**
- * Incident-service: create (or return) the single login that operates an organization.
- *
- * Idempotent on `applicationId` — the caller reaches this through its outbox relay, which
- * retries on any failure, and a retry must not create a second account.
+ * Incident-service: which of these emails already have an account, and in what state.
+ * Used to block suspended owners before any confirmation email goes out, and to show the
+ * reviewer who already had an account.
  */
 router.post(
-  "/users/provision-org-account",
-  body("applicationId").isUUID(),
-  body("organizationId").isUUID(),
-  body("email").isEmail(),
-  body("displayName").notEmpty().trim().isLength({ max: 200 }),
+  "/users/lookup-by-emails",
+  body("emails").isArray({ min: 1, max: 20 }),
+  body("emails.*").isEmail(),
   async (req, res): Promise<void> => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
       return;
     }
-
-    const { applicationId, organizationId, email, displayName } = req.body as {
-      applicationId: string;
-      organizationId: string;
-      email: string;
-      displayName: string;
-    };
-
     try {
-      const result = await authService.provisionOrgAccount({
-        applicationId,
-        organizationId,
-        email,
-        displayName,
-      });
-      sendSuccess(res, HTTP_STATUS.CREATED, result);
+      const users = await authService.lookupUsersByEmails(
+        (req.body as { emails: string[] }).emails,
+      );
+      sendSuccess(res, HTTP_STATUS.OK, { users: users.map(toOwnerLookupRow) });
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Failed to provision account";
-      if (msg === "ORG_ACCOUNT_EMAIL_TAKEN") {
-        // A human already signed up with the organization's contact address. Retrying will
-        // not help, so the caller gets a 409 and an admin has to resolve it.
-        sendError(
-          res,
-          HTTP_STATUS.CONFLICT.withMessage(
-            "An account already exists for this contact email",
-          ),
-        );
-        return;
-      }
-      console.error("Internal provision org account error:", e);
+      console.error("Internal users lookup-by-emails error:", e);
+      sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+    }
+  },
+);
+
+/**
+ * Incident-service: accounts by id with email and status (invitations, owner proposals).
+ */
+router.post(
+  "/users/lookup-by-ids",
+  body("ids").isArray({ min: 1, max: 50 }),
+  body("ids.*").isUUID(),
+  async (req, res): Promise<void> => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
+      return;
+    }
+    try {
+      const users = await userRepository.findByIds((req.body as { ids: string[] }).ids);
+      sendSuccess(res, HTTP_STATUS.OK, {
+        users: users.map((u) => ({ ...toOwnerLookupRow(u), avatar: u.avatar })),
+      });
+    } catch (e) {
+      console.error("Internal users lookup-by-ids error:", e);
+      sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+    }
+  },
+);
+
+/**
+ * Incident-service: people matching `q` (email or name) for the member / owner pickers.
+ * Returns full emails; incident-service decides whether to mask them for the caller.
+ */
+router.post(
+  "/users/search",
+  body("q").isString().isLength({ min: 2, max: 100 }),
+  body("limit").optional().isInt({ min: 1, max: 20 }).toInt(),
+  async (req, res): Promise<void> => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
+      return;
+    }
+    try {
+      const { q, limit } = req.body as { q: string; limit?: number };
+      const users = await userRepository.searchActive(q, limit ?? 10);
+      sendSuccess(res, HTTP_STATUS.OK, {
+        users: users.map((u) => ({ ...toOwnerLookupRow(u), avatar: u.avatar })),
+      });
+    } catch (e) {
+      console.error("Internal users search error:", e);
+      sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+    }
+  },
+);
+
+/**
+ * Incident-service, on approving an organization application: find or create one person
+ * account per owner email. New accounts are PENDING_ACTIVATION with no password. Idempotent.
+ */
+router.post(
+  "/users/ensure",
+  body("users").isArray({ min: 1, max: 20 }),
+  body("users.*.email").isEmail(),
+  body("users.*.fullName").isString().isLength({ max: 200 }),
+  async (req, res): Promise<void> => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
+      return;
+    }
+    try {
+      const users = await authService.ensureUsersForOwners(
+        (req.body as { users: { email: string; fullName: string }[] }).users,
+      );
+      sendSuccess(res, HTTP_STATUS.OK, { users: users.map(toOwnerLookupRow) });
+    } catch (e) {
+      console.error("Internal users ensure error:", e);
+      sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+    }
+  },
+);
+
+/**
+ * Incident-service: fresh 72-hour activation link for a PENDING_ACTIVATION user.
+ * `activation_token` is null when the account is already active.
+ */
+router.post(
+  "/users/:id/activation-token",
+  param("id").isUUID(),
+  async (req, res): Promise<void> => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
+      return;
+    }
+    try {
+      const activationToken = await authService.issueActivationToken(
+        String(req.params?.id),
+      );
+      sendSuccess(res, HTTP_STATUS.OK, {
+        activationToken,
+        expiresInHours: authService.activationTtlHours(),
+      });
+    } catch (e) {
+      console.error("Internal activation-token error:", e);
       sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
     }
   },

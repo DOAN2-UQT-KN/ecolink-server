@@ -4,8 +4,8 @@ import {
   otpPerEmailLimiter,
   otpPerIpLimiter,
 } from "../../middleware/rate-limit.middleware";
+import { optionalAuthenticate } from "../../middleware/auth.middleware";
 import { organizationApplicationController } from "./organization-application.controller";
-import { requireSubmissionToken } from "./submission-token.middleware";
 
 const router = Router();
 
@@ -37,9 +37,12 @@ router.get(
 
 /**
  * @route   POST /api/v1/organization-applications/email-otp/verify
- * @desc    Exchange the code for a single-use submission token (valid 30 minutes).
+ * @desc    Check the code, then open (or reopen) the mailbox's draft application and hand
+ *          back its tracking token (180 days). From here on the tracking token is the
+ *          credential for every applicant endpoint.
  * @access  Public
  * @body    { email, otp }
+ * @returns { application_id, tracking_token, resumed }
  */
 router.post(
   "/email-otp/verify",
@@ -48,35 +51,47 @@ router.post(
 );
 
 /**
- * @route   POST /api/v1/organization-applications/documents/presign
- * @desc    Signed parameters for uploading one legal document to private storage.
- * @access  Public with `x-submission-token`
- * @body    { doc_type, file_name, mime_type, size_bytes }
+ * @route   GET /api/v1/organization-applications/owner-confirmations/:token
+ * @desc    What an owner candidate is being asked to agree to. A signed-in visitor whose email
+ *          differs from the candidate's gets `session_email_mismatch: true`.
+ * @access  Public with the token from the confirmation email
  */
-router.post(
-  "/documents/presign",
+router.get(
+  "/owner-confirmations/:token",
   applicationPublicLimiter,
-  requireSubmissionToken,
-  organizationApplicationController.presignDocument,
+  optionalAuthenticate,
+  organizationApplicationController.getOwnerConfirmation,
 );
 
 /**
- * @route   POST /api/v1/organization-applications
- * @desc    Submit an application. Burns the submission token and mails a tracking link.
- * @access  Public with `x-submission-token`
- * @body    { org_type, profile, channels, legal_representative?, document_ids?, consent }
+ * @route   POST /api/v1/organization-applications/owner-confirmations/:token/confirm
+ * @desc    Confirm being an owner. Idempotent. The last confirmation moves the application to
+ *          PENDING_REVIEW. IP and user agent are recorded as evidence.
+ * @access  Public with the token from the confirmation email
  */
 router.post(
-  "/",
+  "/owner-confirmations/:token/confirm",
   applicationPublicLimiter,
-  requireSubmissionToken,
-  organizationApplicationController.createApplication,
+  organizationApplicationController.confirmOwner,
+);
+
+/**
+ * @route   POST /api/v1/organization-applications/owner-confirmations/:token/decline
+ * @desc    "I'm not involved". Sends the application back to the submitter (NEEDS_REVISION);
+ *          `block_future` opts the email out of every future invitation.
+ * @access  Public with the token from the confirmation email
+ * @body    { reason?, block_future? }
+ */
+router.post(
+  "/owner-confirmations/:token/decline",
+  applicationPublicLimiter,
+  organizationApplicationController.declineOwner,
 );
 
 /**
  * @route   POST /api/v1/organization-applications/:id/documents/presign
- * @desc    Upload slot for a resubmission (NEEDS_MORE_INFO only); the submission token is
- *          spent by then, so the tracking link authorises it.
+ * @desc    Upload slot for a legal document while the application is editable (DRAFT or
+ *          NEEDS_REVISION). The next draft save attaches it.
  * @access  Public with the `token` from the tracking link
  * @query   token
  * @body    { doc_type, file_name, mime_type, size_bytes }
@@ -102,7 +117,7 @@ router.get(
 
 /**
  * @route   GET /api/v1/organization-applications/:id
- * @desc    Follow a submission. Review-only fields (legal representative) are never included.
+ * @desc    Follow a submission: status, owner confirmations, and the saved draft fields.
  * @access  Public with the `token` from the tracking link
  * @query   token
  */
@@ -114,19 +129,47 @@ router.get(
 
 /**
  * @route   PUT /api/v1/organization-applications/:id
- * @desc    Resubmit after a reviewer requested more information (NEEDS_MORE_INFO only).
+ * @desc    Save the draft (DRAFT or NEEDS_REVISION). Every field is optional. `owners` is the
+ *          full list; rows left out are marked removed.
  * @access  Public with the `token` from the tracking link
  * @query   token
  */
 router.put(
   "/:id",
   applicationPublicLimiter,
-  organizationApplicationController.updateApplication,
+  organizationApplicationController.saveDraft,
+);
+
+/**
+ * @route   POST /api/v1/organization-applications/:id/submit
+ * @desc    Validate everything and mail each owner a confirmation link. Goes straight to
+ *          PENDING_REVIEW when the submitter is the only owner.
+ * @access  Public with the `token` from the tracking link
+ * @query   token
+ * @body    { consent? }
+ */
+router.post(
+  "/:id/submit",
+  applicationPublicLimiter,
+  organizationApplicationController.submitApplication,
+);
+
+/**
+ * @route   POST /api/v1/organization-applications/:id/owners/:candidateId/resend
+ * @desc    New confirmation link for one owner who has not answered (max 3, 1 hour apart).
+ * @access  Public with the `token` from the tracking link
+ * @query   token
+ */
+router.post(
+  "/:id/owners/:candidateId/resend",
+  applicationPublicLimiter,
+  organizationApplicationController.resendOwnerInvite,
 );
 
 /**
  * @route   POST /api/v1/organization-applications/:id/withdraw
- * @desc    Withdraw a submission that has not been decided yet.
+ * @desc    Withdraw an application that has not been decided yet (drafts included). Owners who
+ *          already confirmed are told.
  * @access  Public with the `token` from the tracking link
  * @query   token
  */

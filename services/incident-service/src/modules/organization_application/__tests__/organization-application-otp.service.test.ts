@@ -1,5 +1,5 @@
 /**
- * OTP và submission token là cổng chặn spam duy nhất của form nộp đơn công khai
+ * OTP và tracking token là cổng chặn spam duy nhất của form nộp đơn công khai
  * (không có đăng nhập), nên các nhánh sai mã / hết hạn / quá số lần thử được kiểm
  * kỹ hơn nhánh thành công.
  */
@@ -15,7 +15,7 @@ const deleteByIdMock = jest.fn();
 const sendOtpEmailMock = jest.fn();
 
 jest.mock("../organization-application-otp.repository", () => ({
-  OtpPurpose: { OTP: "OTP", SUBMISSION: "SUBMISSION", TRACKING: "TRACKING" },
+  OtpPurpose: { OTP: "OTP", TRACKING: "TRACKING", LINK: "LINK" },
   organizationApplicationOtpRepository: {
     create: (...a: unknown[]) => createMock(...a),
     expireActiveFor: (...a: unknown[]) => expireActiveForMock(...a),
@@ -157,22 +157,19 @@ describe("OrganizationApplicationOtpService", () => {
       attempts,
     });
 
-    it("đổi mã đúng lấy submission token và đánh dấu mã đã dùng", async () => {
+    it("mã đúng thì trả về email đã chuẩn hoá, đốt mã và huỷ link kèm mã", async () => {
       findActiveMock.mockResolvedValue(activeRecord("123456"));
 
-      const result = await organizationApplicationOtpService.verifyOtp(
-        "clb@uit.edu.vn",
+      const email = await organizationApplicationOtpService.verifyOtp(
+        " CLB@UIT.EDU.VN ",
         "123456",
       );
 
+      expect(email).toBe("clb@uit.edu.vn");
       expect(markUsedMock).toHaveBeenCalledWith("otp-1");
-      expect(result.submissionToken).toEqual(expect.any(String));
-      // Token cũng chỉ lưu hash.
-      const submissionRow = createMock.mock.calls.at(-1)?.[0];
-      expect(submissionRow.purpose).toBe("SUBMISSION");
-      expect(submissionRow.codeHash).toBe(
-        hashOpaqueToken(result.submissionToken),
-      );
+      expect(expireActiveForMock).toHaveBeenCalledWith("clb@uit.edu.vn", "LINK");
+      // Không còn phát submission token: bản nháp + tracking token do service hồ sơ lo.
+      expect(createMock).not.toHaveBeenCalled();
     });
 
     it("mã sai thì tăng attempts và không phát token", async () => {
@@ -205,28 +202,36 @@ describe("OrganizationApplicationOtpService", () => {
     });
   });
 
-  describe("submission token", () => {
-    it("resolve không đốt token, consume thì đốt", async () => {
-      findActiveByHashMock.mockResolvedValue({
-        id: "sub-1",
-        email: "clb@uit.edu.vn",
-      });
+  describe("tracking token", () => {
+    it("phát token 180 ngày, chỉ lưu hash", async () => {
+      const { token, expiresAt } =
+        await organizationApplicationOtpService.issueTrackingToken("CLB@uit.edu.vn");
 
-      await expect(
-        organizationApplicationOtpService.resolveSubmissionToken("tok"),
-      ).resolves.toBe("clb@uit.edu.vn");
-      expect(markUsedMock).not.toHaveBeenCalled();
-
-      await organizationApplicationOtpService.consumeSubmissionToken("tok");
-      expect(markUsedMock).toHaveBeenCalledWith("sub-1");
+      const row = createMock.mock.calls.at(-1)?.[0];
+      expect(row).toMatchObject({ email: "clb@uit.edu.vn", purpose: "TRACKING" });
+      expect(row.codeHash).toBe(hashOpaqueToken(token));
+      expect(expiresAt.getTime() - Date.now()).toBeGreaterThan(
+        179 * 24 * 60 * 60 * 1000,
+      );
     });
 
-    it("token không hợp lệ trả 401", async () => {
+    it("resolve không đốt token", async () => {
+      findActiveByHashMock.mockResolvedValue({ id: "t-1", email: "clb@uit.edu.vn" });
+
+      await expect(
+        organizationApplicationOtpService.resolveTrackingToken("tok"),
+      ).resolves.toBe("clb@uit.edu.vn");
+      expect(markUsedMock).not.toHaveBeenCalled();
+    });
+
+    it("token không hợp lệ trả 401 TRACKING_TOKEN_INVALID", async () => {
       findActiveByHashMock.mockResolvedValue(null);
 
       await expect(
-        organizationApplicationOtpService.resolveSubmissionToken("nope"),
-      ).rejects.toMatchObject({ statusResponse: { status: 401 } });
+        organizationApplicationOtpService.resolveTrackingToken("nope"),
+      ).rejects.toMatchObject({
+        statusResponse: { status: 401, code: "TRACKING_TOKEN_INVALID" },
+      });
     });
   });
 });

@@ -36,6 +36,17 @@ export class AuthTokenRepository {
     });
   }
 
+  /** Tokens of one type issued to a user since `since` (DB-side rate limit). */
+  async countCreatedSince(
+    userId: string,
+    type: AuthTokenTypeValue,
+    since: Date,
+  ): Promise<number> {
+    return prisma.authToken.count({
+      where: { userId, type, createdAt: { gte: since } },
+    });
+  }
+
   async revokeById(id: string): Promise<void> {
     await prisma.authToken.update({
       where: { id },

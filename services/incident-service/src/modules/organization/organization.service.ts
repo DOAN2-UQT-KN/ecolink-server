@@ -6,6 +6,11 @@ import {
   type KycStatus,
   type OrgType,
   type TrustTier,
+  MembershipSource,
+  OrgMemberRole,
+  OrgPermission,
+  canActOnMember,
+  isOwnerRole,
   nextUniqueOrganizationSlug,
   slugifyOrganizationName,
 } from "@da2/constants";
@@ -20,6 +25,7 @@ import type {
   OrganizationMemberResponse,
   OrganizationMembersListQuery,
   OrganizationOwnerResponse,
+  OrganizationOwnerWithRoleResponse,
   OrganizationResponse,
   UpdateOrganizationBody,
 } from "./organization.dto";
@@ -40,6 +46,9 @@ import { buildVerifyContactEmailRequestUrl } from "./organization-contact-email-
 import { organizationJoiningRequestRepository } from "./organization_joining_request.repository";
 import { organizationMemberRepository } from "./organization_member.repository";
 import { organizationRepository } from "./organization.repository";
+import { orgAccessService } from "./org-access.service";
+import { organizationMembershipService } from "./organization-membership.service";
+import { enqueueOrgMembershipChangedWebsiteNotification } from "./organization-member-notify.client";
 import { backgroundJobDispatcher } from "../../queue/register";
 import {
   ReportJobType,
@@ -76,7 +85,7 @@ function enqueueOrganizationTranslationJob(
     });
 }
 
-type OrganizationCore = Omit<OrganizationResponse, "owner">;
+type OrganizationCore = Omit<OrganizationResponse, "owners">;
 
 export class OrganizationService {
   private organizationCoreFromRow(row: Organization): OrganizationCore {
@@ -99,7 +108,6 @@ export class OrganizationService {
       tickSuspended: row.tickSuspended,
       verifiedAt: row.verifiedAt,
       verificationExpiresAt: row.verificationExpiresAt,
-      ownerId: row.ownerId,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
@@ -112,29 +120,43 @@ export class OrganizationService {
   private async withOwner(
     core: OrganizationCore,
   ): Promise<OrganizationResponse> {
-    if (!core.ownerId) {
-      return { ...core, owner: null };
-    }
-    const map = await fetchOrganizationOwnersByUserIds([core.ownerId]);
-    return {
-      ...core,
-      owner:
-        getUserProfile(map, core.ownerId) ?? this.ownerFallback(core.ownerId),
-    };
+    const [withOwners] = await this.withOwners([core]);
+    return withOwners;
   }
 
+  /** Attaches the active owners (owner / legal representative memberships) with profiles. */
   private async withOwners(
     cores: OrganizationCore[],
   ): Promise<OrganizationResponse[]> {
-    const map = await fetchOrganizationOwnersByUserIds(
-      cores.map((c) => c.ownerId).filter((id): id is string => Boolean(id)),
-    );
+    const ownersByOrg =
+      await organizationMemberRepository.findOwnersByOrganizationIds(
+        cores.map((c) => c.id),
+      );
+    const userIds = [
+      ...new Set(
+        [...ownersByOrg.values()].flat().map((owner) => owner.userId),
+      ),
+    ];
+    const map = await fetchOrganizationOwnersByUserIds(userIds);
     return cores.map((c) => ({
       ...c,
-      owner: c.ownerId
-        ? (getUserProfile(map, c.ownerId) ?? this.ownerFallback(c.ownerId))
-        : null,
+      owners: (ownersByOrg.get(c.id) ?? []).map(
+        (owner): OrganizationOwnerWithRoleResponse => ({
+          ...(getUserProfile(map, owner.userId) ??
+            this.ownerFallback(owner.userId)),
+          role: owner.role,
+        }),
+      ),
     }));
+  }
+
+  /** Thin wrapper so every check in this file reads the same; the matrix is in `org-access`. */
+  private assertPermission(
+    organizationId: string,
+    userId: string,
+    permission: OrgPermission,
+  ): Promise<string> {
+    return orgAccessService.assertOrgPermission(organizationId, userId, permission);
   }
 
   private joinRequestResponseFromRow(
@@ -175,7 +197,6 @@ export class OrganizationService {
           ? {
               id: org.id,
               name: org.name,
-              ownerId: org.ownerId,
             }
           : undefined,
     };
@@ -363,7 +384,6 @@ export class OrganizationService {
     }
     await organizationRepository.update(organizationId, {
       isEmailVerified: true,
-      updatedBy: org.ownerId,
     });
     return { slug: org.slug };
   }
@@ -453,38 +473,40 @@ export class OrganizationService {
     return this.withOwner(this.organizationCoreFromRow(updated));
   }
 
-  /** Best-effort in-app notice to the org owner after admin verify/ban. */
+  /** Best-effort in-app notice to every owner after admin verify/ban. */
   private notifyOwnerOfOrganizationVerified(
     org: Organization,
     outcome: "approved" | "banned",
     rejectReason?: string,
   ): void {
-    const ownerId = org.ownerId;
-    if (!ownerId) {
-      // Provisioning has not attached the ORG account yet; nobody to notify in-app.
-      return;
-    }
-    const run =
-      outcome === "approved"
-        ? enqueueOrganizationApprovedWebsiteNotification({
-            userId: ownerId,
-            organizationName: org.name,
-            organizationId: org.id,
-            organizationSlug: org.slug,
-          })
-        : enqueueOrganizationRejectedWebsiteNotification({
-            userId: ownerId,
-            organizationName: org.name,
-            organizationId: org.id,
-            organizationSlug: org.slug,
-            rejectReason: rejectReason ?? "",
-          });
-    void run.catch((err) => {
-      console.warn(
-        `[organization] failed to notify owner of organization ${outcome}`,
-        err,
-      );
-    });
+    void organizationMemberRepository
+      .findOwnerUserIds(org.id)
+      .then((ownerIds) =>
+        Promise.all(
+          ownerIds.map((ownerId) =>
+            outcome === "approved"
+              ? enqueueOrganizationApprovedWebsiteNotification({
+                  userId: ownerId,
+                  organizationName: org.name,
+                  organizationId: org.id,
+                  organizationSlug: org.slug,
+                })
+              : enqueueOrganizationRejectedWebsiteNotification({
+                  userId: ownerId,
+                  organizationName: org.name,
+                  organizationId: org.id,
+                  organizationSlug: org.slug,
+                  rejectReason: rejectReason ?? "",
+                }),
+          ),
+        ),
+      )
+      .catch((err) => {
+        console.warn(
+          `[organization] failed to notify owners of organization ${outcome}`,
+          err,
+        );
+      });
   }
 
   /** Owner-only: partial update; changing `contactEmail` resets verification and queues a new email. */
@@ -500,13 +522,7 @@ export class OrganizationService {
         HTTP_STATUS.NOT_FOUND.withMessage("Organization not found"),
       );
     }
-    if (org.ownerId !== ownerId) {
-      throw new HttpError(
-        HTTP_STATUS.FORBIDDEN.withMessage(
-          "Only the organization owner can update this organization",
-        ),
-      );
-    }
+    await this.assertPermission(organizationId, ownerId, OrgPermission.ORG_EDIT);
 
     const prevEmailNorm = org.contactEmail?.toLowerCase().trim() ?? "";
     const nextName = body.name !== undefined ? body.name.trim() : org.name;
@@ -611,13 +627,7 @@ export class OrganizationService {
         HTTP_STATUS.NOT_FOUND.withMessage("Organization not found"),
       );
     }
-    if (org.ownerId !== ownerId) {
-      throw new HttpError(
-        HTTP_STATUS.FORBIDDEN.withMessage(
-          "Only the organization owner can resend the verification email",
-        ),
-      );
-    }
+    await this.assertPermission(organizationId, ownerId, OrgPermission.ORG_EDIT);
     const email = org.contactEmail?.trim();
     if (!email) {
       throw new HttpError(
@@ -689,15 +699,20 @@ export class OrganizationService {
   private attachViewerJoinState(
     organization: OrganizationResponse,
     latest: { id: string; status: number } | undefined,
-    isMember: boolean,
+    role: string | null,
   ): OrganizationResponse {
+    const isMember = role !== null;
     const requestStatus = this.joinRequestStatusForOrganizationDetail(
       latest?.status,
       isMember,
     );
-    const next: OrganizationResponse = isMember
-      ? { ...organization, isMember }
-      : organization;
+    const next: OrganizationResponse = {
+      ...organization,
+      myRole: role,
+      isOwner: isOwnerRole(role),
+      permissions: orgAccessService.permissionsFor(role),
+      ...(isMember ? { isMember } : {}),
+    };
     if (requestStatus === undefined || latest === undefined) {
       return next;
     }
@@ -743,7 +758,7 @@ export class OrganizationService {
         row.id,
         viewerUserId,
       );
-    const isMember = await organizationMemberRepository.isActiveMember(
+    const role = await organizationMemberRepository.findActiveRole(
       row.id,
       viewerUserId,
     );
@@ -752,7 +767,7 @@ export class OrganizationService {
       latestJoin
         ? { id: latestJoin.id, status: latestJoin.status }
         : undefined,
-      isMember,
+      role,
     );
   }
 
@@ -776,8 +791,8 @@ export class OrganizationService {
     if (organizations.length === 0) {
       return organizations;
     }
-    const memberOrgIds =
-      await organizationMemberRepository.findActiveMembershipOrgIds(
+    const roleByOrgId =
+      await organizationMemberRepository.findActiveRolesForUser(
         viewerUserId,
         organizations.map((o) => o.id),
       );
@@ -786,14 +801,13 @@ export class OrganizationService {
         viewerUserId,
         organizations.map((o) => o.id),
       );
-    return organizations.map((org) => {
-      const isMember = memberOrgIds.has(org.id);
-      return this.attachViewerJoinState(
+    return organizations.map((org) =>
+      this.attachViewerJoinState(
         org,
         latestByOrgId.get(org.id),
-        isMember,
-      );
-    });
+        roleByOrgId.get(org.id) ?? null,
+      ),
+    );
   }
 
   private async withMemberCounts(
@@ -852,6 +866,7 @@ export class OrganizationService {
           isEmailVerified: query.isEmailVerified,
           organizationIdIn: joinRequestOrgIds,
           isOwner: query.isOwner,
+          roles: query.roles,
         },
         { skip, take: limit, sortBy, sortOrder },
       );
@@ -939,14 +954,6 @@ export class OrganizationService {
       );
     }
 
-    if (org.ownerId === requesterId) {
-      throw new HttpError(
-        HTTP_STATUS.BAD_REQUEST.withMessage(
-          "Organization owner cannot request to join",
-        ),
-      );
-    }
-
     const isMember = await organizationMemberRepository.isActiveMember(
       organizationId,
       requesterId,
@@ -975,21 +982,29 @@ export class OrganizationService {
       row.requesterId,
     ]);
 
-    if (org.ownerId) {
-      void this.notifyOrganizationOwnerOfJoinRequest({
-        ownerId: org.ownerId,
-        organizationId,
-        organizationSlug: org.slug,
-        organizationName: org.name,
-        requesterId: row.requesterId,
-        requesterById,
-      }).catch((err) => {
+    // Everyone who may approve it hears about it, not just the owners.
+    void orgAccessService
+      .userIdsWith(organizationId, OrgPermission.MEMBER_APPROVE)
+      .then((approverIds) =>
+        Promise.all(
+          approverIds.map((ownerId) =>
+            this.notifyOrganizationOwnerOfJoinRequest({
+              ownerId,
+              organizationId,
+              organizationSlug: org.slug,
+              organizationName: org.name,
+              requesterId: row.requesterId,
+              requesterById,
+            }),
+          ),
+        ),
+      )
+      .catch((err) => {
         console.warn(
-          "[organization] failed to notify owner of join request",
+          "[organization] failed to notify owners of join request",
           err,
         );
       });
-    }
 
     return this.joinRequestResponseFromRow(row, requesterById);
   }
@@ -1034,13 +1049,11 @@ export class OrganizationService {
         HTTP_STATUS.NOT_FOUND.withMessage("Organization not found"),
       );
     }
-    if (org.ownerId !== ownerId) {
-      throw new HttpError(
-        HTTP_STATUS.FORBIDDEN.withMessage(
-          "Only the organization owner can view join requests",
-        ),
-      );
-    }
+    await this.assertPermission(
+      organizationId,
+      ownerId,
+      OrgPermission.MEMBER_APPROVE,
+    );
 
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
@@ -1133,43 +1146,31 @@ export class OrganizationService {
       );
     }
 
-    if (request.organization.ownerId !== ownerId) {
-      throw new HttpError(
-        HTTP_STATUS.FORBIDDEN.withMessage(
-          "Only the organization owner can process join requests",
-        ),
-      );
-    }
+    await this.assertPermission(
+      request.organizationId,
+      ownerId,
+      OrgPermission.MEMBER_APPROVE,
+    );
 
     if (request.status !== JoinRequestStatus._STATUS_PENDING) {
       throw new HttpError(HTTP_STATUS.JOIN_REQUEST_ALREADY_PROCESSED);
     }
 
     if (status === JoinRequestStatus._STATUS_APPROVED) {
-      await prisma.$transaction([
-        prisma.organizationJoiningRequest.update({
+      await prisma.$transaction(async (tx) => {
+        await tx.organizationJoiningRequest.update({
           where: { id: requestId },
           data: { status },
-        }),
-        prisma.organizationMember.upsert({
-          where: {
-            organizationId_userId: {
-              organizationId: request.organizationId,
-              userId: request.requesterId,
-            },
-          },
-          create: {
-            organizationId: request.organizationId,
-            userId: request.requesterId,
-            createdBy: ownerId,
-          },
-          update: {
-            deletedAt: null,
-            updatedAt: new Date(),
-            updatedBy: ownerId,
-          },
-        }),
-      ]);
+        });
+        await organizationMembershipService.grantMembership(tx, {
+          userId: request.requesterId,
+          organizationId: request.organizationId,
+          role: OrgMemberRole.MEMBER,
+          source: MembershipSource.JOIN_REQUEST,
+          sourceRef: request.id,
+          actorId: ownerId,
+        });
+      });
       void enqueueVolunteerApprovedWebsiteNotification({
         userId: request.requesterId,
         reportTitle: request.organization.name,
@@ -1304,6 +1305,7 @@ export class OrganizationService {
       const members: OrganizationMemberResponse[] = pageRows.map((r) => ({
         organizationId: r.organizationId,
         userId: r.userId,
+        role: r.role,
         user:
           getUserProfile(profiles, r.userId) ?? this.ownerFallback(r.userId),
         createdAt: r.createdAt,
@@ -1332,6 +1334,7 @@ export class OrganizationService {
     const members: OrganizationMemberResponse[] = rows.map((r) => ({
       organizationId: r.organizationId,
       userId: r.userId,
+      role: r.role,
       user: getUserProfile(userById, r.userId) ?? this.ownerFallback(r.userId),
       createdAt: r.createdAt,
     }));
@@ -1345,6 +1348,107 @@ export class OrganizationService {
     };
   }
 
+  /**
+   * Change a member's role. Owners are out of reach here (becoming one is an ADD_OWNER
+   * application, losing it is phase 3); an admin cannot touch another admin, and only an
+   * owner may hand out ADMIN.
+   */
+  async changeMemberRole(
+    organizationId: string,
+    actorId: string,
+    targetUserId: string,
+    newRole: string,
+  ): Promise<OrganizationMemberResponse> {
+    const actorRole = await this.assertPermission(
+      organizationId,
+      actorId,
+      OrgPermission.MEMBER_MANAGE,
+    );
+    if (!orgAccessService.permissionsFor(actorRole).assignableRoles.includes(
+      newRole as OrgMemberRole,
+    )) {
+      throw new HttpError(HTTP_STATUS.ROLE_NOT_ASSIGNABLE);
+    }
+    const targetRole = await orgAccessService.getRole(organizationId, targetUserId);
+    if (!targetRole) {
+      throw new HttpError(HTTP_STATUS.MEMBER_NOT_FOUND);
+    }
+    if (targetUserId === actorId || !canActOnMember(actorRole, targetRole)) {
+      throw new HttpError(HTTP_STATUS.CANNOT_ACT_ON_MEMBER);
+    }
+
+    const org = await organizationRepository.findById(organizationId);
+    const row = await prisma.$transaction((tx) =>
+      organizationMembershipService.changeRole(tx, {
+        organizationId,
+        userId: targetUserId,
+        role: newRole as OrgMemberRole,
+        actorId,
+      }),
+    );
+
+    if (org && targetRole !== newRole) {
+      void enqueueOrgMembershipChangedWebsiteNotification({
+        userId: targetUserId,
+        organizationId,
+        organizationName: org.name,
+        organizationSlug: org.slug,
+        role: newRole,
+      }).catch((err) => {
+        console.warn("[organization] failed to notify member of role change", err);
+      });
+    }
+
+    const profiles = await fetchOrganizationOwnersByUserIds([targetUserId]);
+    return {
+      organizationId: row.organizationId,
+      userId: row.userId,
+      role: row.role,
+      user:
+        getUserProfile(profiles, targetUserId) ?? this.ownerFallback(targetUserId),
+      createdAt: row.createdAt,
+    };
+  }
+
+  /** Remove a non-owner member (soft delete). Same bounds as `changeMemberRole`. */
+  async removeMember(
+    organizationId: string,
+    actorId: string,
+    targetUserId: string,
+  ): Promise<void> {
+    const actorRole = await this.assertPermission(
+      organizationId,
+      actorId,
+      OrgPermission.MEMBER_MANAGE,
+    );
+    const targetRole = await orgAccessService.getRole(organizationId, targetUserId);
+    if (!targetRole) {
+      throw new HttpError(HTTP_STATUS.MEMBER_NOT_FOUND);
+    }
+    if (targetUserId === actorId || !canActOnMember(actorRole, targetRole)) {
+      throw new HttpError(HTTP_STATUS.CANNOT_ACT_ON_MEMBER);
+    }
+
+    await organizationMemberRepository.softDeleteMembership(
+      organizationId,
+      targetUserId,
+      actorId,
+    );
+
+    const org = await organizationRepository.findById(organizationId);
+    if (org) {
+      void enqueueOrgMembershipChangedWebsiteNotification({
+        userId: targetUserId,
+        organizationId,
+        organizationName: org.name,
+        organizationSlug: org.slug,
+        removed: true,
+      }).catch((err) => {
+        console.warn("[organization] failed to notify removed member", err);
+      });
+    }
+  }
+
   async leaveOrganization(
     organizationId: string,
     userId: string,
@@ -1355,11 +1459,22 @@ export class OrganizationService {
         HTTP_STATUS.NOT_FOUND.withMessage("Organization not found"),
       );
     }
-    if (org.ownerId === userId) {
+    const role = await organizationMemberRepository.findActiveRole(
+      organizationId,
+      userId,
+    );
+    if (isOwnerRole(role)) {
+      const owners = await organizationMemberRepository.findOwnerUserIds(
+        organizationId,
+      );
+      // Leaving as an owner is part of the exit flow (revoke / transfer), which is not
+      // designed yet; the last owner can never leave (the DB refuses it as well).
       throw new HttpError(
-        HTTP_STATUS.BAD_REQUEST.withMessage(
-          "Organization owners cannot leave; transfer ownership or delete the organization",
-        ),
+        owners.length <= 1
+          ? HTTP_STATUS.ORG_MUST_HAVE_OWNER
+          : HTTP_STATUS.BAD_REQUEST.withMessage(
+              "Organization owners cannot leave yet; ownership changes go through the platform",
+            ),
       );
     }
     const left = await organizationMemberRepository.softDeleteMembership(

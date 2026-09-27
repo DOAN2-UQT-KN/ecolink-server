@@ -1,11 +1,16 @@
-import type { KycStatus, OrgType, TrustTier } from "@da2/constants";
+import type {
+  KycStatus,
+  OrgPermissionSet,
+  OrgType,
+  TrustTier,
+} from "@da2/constants";
 
 /**
  * Body for POST /api/v1/organizations (internal only; JSON keys may be snake_case and the
  * middleware normalizes them to camelCase).
  */
 export interface CreateOrganizationBody {
-  /** Internal callers carry no JWT, so the owner is named in the body. */
+  /** Internal callers carry no JWT, so the owner is named in the body (becomes an OWNER membership). */
   ownerId: string;
   name: string;
   description?: string;
@@ -53,6 +58,12 @@ export interface UpdateOrganizationBody {
   contactEmail?: string;
 }
 
+/** An owner with their role in the organization. */
+export interface OrganizationOwnerWithRoleResponse extends OrganizationOwnerResponse {
+  /** `LEGAL_REPRESENTATIVE` | `OWNER`. */
+  role: string;
+}
+
 export interface OrganizationResponse {
   id: string;
   name: string;
@@ -80,14 +91,25 @@ export interface OrganizationResponse {
   /** Lane B ticks expire and must be re-assessed; `null` for lane A. */
   verificationExpiresAt: Date | null;
   /**
-   * The dedicated ORG login. `null` between the two halves of provisioning (the organization
-   * row is written before the account exists), so consumers must tolerate it.
+   * People with an owner role (`LEGAL_REPRESENTATIVE` or `OWNER`). An organization never logs
+   * in; these are the users who act for it. Never empty for an active organization.
    */
-  ownerId: string | null;
-  /** Owner profile from identity-service; `null` while `ownerId` is null. */
-  owner: OrganizationOwnerResponse | null;
+  owners: OrganizationOwnerWithRoleResponse[];
   /**
-   * Active member count (owner is not stored in `organization_members` and is not included).
+   * The viewer's role in this organization (`OrgMemberRole`), or null when not a member.
+   * Only on viewer-aware endpoints.
+   */
+  myRole?: string | null;
+  /** True when the viewer holds an owner role. Only on viewer-aware endpoints. */
+  isOwner?: boolean;
+  /**
+   * What the viewer may do here, resolved from their role (`@da2/constants` org-permissions).
+   * The client shows or hides management actions from this instead of re-deriving the matrix.
+   * Only on viewer-aware endpoints.
+   */
+  permissions?: OrgPermissionSet;
+  /**
+   * Active member count, owners included.
    * Included on GET /organizations and GET /organizations/my.
    */
   members?: number;
@@ -107,8 +129,7 @@ export interface OrganizationResponse {
    */
   joinRequestId?: string;
   /**
-   * For the current user: true when they are an active member of this organization.
-   * (Owners are exposed separately via `ownerId`.)
+   * For the current user: true when they hold any active membership (owners included).
    * Included on GET /organizations/:id, GET /organizations, and GET /organizations/my.
    */
   isMember?: boolean;
@@ -130,14 +151,15 @@ export interface OrganizationJoinRequestDetailResponse
   organization?: {
     id: string;
     name: string;
-    ownerId: string | null;
   };
 }
 
 export interface OrganizationMemberResponse {
   organizationId: string;
   userId: string;
-  /** Member profile from identity-service (same shape as organization `owner`). */
+  /** `OrgMemberRole`. */
+  role: string;
+  /** Member profile from identity-service. */
   user: OrganizationOwnerResponse;
   createdAt: Date;
 }
@@ -184,14 +206,22 @@ export interface MyOrganizationsListQuery {
    */
   requestStatus?: number[];
   /**
-   * When `true`, only organizations I own (`ownerId`). When `false`, only organizations where I am an
-   * approved member but not the owner. Omit for both (owned and member-of).
+   * When `true`, only organizations where I hold an owner role. When `false`, only organizations
+   * where I am a member without one. Omit for both.
    */
   isOwner?: boolean;
+  /** Only memberships with one of these roles (`OrgMemberRole`); takes precedence over `isOwner`. */
+  roles?: string[];
   page?: number;
   limit?: number;
   sortBy?: "createdAt" | "updatedAt" | "name";
   sortOrder?: "asc" | "desc";
+}
+
+/** Body for PATCH /api/v1/organizations/:id/members/:userId/role. */
+export interface ChangeMemberRoleBody {
+  /** `OrgMemberRole`; must be in the actor's `assignableRoles`. */
+  role: string;
 }
 
 /** Query for GET /api/v1/organizations/:id/join-requests (owner). */

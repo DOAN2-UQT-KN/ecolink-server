@@ -4,7 +4,7 @@
 BEGIN;
 
 -- organizations
-INSERT INTO organizations ("id", "name", "slug", "description", "logo_url", "background_url", "contact_email", "is_email_verified", "status", "owner_id", "created_by", "updated_by", "created_at", "updated_at", "deleted_at")
+INSERT INTO organizations ("id", "name", "slug", "description", "logo_url", "background_url", "contact_email", "is_email_verified", "status", "created_by", "updated_by", "created_at", "updated_at", "deleted_at")
 VALUES
   (
     '44444444-4444-4444-a444-444444444401',
@@ -16,7 +16,6 @@ VALUES
     'contact@ecovolunteers.local',
     TRUE,
     1,
-    '11111111-1111-1111-1111-111111111141',
     '11111111-1111-1111-1111-111111111141',
     '11111111-1111-1111-1111-111111111141',
     '2026-01-01T00:00:00Z',
@@ -307,12 +306,26 @@ VALUES
   )
 ON CONFLICT ("user_id", "resource_type", "resource_id") DO NOTHING;
 
--- organization_members
-INSERT INTO organization_members ("organization_id", "user_id", "created_by", "updated_by", "created_at", "updated_at", "deleted_at")
+-- organization_members (the owner row is required: the DB checks at COMMIT that every
+-- organization has at least one owner membership)
+INSERT INTO organization_members ("organization_id", "user_id", "role", "source", "created_by", "updated_by", "created_at", "updated_at", "deleted_at")
 VALUES
   (
     '44444444-4444-4444-a444-444444444401',
+    '11111111-1111-1111-1111-111111111141',
+    'OWNER',
+    'INTERNAL',
+    '11111111-1111-1111-1111-111111111141',
+    '11111111-1111-1111-1111-111111111141',
+    '2026-01-01T00:00:00Z',
+    '2026-01-01T00:00:00Z',
+    NULL
+  ),
+  (
+    '44444444-4444-4444-a444-444444444401',
     '11111111-1111-1111-1111-111111111142',
+    'MEMBER',
+    'JOIN_REQUEST',
     '11111111-1111-1111-1111-111111111141',
     '11111111-1111-1111-1111-111111111141',
     '2026-01-01T00:00:00Z',

@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+  <body style="font-family: system-ui, sans-serif; line-height: 1.5; color: #111">
+    <p>Xin chào {{fullName}},</p>
+    <p>
+      Tổ chức <strong>{{organizationName}}</strong> đã được duyệt trên <strong>{{appName}}</strong>.
+      Tài khoản của bạn vừa được gắn làm {{#if isLegalRep}}<strong>người đại diện pháp lý</strong>{{else}}<strong>owner</strong>{{/if}} của tổ chức.
+    </p>
+    <p>
+      Đăng nhập như bình thường — mật khẩu không thay đổi — rồi mở trang tổ chức:
+      <a href="{{manageUrl}}" style="color: #0b57d0">{{organizationName}}</a>.
+    </p>
+    <p style="font-size: 0.875rem; color: #444">{{manageUrl}}</p>
+    <p style="font-size: 0.875rem; color: #666">
+      Chúng tôi không bao giờ gửi liên kết đặt lại mật khẩu vì lý do này. Email nào yêu cầu
+      bạn đổi mật khẩu để nhận vai trong tổ chức đều không phải của chúng tôi.
+    </p>
+  </body>
+</html>

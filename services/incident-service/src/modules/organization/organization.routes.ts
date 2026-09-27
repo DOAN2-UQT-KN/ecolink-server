@@ -2,6 +2,8 @@ import { Router } from "express";
 import { authenticate } from "../../middleware/auth.middleware";
 import { requireInternalIncidentApiKey } from "../../middleware/internal-auth.middleware";
 import { organizationController } from "./organization.controller";
+import { organizationInvitationController } from "./organization-invitation.controller";
+import { ownerProposalController } from "../organization_application/owner-proposal.controller";
 
 const router = Router();
 
@@ -171,14 +173,155 @@ router.delete(
 );
 
 /**
+ * @route   PATCH /api/v1/organizations/:id/members/:userId/role
+ * @desc    Change a non-owner member's role. Needs MEMBER_MANAGE; the new role must be in the
+ *          caller's `assignableRoles` (owner: ADMIN/CAMPAIGN_MANAGER/MEMBER, admin:
+ *          CAMPAIGN_MANAGER/MEMBER); an admin cannot act on another admin; owners are untouchable.
+ * @access  Private
+ * @body    { role }
+ */
+router.patch(
+  "/:id/members/:userId/role",
+  authenticate,
+  organizationController.changeMemberRole,
+);
+
+/**
+ * @route   DELETE /api/v1/organizations/:id/members/:userId
+ * @desc    Remove a non-owner member (same bounds as changing their role).
+ * @access  Private
+ */
+router.delete(
+  "/:id/members/:userId",
+  authenticate,
+  organizationController.removeMember,
+);
+
+/**
  * @route   GET /api/v1/organizations/:id/members
- * @desc    List approved members (owner only; owner is not in this list). Each item includes `user` profile (identity-service). Pagination: page, limit. Filter: userId, search (member display name, case-insensitive contains, via identity-service).
+ * @desc    List members with their role (owners included). Each item includes `user` profile (identity-service). Pagination: page, limit. Filter: userId, search (member display name, case-insensitive contains, via identity-service).
  * @access  Private
  */
 router.get(
   "/:id/members",
   authenticate,
   organizationController.listMembers,
+);
+
+/**
+ * @route   GET /api/v1/organizations/:id/user-search?q=
+ * @desc    Find people to invite (or to propose as owners). Needs MEMBER_INVITE. Emails are
+ *          masked unless the caller may propose owners. Each result says whether the person
+ *          already has a role here.
+ * @access  Private
+ */
+router.get(
+  "/:id/user-search",
+  authenticate,
+  organizationInvitationController.searchUsers,
+);
+
+/**
+ * @route   POST /api/v1/organizations/:id/invitations
+ * @desc    Invite an existing user as MEMBER. Anyone in the organization may invite; the
+ *          invitation is SENT at once if the inviter can approve members, otherwise it waits
+ *          as PENDING_APPROVAL.
+ * @access  Private
+ * @body    { user_id }
+ */
+router.post(
+  "/:id/invitations",
+  authenticate,
+  organizationInvitationController.create,
+);
+
+/**
+ * @route   GET /api/v1/organizations/:id/invitations?status=
+ * @desc    Approvers see every invitation; other members only the ones they sent.
+ * @access  Private
+ */
+router.get(
+  "/:id/invitations",
+  authenticate,
+  organizationInvitationController.list,
+);
+
+/**
+ * @route   PUT /api/v1/organizations/:id/invitations/:invitationId/approve
+ * @desc    Approve a pending invitation (MEMBER_APPROVE); the invitee is emailed a link.
+ * @access  Private
+ */
+router.put(
+  "/:id/invitations/:invitationId/approve",
+  authenticate,
+  organizationInvitationController.approve,
+);
+
+/**
+ * @route   PUT /api/v1/organizations/:id/invitations/:invitationId/reject
+ * @access  Private (MEMBER_APPROVE)
+ */
+router.put(
+  "/:id/invitations/:invitationId/reject",
+  authenticate,
+  organizationInvitationController.reject,
+);
+
+/**
+ * @route   DELETE /api/v1/organizations/:id/invitations/:invitationId
+ * @desc    Cancel an open invitation (the inviter, or anyone with MEMBER_APPROVE).
+ * @access  Private
+ */
+router.delete(
+  "/:id/invitations/:invitationId",
+  authenticate,
+  organizationInvitationController.cancel,
+);
+
+/**
+ * @route   POST /api/v1/organizations/:id/owner-proposals
+ * @desc    Propose new owners (ADD_OWNER application). Needs OWNER_PROPOSE. Each person is
+ *          an existing account (`user_id`) or an email; every one confirms by email, then a
+ *          platform admin reviews. One open proposal per organization.
+ * @access  Private
+ * @body    { owners: [{ user_id? , email?, full_name }], reason? }
+ */
+router.post(
+  "/:id/owner-proposals",
+  authenticate,
+  ownerProposalController.create,
+);
+
+/**
+ * @route   GET /api/v1/organizations/:id/owner-proposals
+ * @desc    Recent ADD_OWNER proposals with each person's confirmation status (owners only).
+ * @access  Private
+ */
+router.get(
+  "/:id/owner-proposals",
+  authenticate,
+  ownerProposalController.list,
+);
+
+/**
+ * @route   POST /api/v1/organizations/:id/owner-proposals/:applicationId/cancel
+ * @access  Private (OWNER_PROPOSE)
+ */
+router.post(
+  "/:id/owner-proposals/:applicationId/cancel",
+  authenticate,
+  ownerProposalController.cancel,
+);
+
+/**
+ * @route   POST /api/v1/organizations/:id/owner-proposals/:applicationId/owners/:candidateId/resend
+ * @desc    New confirmation link for one pending person (at least an hour apart).
+ * @access  Private (OWNER_PROPOSE)
+ */
+router.post(
+  "/:id/owner-proposals/:applicationId/owners/:candidateId/resend",
+  authenticate,
+  ownerProposalController.resend,
 );
 
 export default router;

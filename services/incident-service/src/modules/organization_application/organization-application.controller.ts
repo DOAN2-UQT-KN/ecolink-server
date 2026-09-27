@@ -6,16 +6,32 @@ import {
   sendHttpErrorResponse,
   sendSuccess,
 } from "../../constants/http-status";
+import { clientIp } from "../../middleware/rate-limit.middleware";
 import {
-  CreateApplicationBody,
+  ConfirmationRequestMeta,
   PresignApplicationDocumentBody,
   RequestApplicationOtpBody,
-  UpdateApplicationBody,
+  SaveApplicationBody,
+  SubmitApplicationBody,
   VerifyApplicationOtpBody,
 } from "./organization-application.dto";
 import { organizationApplicationOtpService } from "./organization-application-otp.service";
 import { organizationApplicationService } from "./organization-application.service";
+import { ownerConfirmationService } from "./owner-confirmation.service";
 import { sendDocumentStream } from "./document-stream";
+
+export function requestMeta(req: Request): ConfirmationRequestMeta {
+  const ua = req.get("user-agent");
+  return {
+    ip: clientIp(req)?.slice(0, 64) ?? null,
+    userAgent: ua ? ua.slice(0, 512) : null,
+  };
+}
+
+/** The tracking-link token, from `?token=` (preferred) or the body. */
+function trackingTokenOf(req: Request): string {
+  return String(req.query.token ?? req.body?.token ?? "").trim();
+}
 
 function failedValidation(req: Request, res: Response): boolean {
   const errors = validationResult(req);
@@ -83,14 +99,13 @@ export class OrganizationApplicationController {
       if (failedValidation(req, res)) return;
       try {
         const { email, otp } = req.body as VerifyApplicationOtpBody;
-        const result = await organizationApplicationOtpService.verifyOtp(
+        const verified = await organizationApplicationOtpService.verifyOtp(
           email,
           otp,
         );
-        return sendSuccess(res, HTTP_STATUS.OK, {
-          submissionToken: result.submissionToken,
-          expiresAt: result.expiresAt.toISOString(),
-        });
+        const result =
+          await organizationApplicationService.openDraftForEmail(verified);
+        return sendSuccess(res, HTTP_STATUS.OK, result);
       } catch (error) {
         if (sendHttpErrorResponse(res, error)) return;
         throw error;
@@ -101,32 +116,6 @@ export class OrganizationApplicationController {
   /* ------------------------------------------------------------------ */
   /* P1 — documents                                                      */
   /* ------------------------------------------------------------------ */
-
-  presignDocument = [
-    body("docType").notEmpty().trim().isLength({ max: 32 }),
-    body("fileName").notEmpty().trim().isLength({ max: 255 }),
-    body("mimeType").notEmpty().trim().isLength({ max: 100 }),
-    body("sizeBytes").isInt({ min: 1 }).toInt(),
-
-    async (req: Request, res: Response): Promise<void> => {
-      if (failedValidation(req, res)) return;
-      const submissionEmail = req.submissionEmail;
-      if (!submissionEmail) {
-        return sendError(res, HTTP_STATUS.SUBMISSION_TOKEN_INVALID);
-      }
-      try {
-        const input = req.body as PresignApplicationDocumentBody;
-        const result = await organizationApplicationService.presignDocument(
-          submissionEmail,
-          input,
-        );
-        return sendSuccess(res, HTTP_STATUS.CREATED, result);
-      } catch (error) {
-        if (sendHttpErrorResponse(res, error)) return;
-        throw error;
-      }
-    },
-  ];
 
   presignDocumentForApplication = [
     param("id").isUUID(),
@@ -157,40 +146,6 @@ export class OrganizationApplicationController {
   /* P2 — submit / track / edit / withdraw                               */
   /* ------------------------------------------------------------------ */
 
-  createApplication = [
-    body("orgType").notEmpty().trim().isLength({ max: 32 }),
-    body("profile").isObject().withMessage("profile is required"),
-    body("channels").isArray({ min: 1 }).withMessage("channels is required"),
-    body("documentIds").optional().isArray({ max: 5 }),
-    body("documentIds.*").optional().isUUID(),
-    body("consent").isBoolean().toBoolean(),
-
-    async (req: Request, res: Response): Promise<void> => {
-      if (failedValidation(req, res)) return;
-      const submissionEmail = req.submissionEmail;
-      const submissionToken = req.submissionToken;
-      if (!submissionEmail || !submissionToken) {
-        return sendError(res, HTTP_STATUS.SUBMISSION_TOKEN_INVALID);
-      }
-      try {
-        const { application, trackingToken } =
-          await organizationApplicationService.createApplication(
-            submissionEmail,
-            submissionToken,
-            req.body as CreateApplicationBody,
-            req.user?.userId,
-          );
-        return sendSuccess(res, HTTP_STATUS.CREATED, {
-          application,
-          trackingToken,
-        });
-      } catch (error) {
-        if (sendHttpErrorResponse(res, error)) return;
-        throw error;
-      }
-    },
-  ];
-
   getApplication = [
     param("id").isUUID(),
     query("token").notEmpty().trim(),
@@ -211,28 +166,87 @@ export class OrganizationApplicationController {
     },
   ];
 
-  updateApplication = [
+  saveDraft = [
     param("id").isUUID(),
-    body("orgType").optional().trim().isLength({ max: 32 }),
+    body("orgType").optional({ values: "null" }).trim().isLength({ max: 32 }),
     body("profile").optional().isObject(),
-    body("channels").optional().isArray({ min: 1 }),
+    body("channels").optional().isArray({ max: 10 }),
+    body("legalRepresentative").optional().isObject(),
+    body("owners").optional().isArray({ max: 5 }),
+    body("owners.*.email").optional().isString().isLength({ max: 320 }),
+    body("owners.*.fullName").optional().isString().isLength({ max: 200 }),
+    body("owners.*.isLegalRep").optional().isBoolean().toBoolean(),
+    body("owners.*.nationalIdDocumentId").optional({ values: "null" }).isUUID(),
     body("documentIds").optional().isArray({ max: 5 }),
     body("documentIds.*").optional().isUUID(),
     body("removeDocumentIds").optional().isArray({ max: 5 }),
     body("removeDocumentIds.*").optional().isUUID(),
+    body("consent").optional().isBoolean().toBoolean(),
+    body("notifySubmitter").optional().isBoolean().toBoolean(),
 
     async (req: Request, res: Response): Promise<void> => {
       if (failedValidation(req, res)) return;
-      const token = String(req.query.token ?? (req.body as UpdateApplicationBody).token ?? "");
+      const token = trackingTokenOf(req);
       if (!token) {
-        return sendError(res, HTTP_STATUS.SUBMISSION_TOKEN_INVALID);
+        return sendError(res, HTTP_STATUS.TRACKING_TOKEN_INVALID);
+      }
+      try {
+        const { application, notified } =
+          await organizationApplicationService.saveDraft(
+            req.params.id,
+            token,
+            req.body as SaveApplicationBody,
+          );
+        return sendSuccess(res, HTTP_STATUS.OK, { application, notified });
+      } catch (error) {
+        if (sendHttpErrorResponse(res, error)) return;
+        throw error;
+      }
+    },
+  ];
+
+  submitApplication = [
+    param("id").isUUID(),
+    body("consent").optional().isBoolean().toBoolean(),
+
+    async (req: Request, res: Response): Promise<void> => {
+      if (failedValidation(req, res)) return;
+      const token = trackingTokenOf(req);
+      if (!token) {
+        return sendError(res, HTTP_STATUS.TRACKING_TOKEN_INVALID);
       }
       try {
         const application =
-          await organizationApplicationService.updateApplication(
+          await organizationApplicationService.submitApplication(
             req.params.id,
             token,
-            req.body as UpdateApplicationBody,
+            req.body as SubmitApplicationBody,
+            requestMeta(req),
+          );
+        return sendSuccess(res, HTTP_STATUS.OK, { application });
+      } catch (error) {
+        if (sendHttpErrorResponse(res, error)) return;
+        throw error;
+      }
+    },
+  ];
+
+  resendOwnerInvite = [
+    param("id").isUUID(),
+    param("candidateId").isUUID(),
+
+    async (req: Request, res: Response): Promise<void> => {
+      if (failedValidation(req, res)) return;
+      const token = trackingTokenOf(req);
+      if (!token) {
+        return sendError(res, HTTP_STATUS.TRACKING_TOKEN_INVALID);
+      }
+      try {
+        const application =
+          await organizationApplicationService.resendOwnerInvite(
+            req.params.id,
+            token,
+            req.params.candidateId,
           );
         return sendSuccess(res, HTTP_STATUS.OK, { application });
       } catch (error) {
@@ -269,9 +283,9 @@ export class OrganizationApplicationController {
 
     async (req: Request, res: Response): Promise<void> => {
       if (failedValidation(req, res)) return;
-      const token = String(req.query.token ?? req.body?.token ?? "");
+      const token = trackingTokenOf(req);
       if (!token) {
-        return sendError(res, HTTP_STATUS.SUBMISSION_TOKEN_INVALID);
+        return sendError(res, HTTP_STATUS.TRACKING_TOKEN_INVALID);
       }
       try {
         const application =
@@ -280,6 +294,66 @@ export class OrganizationApplicationController {
             token,
           );
         return sendSuccess(res, HTTP_STATUS.OK, { application });
+      } catch (error) {
+        if (sendHttpErrorResponse(res, error)) return;
+        throw error;
+      }
+    },
+  ];
+
+  /* ------------------------------------------------------------------ */
+  /* Owner confirmation (public, token in the path)                      */
+  /* ------------------------------------------------------------------ */
+
+  getOwnerConfirmation = [
+    param("token").notEmpty().isLength({ max: 128 }),
+
+    async (req: Request, res: Response): Promise<void> => {
+      if (failedValidation(req, res)) return;
+      try {
+        const confirmation = await ownerConfirmationService.getSummary(
+          req.params.token,
+          req.user?.email ?? null,
+        );
+        return sendSuccess(res, HTTP_STATUS.OK, { confirmation });
+      } catch (error) {
+        if (sendHttpErrorResponse(res, error)) return;
+        throw error;
+      }
+    },
+  ];
+
+  confirmOwner = [
+    param("token").notEmpty().isLength({ max: 128 }),
+
+    async (req: Request, res: Response): Promise<void> => {
+      if (failedValidation(req, res)) return;
+      try {
+        const result = await ownerConfirmationService.confirm(
+          req.params.token,
+          requestMeta(req),
+        );
+        return sendSuccess(res, HTTP_STATUS.OK, result);
+      } catch (error) {
+        if (sendHttpErrorResponse(res, error)) return;
+        throw error;
+      }
+    },
+  ];
+
+  declineOwner = [
+    param("token").notEmpty().isLength({ max: 128 }),
+    body("reason").optional({ values: "null" }).isString().isLength({ max: 1000 }),
+    body("blockFuture").optional().isBoolean().toBoolean(),
+
+    async (req: Request, res: Response): Promise<void> => {
+      if (failedValidation(req, res)) return;
+      try {
+        const result = await ownerConfirmationService.decline(req.params.token, {
+          reason: req.body?.reason ?? null,
+          blockFuture: Boolean(req.body?.blockFuture),
+        });
+        return sendSuccess(res, HTTP_STATUS.OK, result);
       } catch (error) {
         if (sendHttpErrorResponse(res, error)) return;
         throw error;

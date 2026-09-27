@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+  <body style="font-family: system-ui, sans-serif; line-height: 1.5; color: #111">
+    <p>Xin chào,</p>
+    <p>
+      <strong>{{ownerEmail}}</strong> đã chọn "Tôi không liên quan" với hồ sơ đăng ký
+      <strong>{{organizationName}}</strong> của bạn.
+    </p>
+    {{#if reason}}<p style="color: #444">Ghi chú: “{{reason}}”</p>{{/if}}
+    <p>
+      Hồ sơ đã được trả về. Hãy gỡ hoặc thay owner này rồi nộp lại.
+      <a href="{{trackUrl}}" style="color: #0b57d0">Mở hồ sơ</a>.
+    </p>
+    <p style="font-size: 0.875rem; color: #444">{{trackUrl}}</p>
+  </body>
+</html>

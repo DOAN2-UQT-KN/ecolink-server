@@ -1,6 +1,6 @@
 import bcrypt from "bcryptjs";
 import { AuthTokenType } from "../../constants/auth-token-type";
-import { AccountType, UserStatus } from "../../constants/user-status";
+import { UserStatus } from "../../constants/user-status";
 import {
   generateOpaqueToken,
   hashOpaqueToken,
@@ -13,6 +13,7 @@ import {
 import { userRepository } from "../user/user.repository";
 import { roleRepository } from "../role/role.repository";
 import { authTokenRepository } from "./auth_token.repository";
+import type { UserEntity } from "../user/user.entity";
 import { mergeNotificationPreferences } from "@da2/constants";
 import {
   SignupRequest,
@@ -36,11 +37,16 @@ const PASSWORD_RESET_TTL_MS = (() => {
   return Number.isFinite(n) && n > 0 ? n : 3_600_000;
 })();
 
-/** Role every provisioned organization account is given. */
-const ORG_OWNER_ROLE_NAME = "ORG_OWNER";
+/** Role given to accounts created for approved organization owners — an ordinary person. */
+const DEFAULT_ROLE_NAME = "USER";
 
-const ORG_ACCOUNT_ACTIVATION_TTL_MS = (() => {
-  const raw = process.env.ORG_ACCOUNT_ACTIVATION_TTL_MS;
+/** Self-service resends of the activation email per user per hour. */
+const MAX_ACTIVATION_RESENDS_PER_HOUR = 3;
+
+const ACCOUNT_ACTIVATION_TTL_MS = (() => {
+  const raw =
+    process.env.ACCOUNT_ACTIVATION_TTL_MS ??
+    process.env.ORG_ACCOUNT_ACTIVATION_TTL_MS;
   if (raw == null || raw === "") {
     return 72 * 3_600_000;
   }
@@ -118,8 +124,8 @@ export class AuthService {
       throw new Error("ACCOUNT_PENDING_ACTIVATION");
     }
 
-    // Provisioned org accounts have no password until the activation link is redeemed;
-    // bcrypt.compare would throw on a null hash.
+    // Accounts created for approved owners have no password until the activation link is
+    // redeemed; bcrypt.compare would throw on a null hash.
     if (!user.password) {
       return null;
     }
@@ -183,10 +189,13 @@ export class AuthService {
 
       await authTokenRepository.revokeById(stored.id);
 
+      // The role *name*, as at login. Putting the role id here made every `role === "admin"`
+      // check fail after the first refresh.
+      const role = await roleRepository.findRoleById(user.roleId);
       const tokens = generateTokens({
         userId: user.id,
         email: user.email,
-        role: user.roleId,
+        role: role?.name ?? "USER",
       });
 
       const refreshExpiresAt = getJwtExpiresAt(tokens.refreshToken);
@@ -357,85 +366,116 @@ export class AuthService {
   }
 
   /**
-   * Server-to-server: create (or return) the single login that operates an organization.
+   * Server-to-server: one person account per email, created when missing.
    *
-   * Idempotent on `applicationId`, not on the email. incident-service reaches this through the
-   * outbox relay, which retries whenever identity is unreachable, so a second call for the
-   * same application must hand back the account the first one made instead of creating a
-   * duplicate. The account starts with no password and status PENDING_ACTIVATION; only the
-   * activation link can turn it into something that can log in.
+   * Used when an organization application is approved. Existing accounts are returned as
+   * they are — the owner confirmed by email, so their consent is proven and the account's
+   * history (reports, points) stays attached to the same person. Missing ones are created
+   * with no password in PENDING_ACTIVATION. Idempotent on the email, so a retried approval
+   * gets the same users back.
    */
-  async provisionOrgAccount(params: {
-    applicationId: string;
-    organizationId: string;
-    email: string;
-    displayName: string;
-  }): Promise<{
-    userId: string;
-    activationToken: string | null;
-    alreadyProvisioned: boolean;
-  }> {
-    const email = params.email.trim().toLowerCase();
-
-    const existing = await userRepository.findByProvisionedApplicationId(
-      params.applicationId,
-    );
-    if (existing) {
-      return {
-        userId: existing.id,
-        activationToken: null,
-        alreadyProvisioned: true,
-      };
+  async ensureUsersForOwners(
+    owners: { email: string; fullName: string }[],
+  ): Promise<UserEntity[]> {
+    const wanted = new Map<string, string>();
+    for (const owner of owners) {
+      const email = owner.email.trim().toLowerCase();
+      if (email && !wanted.has(email)) {
+        wanted.set(email, owner.fullName.trim() || email.split("@")[0]);
+      }
     }
 
-    const emailTaken = await userRepository.findByEmail(email);
-    if (emailTaken) {
-      throw new Error("ORG_ACCOUNT_EMAIL_TAKEN");
+    const existing = await userRepository.findManyByEmails([...wanted.keys()]);
+    const found = new Map(existing.map((u) => [u.email.toLowerCase(), u]));
+    const missing = [...wanted.keys()].filter((email) => !found.has(email));
+    if (missing.length === 0) {
+      return [...found.values()];
     }
 
-    const role = await roleRepository.findRoleByName(ORG_OWNER_ROLE_NAME);
+    const role = await roleRepository.findRoleByName(DEFAULT_ROLE_NAME);
     if (!role) {
-      throw new Error(`${ORG_OWNER_ROLE_NAME} role not found`);
+      throw new Error(`${DEFAULT_ROLE_NAME} role not found`);
     }
 
-    const user = await userRepository.create({
-      email,
-      name: params.displayName,
-      password: null,
-      accountType: AccountType.ORG,
-      provisionedFromApplicationId: params.applicationId,
-      status: UserStatus.PENDING_ACTIVATION,
-      emailVerified: true,
-      role: { connect: { id: role.id } },
-    });
-
-    const activationToken = await this.issueOrgActivationToken(user.id, {
-      organizationId: params.organizationId,
-      applicationId: params.applicationId,
-    });
-
-    return { userId: user.id, activationToken, alreadyProvisioned: false };
+    for (const email of missing) {
+      try {
+        const user = await userRepository.create({
+          email,
+          name: wanted.get(email) ?? email,
+          password: null,
+          status: UserStatus.PENDING_ACTIVATION,
+          // Owning the mailbox was proven by the confirmation link.
+          emailVerified: true,
+          role: { connect: { id: role.id } },
+        });
+        found.set(email, user);
+      } catch (error) {
+        // Two approvals racing on the same new email: the loser re-reads the winner's row.
+        const again = await userRepository.findByEmail(email);
+        if (!again) throw error;
+        found.set(email, again);
+      }
+    }
+    return [...found.values()];
   }
 
-  /** Single-use link that lets an org account set its first password. */
-  async issueOrgActivationToken(
-    userId: string,
-    metadata: { organizationId: string; applicationId: string },
-  ): Promise<string> {
+  async lookupUsersByEmails(emails: string[]): Promise<UserEntity[]> {
+    return userRepository.findManyByEmails(emails);
+  }
+
+  /**
+   * Fresh single-use activation link for a PENDING_ACTIVATION account; older links are
+   * revoked. Returns null when the account is already active — there is nothing to activate,
+   * and sending a password link to someone using their account would look like phishing.
+   */
+  async issueActivationToken(userId: string): Promise<string | null> {
+    const user = await userRepository.findById(userId);
+    if (!user || user.status !== UserStatus.PENDING_ACTIVATION) {
+      return null;
+    }
+
     await authTokenRepository.revokeAllForUser(
       userId,
-      AuthTokenType.ORG_ACCOUNT_ACTIVATION,
+      AuthTokenType.ACCOUNT_ACTIVATION,
     );
 
     const plainToken = generateOpaqueToken();
     await authTokenRepository.create({
       userId,
-      type: AuthTokenType.ORG_ACCOUNT_ACTIVATION,
+      type: AuthTokenType.ACCOUNT_ACTIVATION,
       tokenHash: hashOpaqueToken(plainToken),
-      expiresAt: new Date(Date.now() + ORG_ACCOUNT_ACTIVATION_TTL_MS),
-      metadata,
+      expiresAt: new Date(Date.now() + ACCOUNT_ACTIVATION_TTL_MS),
     });
     return plainToken;
+  }
+
+  activationTtlHours(): number {
+    return Math.round(ACCOUNT_ACTIVATION_TTL_MS / 3_600_000);
+  }
+
+  /**
+   * "Resend activation email" from the login page, so an owner who missed the 72-hour window
+   * is never stranded. The caller always answers 200: whether the email has a pending
+   * account is not revealed.
+   */
+  async requestActivationResend(
+    rawEmail: string,
+  ): Promise<{ email: string; token: string; name: string } | null> {
+    const email = rawEmail.trim().toLowerCase();
+    const [user] = await userRepository.findManyByEmails([email]);
+    if (!user || user.status !== UserStatus.PENDING_ACTIVATION) {
+      return null;
+    }
+    const recent = await authTokenRepository.countCreatedSince(
+      user.id,
+      AuthTokenType.ACCOUNT_ACTIVATION,
+      new Date(Date.now() - 60 * 60 * 1000),
+    );
+    if (recent >= MAX_ACTIVATION_RESENDS_PER_HOUR) {
+      return null;
+    }
+    const token = await this.issueActivationToken(user.id);
+    return token ? { email: user.email, token, name: user.name } : null;
   }
 
   /**
@@ -443,7 +483,7 @@ export class AuthService {
    * PENDING_ACTIVATION. Deliberately a link rather than a temporary password — a password
    * mailed in plain text stays readable in that inbox forever.
    */
-  async activateOrgAccount(
+  async activateAccount(
     plainToken: string,
     newPassword: string,
   ): Promise<boolean> {
@@ -454,14 +494,14 @@ export class AuthService {
 
     const stored = await authTokenRepository.findActiveByHashAndType(
       hashOpaqueToken(trimmed),
-      AuthTokenType.ORG_ACCOUNT_ACTIVATION,
+      AuthTokenType.ACCOUNT_ACTIVATION,
     );
     if (!stored) {
       return false;
     }
 
     const user = await userRepository.findById(stored.userId);
-    if (!user) {
+    if (!user || user.status !== UserStatus.PENDING_ACTIVATION) {
       return false;
     }
 

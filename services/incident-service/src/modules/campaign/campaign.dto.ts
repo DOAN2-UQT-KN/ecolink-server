@@ -19,7 +19,7 @@ export interface CampaignManagerBasicResponse {
 }
 
 export interface CreateCampaignRequest {
-  /** Organization that owns this campaign; caller must be that organization's owner. */
+  /** Organization that owns this campaign; caller must hold an owner role in it. */
   organizationId: string;
   title: string;
   titleVi?: string;
@@ -85,7 +85,7 @@ export interface CampaignResponse {
   /** Organization the campaign belongs to. */
   organizationId: string;
   Organization?: CampaignOrganizationResponse;
-  /** Organization owner profile from identity-service (name, avatar). */
+  /** Profile of the person who created the campaign for the organization (identity-service). */
   owner: OrganizationOwnerResponse | null;
   title: string;
   titleVi?: string | null;

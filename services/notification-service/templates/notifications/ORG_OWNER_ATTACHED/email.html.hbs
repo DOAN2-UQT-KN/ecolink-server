@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+  <body style="font-family: system-ui, sans-serif; line-height: 1.5; color: #111">
+    <p>Hello {{fullName}},</p>
+    <p>
+      <strong>{{organizationName}}</strong> has been approved on <strong>{{appName}}</strong>.
+      Your account was added as {{#if isLegalRep}}its <strong>legal representative</strong>{{else}}an <strong>owner</strong>{{/if}}.
+    </p>
+    <p>
+      Sign in as usual — nothing about your password changes — and open the organization:
+      <a href="{{manageUrl}}" style="color: #0b57d0">{{organizationName}}</a>.
+    </p>
+    <p style="font-size: 0.875rem; color: #444">{{manageUrl}}</p>
+    <p style="font-size: 0.875rem; color: #666">
+      We will never send you a password link for this. If an email asks you to reset your
+      password because of an organization role, it is not from us.
+    </p>
+  </body>
+</html>
