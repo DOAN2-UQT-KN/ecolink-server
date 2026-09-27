@@ -22,8 +22,8 @@ describe("hasOrgPermission — ma trận 5 cấp", () => {
     [OrgPermission.MEMBER_INVITE, [LR, OWNER, ADMIN, CM, MEMBER]],
     [OrgPermission.MEMBER_MANAGE, [LR, OWNER, ADMIN]],
     [OrgPermission.OWNER_PROPOSE, [LR, OWNER]],
-    [OrgPermission.CAMPAIGN_CREATE, [LR, OWNER, ADMIN, CM]],
-    [OrgPermission.CAMPAIGN_MANAGE_ANY, [LR, OWNER, ADMIN]],
+    [OrgPermission.CAMPAIGN_CREATE, [LR, OWNER, CM]],
+    [OrgPermission.CAMPAIGN_MANAGE_ANY, [LR, OWNER]],
   ];
 
   it.each(matrix)("%s chỉ dành cho %j", (permission, allowed) => {

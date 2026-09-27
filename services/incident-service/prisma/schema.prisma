@@ -824,10 +824,18 @@ model OrganizationApplication {
   code String @unique @db.VarChar(16)
 
   /**
-   * `ApplicationType`: `NEW_ORG` creates an organization, `ADD_OWNER` (phase 2) adds owners
-   * to `organizationId`.
+   * `ApplicationType`: `NEW_ORG` creates an organization; `ADD_OWNER` and `REMOVE_OWNER`
+   * are owner changes on `organizationId`, decided by its owners.
    */
   type                  String  @default("NEW_ORG") @db.VarChar(16)
+  /**
+   * REMOVE_OWNER: the owner being removed.
+   */
+  targetUserId          String? @map("target_user_id") @db.Uuid
+  /**
+   * REMOVE_OWNER: role the removed owner keeps (`ADMIN`, `MEMBER`); NULL = leaves.
+   */
+  demoteToRole          String? @map("demote_to_role") @db.VarChar(32)
   /**
    * `OrgType` declared by the applicant. NULL while the draft has not picked one.
    */
@@ -882,25 +890,25 @@ model OrganizationApplication {
   /**
    * NULL when submitted anonymously (the common case — the form needs no login).
    */
-  submittedByUserId String?   @map("submitted_by_user_id") @db.Uuid
+  submittedByUserId    String?   @map("submitted_by_user_id") @db.Uuid
   /**
    * When the OTP on `submitterEmail` passed. The organization inherits it as
    * `isEmailVerified` only when the contact email is that same address.
    */
-  emailVerifiedAt   DateTime? @map("email_verified_at")
+  emailVerifiedAt      DateTime? @map("email_verified_at")
   /**
    * Last time the submitter pressed "submit" (first submission or resubmission).
    */
-  submittedAt       DateTime? @map("submitted_at")
+  submittedAt          DateTime? @map("submitted_at")
   /**
    * What the owners agreed to at the last submission: name, org type, legal representative
    * and owner emails. Changing any of these resets every confirmation.
    */
-  confirmationSnapshot Json? @map("confirmation_snapshot")
+  confirmationSnapshot Json?     @map("confirmation_snapshot")
   /**
    * Timestamp of the personal-data consent checkbox.
    */
-  consentedAt       DateTime? @map("consented_at")
+  consentedAt          DateTime? @map("consented_at")
 
   /**
    * Set by `claim` so two admins never review the same submission.
@@ -917,11 +925,11 @@ model OrganizationApplication {
   /**
    * Filled once the approval saga created the organization.
    */
-  organizationId       String?   @map("organization_id") @db.Uuid
+  organizationId String?   @map("organization_id") @db.Uuid
   /**
    * Set by the retention job once documents and `legalRep*` have been erased.
    */
-  purgedAt             DateTime? @map("purged_at")
+  purgedAt       DateTime? @map("purged_at")
 
   createdBy String? @map("created_by") @db.Uuid
   updatedBy String? @map("updated_by") @db.Uuid
@@ -933,6 +941,7 @@ model OrganizationApplication {
   documents    OrganizationApplicationDocument[]
   events       OrganizationApplicationEvent[]
   owners       OrganizationApplicationOwner[]
+  approvals    OrganizationOwnerChangeApproval[]
   organization Organization?
 
   @@index([status])
@@ -942,6 +951,7 @@ model OrganizationApplication {
   @@index([legalRepIdHash])
   @@index([reviewerId])
   @@index([deletedAt])
+  @@index([organizationId, type, status])
   @@map("organization_applications")
 }
 
@@ -1024,13 +1034,41 @@ model OrganizationApplicationEvent {
  * One person named as owner on an application. Nobody gets a role without having confirmed
  * here: the row keeps the evidence (when, from which IP / user agent).
  */
+/**
+ * One co-owner's approval on an owner change. The list of approvers is fixed when the change
+ * is created (every owner but the proposer and the target); a row whose approver has since
+ * stopped being an owner no longer counts.
+ */
+model OrganizationOwnerChangeApproval {
+  id             String    @id @default(uuid()) @db.Uuid
+  applicationId  String    @map("application_id") @db.Uuid
+  approverUserId String    @map("approver_user_id") @db.Uuid
+  /**
+   * `OwnerApprovalStatus`.
+   */
+  status         String    @default("PENDING") @db.VarChar(16)
+  note           String?
+  decidedAt      DateTime? @map("decided_at")
+  expiresAt      DateTime  @map("expires_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  application OrganizationApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@unique([applicationId, approverUserId])
+  @@index([approverUserId, status])
+  @@index([status, expiresAt])
+  @@map("organization_owner_change_approvals")
+}
+
 model OrganizationApplicationOwner {
   id            String @id @default(uuid()) @db.Uuid
   applicationId String @map("application_id") @db.Uuid
 
-  email      String  @db.VarChar(320)
-  fullName   String  @map("full_name") @db.VarChar(200)
-  isLegalRep Boolean @default(false) @map("is_legal_rep")
+  email                String  @db.VarChar(320)
+  fullName             String  @map("full_name") @db.VarChar(200)
+  isLegalRep           Boolean @default(false) @map("is_legal_rep")
   /**
    * Optional pointer to an uploaded document (e.g. the ID card) that identifies this person.
    */

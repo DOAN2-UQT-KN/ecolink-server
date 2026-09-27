@@ -5,7 +5,7 @@
     <p>
       {{#if isAddOwner}}<strong>{{submitterEmail}}</strong>, owner của
       <strong>{{organizationName}}</strong> trên <strong>{{appName}}</strong>, đã đề xuất bạn
-      làm owner.{{else}}<strong>{{submitterEmail}}</strong> đang đăng ký một tổ chức trên
+      làm owner{{#if isLegalRep}} kiêm <strong>người đại diện pháp lý</strong> mới{{/if}}.{{else}}<strong>{{submitterEmail}}</strong> đang đăng ký một tổ chức trên
       <strong>{{appName}}</strong> và ghi tên bạn làm owner{{#if isLegalRep}}
       kiêm <strong>người đại diện pháp lý</strong>{{/if}}.{{/if}}
     </p>
@@ -15,7 +15,7 @@
       {{#if address}}<tr><td style="padding: 2px 12px 2px 0; color: #555">Địa chỉ</td><td>{{address}}</td></tr>{{/if}}
       {{#if otherOwners}}<tr><td style="padding: 2px 12px 2px 0; color: #555; vertical-align: top">Owner khác</td><td>{{otherOwners}}</td></tr>{{/if}}
     </table>
-    <p>Không ai được gán vai thay bạn: hồ sơ chỉ được thẩm định khi mọi owner đã xác nhận.</p>
+    <p>{{#if isAddOwner}}Không ai được gán vai thay bạn: bạn chỉ trở thành owner khi đã xác nhận và các owner khác đồng ý.{{else}}Không ai được gán vai thay bạn: hồ sơ chỉ được thẩm định khi mọi owner đã xác nhận.{{/if}}</p>
     <p>
       <a href="{{confirmUrl}}" style="display: inline-block; padding: 10px 18px; background: #0b57d0; color: #fff; border-radius: 6px; text-decoration: none">Xem và xác nhận</a>
     </p>

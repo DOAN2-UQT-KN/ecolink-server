@@ -272,10 +272,40 @@ export const HTTP_STATUS = {
     "This person is already an owner of the organization",
     "ALREADY_OWNER",
   ),
-  OWNER_PROPOSAL_ALREADY_OPEN: createStatus(
+  OWNER_CHANGE_ALREADY_OPEN: createStatus(
     409,
-    "This organization already has an open owner proposal",
-    "OWNER_PROPOSAL_ALREADY_OPEN",
+    "A matching owner change is already open",
+    "OWNER_CHANGE_ALREADY_OPEN",
+  ),
+  OWNER_CHANGE_NOT_FOUND: createStatus(
+    404,
+    "Owner change not found",
+    "OWNER_CHANGE_NOT_FOUND",
+  ),
+  OWNER_CHANGE_NOT_OPEN: createStatus(
+    409,
+    "This owner change is no longer open",
+    "OWNER_CHANGE_NOT_OPEN",
+  ),
+  TARGET_NOT_OWNER: createStatus(
+    409,
+    "This person is not an owner of the organization",
+    "TARGET_NOT_OWNER",
+  ),
+  NOT_PENDING_APPROVER: createStatus(
+    403,
+    "Your approval is not being asked for on this owner change",
+    "NOT_PENDING_APPROVER",
+  ),
+  LEGAL_REP_REPLACEMENT_REQUIRED: createStatus(
+    422,
+    "The legal representative can only step down or be removed with a replacement",
+    "LEGAL_REP_REPLACEMENT_REQUIRED",
+  ),
+  CANNOT_TARGET_SELF: createStatus(
+    422,
+    "Use step down or leave to change your own role",
+    "CANNOT_TARGET_SELF",
   ),
   ORG_MUST_HAVE_OWNER: createStatus(
     409,

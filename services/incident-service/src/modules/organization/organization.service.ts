@@ -47,7 +47,12 @@ import { organizationJoiningRequestRepository } from "./organization_joining_req
 import { organizationMemberRepository } from "./organization_member.repository";
 import { organizationRepository } from "./organization.repository";
 import { orgAccessService } from "./org-access.service";
-import { organizationMembershipService } from "./organization-membership.service";
+import {
+  isOrgMustHaveOwnerViolation,
+  organizationMembershipService,
+} from "./organization-membership.service";
+import { ownerChangeExecutor } from "../organization_application/owner-change-executor";
+import { notifyOwnerLeft } from "../organization_application/owner-change-notify.client";
 import { enqueueOrgMembershipChangedWebsiteNotification } from "./organization-member-notify.client";
 import { backgroundJobDispatcher } from "../../queue/register";
 import {
@@ -1278,6 +1283,9 @@ export class OrganizationService {
       if (query.userId) {
         rows = rows.filter((r) => r.userId === query.userId);
       }
+      if (query.roles?.length) {
+        rows = rows.filter((r) => query.roles!.includes(r.role));
+      }
       const distinctUserIds = [...new Set(rows.map((r) => r.userId))];
       const profiles = await fetchOrganizationOwnersByUserIds(distinctUserIds);
       const needle = searchTerm.toLowerCase();
@@ -1323,7 +1331,7 @@ export class OrganizationService {
     const { rows, total } =
       await organizationMemberRepository.findByOrganizationPaginated(
         organizationId,
-        { userId: query.userId },
+        { userId: query.userId, roles: query.roles },
         { skip, take: limit, sortBy, sortOrder },
       );
 
@@ -1349,9 +1357,9 @@ export class OrganizationService {
   }
 
   /**
-   * Change a member's role. Owners are out of reach here (becoming one is an ADD_OWNER
-   * application, losing it is phase 3); an admin cannot touch another admin, and only an
-   * owner may hand out ADMIN.
+   * Change a member's role. Owners are out of reach here (they change only through an owner
+   * change the other owners approve, or by stepping down themselves); an admin cannot touch
+   * another admin, and only an owner may hand out ADMIN.
    */
   async changeMemberRole(
     organizationId: string,
@@ -1463,19 +1471,12 @@ export class OrganizationService {
       organizationId,
       userId,
     );
+    if (role === OrgMemberRole.LEGAL_REPRESENTATIVE) {
+      throw new HttpError(HTTP_STATUS.LEGAL_REP_REPLACEMENT_REQUIRED);
+    }
     if (isOwnerRole(role)) {
-      const owners = await organizationMemberRepository.findOwnerUserIds(
-        organizationId,
-      );
-      // Leaving as an owner is part of the exit flow (revoke / transfer), which is not
-      // designed yet; the last owner can never leave (the DB refuses it as well).
-      throw new HttpError(
-        owners.length <= 1
-          ? HTTP_STATUS.ORG_MUST_HAVE_OWNER
-          : HTTP_STATUS.BAD_REQUEST.withMessage(
-              "Organization owners cannot leave yet; ownership changes go through the platform",
-            ),
-      );
+      await this.ownerStepOut(org, userId, null);
+      return;
     }
     const left = await organizationMemberRepository.softDeleteMembership(
       organizationId,
@@ -1488,6 +1489,96 @@ export class OrganizationService {
         ),
       );
     }
+  }
+
+  /** An owner keeps a lesser role (ADMIN / MEMBER) instead of leaving. */
+  async stepDown(
+    organizationId: string,
+    userId: string,
+    newRole: string,
+  ): Promise<void> {
+    const org = await organizationRepository.findById(organizationId);
+    if (!org) {
+      throw new HttpError(
+        HTTP_STATUS.NOT_FOUND.withMessage("Organization not found"),
+      );
+    }
+    if (newRole !== OrgMemberRole.ADMIN && newRole !== OrgMemberRole.MEMBER) {
+      throw new HttpError(HTTP_STATUS.ROLE_NOT_ASSIGNABLE);
+    }
+    const role = await organizationMemberRepository.findActiveRole(
+      organizationId,
+      userId,
+    );
+    if (!isOwnerRole(role)) {
+      throw new HttpError(HTTP_STATUS.TARGET_NOT_OWNER);
+    }
+    // The legal representative steps down through an owner change naming a replacement.
+    if (role === OrgMemberRole.LEGAL_REPRESENTATIVE) {
+      throw new HttpError(HTTP_STATUS.LEGAL_REP_REPLACEMENT_REQUIRED);
+    }
+    await this.ownerStepOut(org, userId, newRole);
+  }
+
+  /**
+   * An owner stepping down or leaving, effective immediately, as long as another owner
+   * remains. The owner rows of the organization are locked so two owners leaving at the same
+   * moment are serialized: the second one sees the first gone and is refused. The DB trigger
+   * stays the last line of defence.
+   */
+  private async ownerStepOut(
+    org: { id: string; name: string; slug: string },
+    userId: string,
+    newRole: string | null,
+  ): Promise<void> {
+    let remaining: string[] = [];
+    try {
+      await prisma.$transaction(async (tx) => {
+        const owners = await tx.$queryRaw<{ user_id: string }[]>`
+          SELECT "user_id" FROM "organization_members"
+          WHERE "organization_id" = ${org.id}::uuid
+            AND "deleted_at" IS NULL
+            AND "role" IN ('LEGAL_REPRESENTATIVE', 'OWNER')
+          FOR UPDATE`;
+        if (!owners.some((o) => o.user_id === userId)) {
+          throw new HttpError(HTTP_STATUS.TARGET_NOT_OWNER);
+        }
+        if (owners.length <= 1) {
+          throw new HttpError(HTTP_STATUS.ORG_MUST_HAVE_OWNER);
+        }
+        const where = {
+          organizationId_userId: { organizationId: org.id, userId },
+        };
+        await tx.organizationMember.update({
+          where,
+          data: newRole
+            ? { role: newRole, updatedBy: userId }
+            : { deletedAt: new Date(), updatedBy: userId },
+        });
+        remaining = owners.map((o) => o.user_id).filter((id) => id !== userId);
+      });
+    } catch (error) {
+      if (isOrgMustHaveOwnerViolation(error)) {
+        throw new HttpError(HTTP_STATUS.ORG_MUST_HAVE_OWNER);
+      }
+      throw error;
+    }
+
+    // Their own open proposals lose their proposer; others may have lost an approver.
+    await ownerChangeExecutor.reconcileOpenChanges(org.id).catch((err) => {
+      console.error("[organization] reconciling owner changes failed", err);
+    });
+
+    const profiles = await fetchOrganizationOwnersByUserIds([userId]).catch(
+      () => new Map(),
+    );
+    notifyOwnerLeft(remaining, {
+      organizationId: org.id,
+      organizationName: org.name,
+      organizationSlug: org.slug,
+      memberName: getUserProfile(profiles, userId)?.name ?? "",
+      newRole,
+    });
   }
 }
 

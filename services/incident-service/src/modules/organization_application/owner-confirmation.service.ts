@@ -1,8 +1,8 @@
 import {
   ApplicationEventType,
   ApplicationStatus,
-  ApplicationType,
   OwnerCandidateStatus,
+  isOwnerChangeType,
 } from "@da2/constants";
 import prisma from "../../config/prisma.client";
 import { HTTP_STATUS, HttpError } from "../../constants/http-status";
@@ -23,6 +23,7 @@ import {
   buildOrganizationManageUrl,
 } from "./organization-application-urls";
 import { normalizeEmail } from "./owner-candidates";
+import { ownerChangeExecutor } from "./owner-change-executor";
 
 /** Application states in which a candidate may still answer. */
 const ANSWERABLE_STATUSES: string[] = [
@@ -84,8 +85,9 @@ export class OwnerConfirmationService {
   }
 
   /**
-   * Records the confirmation. When it is the last one, the application moves to
-   * PENDING_REVIEW inside the same transaction — no job sweeps for it later.
+   * Records the confirmation. For a new organization, the last one moves the application to
+   * PENDING_REVIEW inside the same transaction. For an owner change there is no admin review:
+   * once committed, the change is applied if nothing else is outstanding.
    */
   async confirm(
     rawToken: string,
@@ -93,7 +95,7 @@ export class OwnerConfirmationService {
   ): Promise<{ alreadyDone: boolean; remaining: number; applicationStatus: string }> {
     const found = await this.findByToken(rawToken);
 
-    return prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       await organizationApplicationRepository.lockForUpdate(tx, found.applicationId);
       const candidate = await tx.organizationApplicationOwner.findUniqueOrThrow({
         where: { id: found.id },
@@ -154,6 +156,7 @@ export class OwnerConfirmationService {
       let applicationStatus = application.status;
       if (
         remaining === 0 &&
+        !isOwnerChangeType(application.type) &&
         application.status === ApplicationStatus.AWAITING_OWNER_CONFIRMATION
       ) {
         applicationStatus = ApplicationStatus.PENDING_REVIEW;
@@ -170,6 +173,12 @@ export class OwnerConfirmationService {
 
       return { alreadyDone: false, remaining, applicationStatus };
     });
+
+    if (!result.alreadyDone && result.remaining === 0 && isOwnerChangeType(found.application.type)) {
+      const status = await ownerChangeExecutor.tryFinalize(found.applicationId);
+      if (status) result.applicationStatus = status;
+    }
+    return result;
   }
 
   /**
@@ -213,7 +222,7 @@ export class OwnerConfirmationService {
           declineReason: reason,
         },
       });
-      // An ADD_OWNER proposal has nothing to revise: a refusal cancels it outright.
+      // An owner change has nothing to revise: a refusal cancels it outright.
       const nextStatus = this.statusAfterRefusal(application.type);
       await tx.organizationApplication.update({
         where: { id: application.id },
@@ -340,11 +349,11 @@ export class OwnerConfirmationService {
   }
 
   /**
-   * A new-organization application goes back to its submitter for changes; an ADD_OWNER
-   * proposal is simply cancelled (the proposer can start a new one).
+   * A new-organization application goes back to its submitter for changes; an owner change
+   * is simply cancelled (the proposer can start a new one).
    */
   private statusAfterRefusal(type: string): ApplicationStatus {
-    return type === ApplicationType.ADD_OWNER
+    return isOwnerChangeType(type)
       ? ApplicationStatus.WITHDRAWN
       : ApplicationStatus.NEEDS_REVISION;
   }
@@ -356,7 +365,7 @@ export class OwnerConfirmationService {
     organizationId: string | null;
     submitterEmail: string;
   }): Promise<string> {
-    if (application.type === ApplicationType.ADD_OWNER && application.organizationId) {
+    if (isOwnerChangeType(application.type) && application.organizationId) {
       const organization = await prisma.organization.findUnique({
         where: { id: application.organizationId },
         select: { slug: true },

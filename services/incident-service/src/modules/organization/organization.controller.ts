@@ -922,6 +922,40 @@ export class OrganizationController {
     },
   ];
 
+  stepDown = [
+    orgIdParam,
+    body("role")
+      .optional({ values: "null" })
+      .isIn([OrgMemberRole.ADMIN, OrgMemberRole.MEMBER])
+      .withMessage("role must be ADMIN or MEMBER"),
+
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: errors.array(),
+        });
+      }
+      const userId = req.user?.userId;
+      if (!userId) {
+        return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+      }
+      try {
+        await organizationService.stepDown(
+          req.params.id,
+          userId,
+          String((req.body as Partial<ChangeMemberRoleBody>).role ?? OrgMemberRole.MEMBER),
+        );
+        return sendSuccess(res, HTTP_STATUS.OK);
+      } catch (error) {
+        if (sendHttpErrorResponse(res, error)) {
+          return;
+        }
+        throw error;
+      }
+    },
+  ];
+
   changeMemberRole = [
     orgIdParam,
     param("userId").isUUID(),
@@ -993,6 +1027,7 @@ export class OrganizationController {
     query("userId").optional().isUUID(),
     query("user_id").optional().isUUID(),
     query("search").optional().isString().trim(),
+    query("roles").optional(),
     query("page").optional().isInt({ min: 1 }).toInt(),
     query("limit").optional().isInt({ min: 1, max: 100 }).toInt(),
     query("sortBy").optional().isIn(["createdAt", "updatedAt"]),
@@ -1034,6 +1069,7 @@ export class OrganizationController {
           searchRaw !== undefined && String(searchRaw).trim().length > 0
             ? String(searchRaw).trim()
             : undefined,
+        roles: parseRolesQuery(req.query.roles),
         page: req.query.page as number | undefined,
         limit: req.query.limit as number | undefined,
         sortBy,

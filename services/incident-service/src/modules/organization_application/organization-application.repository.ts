@@ -154,6 +154,7 @@ export class OrganizationApplicationRepository {
   }
 
   async search(params: {
+    type?: string;
     status?: string[];
     excludeStatus?: string[];
     orgType?: string[];
@@ -164,6 +165,7 @@ export class OrganizationApplicationRepository {
   }) {
     const where: Prisma.OrganizationApplicationWhereInput = {
       deletedAt: null,
+      ...(params.type ? { type: params.type } : {}),
       status: {
         ...(params.status?.length ? { in: params.status } : {}),
         ...(params.excludeStatus?.length ? { notIn: params.excludeStatus } : {}),

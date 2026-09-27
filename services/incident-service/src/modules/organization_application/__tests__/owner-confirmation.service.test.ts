@@ -13,6 +13,7 @@ const issueTrackingTokenMock = jest.fn();
 const declinedEmailMock = jest.fn();
 const expiredEmailMock = jest.fn();
 const orgFindUniqueMock = jest.fn();
+const tryFinalizeMock = jest.fn();
 
 const txFake = {
   organizationApplicationOwner: {
@@ -55,6 +56,10 @@ jest.mock("../organization-application-otp.service", () => ({
 jest.mock("../organization-application-notify.client", () => ({
   enqueueOwnerDeclinedEmail: (...a: unknown[]) => declinedEmailMock(...a),
   enqueueOwnerConfirmationExpiredEmail: (...a: unknown[]) => expiredEmailMock(...a),
+}));
+
+jest.mock("../owner-change-executor", () => ({
+  ownerChangeExecutor: { tryFinalize: (...a: unknown[]) => tryFinalizeMock(...a) },
 }));
 
 import { ownerConfirmationService } from "../owner-confirmation.service";
@@ -172,6 +177,7 @@ describe("OwnerConfirmationService.confirm", () => {
 
     const result = await ownerConfirmationService.confirm("t", META);
 
+    expect(tryFinalizeMock).not.toHaveBeenCalled();
     expect(result.applicationStatus).toBe("PENDING_REVIEW");
     expect(txFake.organizationApplication.update.mock.calls[0][0].data.status).toBe(
       "PENDING_REVIEW",
@@ -333,8 +339,32 @@ describe("OwnerConfirmationService.expireOverdue", () => {
   });
 });
 
-describe("OwnerConfirmationService — đề xuất thêm owner (ADD_OWNER)", () => {
+describe("OwnerConfirmationService — owner change (ADD_OWNER)", () => {
   const addOwner = { type: "ADD_OWNER", organizationId: "org-1" };
+
+  it("người cuối cùng xác nhận: không vào hàng chờ admin, gọi executor sau khi commit", async () => {
+    useCandidate(cand({}, addOwner));
+    txFake.organizationApplicationOwner.count.mockResolvedValue(0);
+    tryFinalizeMock.mockResolvedValue("APPROVED");
+
+    const result = await ownerConfirmationService.confirm("t", META);
+
+    expect(txFake.organizationApplication.update).not.toHaveBeenCalled();
+    expect(recordEventMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: "READY_FOR_REVIEW" }),
+    );
+    expect(tryFinalizeMock).toHaveBeenCalledWith("app-1");
+    expect(result.applicationStatus).toBe("APPROVED");
+  });
+
+  it("còn người chưa xác nhận thì chưa gọi executor", async () => {
+    useCandidate(cand({}, addOwner));
+    txFake.organizationApplicationOwner.count.mockResolvedValue(1);
+
+    await ownerConfirmationService.confirm("t", META);
+
+    expect(tryFinalizeMock).not.toHaveBeenCalled();
+  });
 
   it("owner được đề xuất từ chối → huỷ đề xuất (WITHDRAWN), link email về trang tổ chức", async () => {
     orgFindUniqueMock.mockResolvedValue({ slug: "clb-xanh" });

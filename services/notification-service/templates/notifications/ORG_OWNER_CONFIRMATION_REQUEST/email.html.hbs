@@ -5,7 +5,7 @@
     <p>
       {{#if isAddOwner}}<strong>{{submitterEmail}}</strong>, an owner of
       <strong>{{organizationName}}</strong> on <strong>{{appName}}</strong>, proposed you as
-      an additional owner.{{else}}<strong>{{submitterEmail}}</strong> is registering an organization on
+      an additional owner{{#if isLegalRep}} and its new <strong>legal representative</strong>{{/if}}.{{else}}<strong>{{submitterEmail}}</strong> is registering an organization on
       <strong>{{appName}}</strong> and listed you as an owner{{#if isLegalRep}}
       and its <strong>legal representative</strong>{{/if}}.{{/if}}
     </p>
@@ -15,7 +15,7 @@
       {{#if address}}<tr><td style="padding: 2px 12px 2px 0; color: #555">Address</td><td>{{address}}</td></tr>{{/if}}
       {{#if otherOwners}}<tr><td style="padding: 2px 12px 2px 0; color: #555; vertical-align: top">Other owners</td><td>{{otherOwners}}</td></tr>{{/if}}
     </table>
-    <p>Nobody gets a role on your behalf: the application only goes to review once every owner has confirmed.</p>
+    <p>{{#if isAddOwner}}Nobody gets a role on your behalf: you become an owner once you confirm and the other owners agree.{{else}}Nobody gets a role on your behalf: the application only goes to review once every owner has confirmed.{{/if}}</p>
     <p>
       <a href="{{confirmUrl}}" style="display: inline-block; padding: 10px 18px; background: #0b57d0; color: #fff; border-radius: 6px; text-decoration: none">Review and confirm</a>
     </p>

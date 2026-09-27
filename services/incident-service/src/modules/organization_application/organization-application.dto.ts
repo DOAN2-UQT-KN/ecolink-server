@@ -291,7 +291,7 @@ export interface OwnerConfirmationSummaryResponse {
   expired: boolean;
   expiresAt: Date | null;
   applicationCode: string;
-  /** `ApplicationType`: `ADD_OWNER` means joining an existing organization as owner. */
+  /** `ApplicationType`: `ADD_OWNER` means becoming an owner of an existing organization. */
   applicationType: string;
   organization: {
     name: string | null;
