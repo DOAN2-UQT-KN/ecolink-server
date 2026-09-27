@@ -3,6 +3,7 @@ import { body, param, query, validationResult } from "express-validator";
 import {
   HTTP_STATUS,
   sendError,
+  sendHttpErrorResponse,
   sendSuccess,
 } from "../../../constants/http-status";
 import { campaignSubmissionService } from "./campaign_submission.service";
@@ -39,11 +40,7 @@ export class CampaignSubmissionController {
         sendSuccess(res, HTTP_STATUS.CREATED, { submission });
       } catch (error) {
         console.error("Create submission error:", error);
-        if (error instanceof Error) {
-          if (error.message.includes("managers can create")) {
-            return sendError(res, HTTP_STATUS.FORBIDDEN);
-          }
-        }
+        if (sendHttpErrorResponse(res, error)) return;
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     },
@@ -212,12 +209,10 @@ export class CampaignSubmissionController {
         sendSuccess(res, HTTP_STATUS.OK, { submission });
       } catch (error) {
         console.error("Process submission error:", error);
+        if (sendHttpErrorResponse(res, error)) return;
         if (error instanceof Error) {
           if (error.message.includes("not found")) {
             return sendError(res, HTTP_STATUS.NOT_FOUND);
-          }
-          if (error.message.includes("managers can process")) {
-            return sendError(res, HTTP_STATUS.FORBIDDEN);
           }
           if (error.message.includes("already processed")) {
             return sendError(

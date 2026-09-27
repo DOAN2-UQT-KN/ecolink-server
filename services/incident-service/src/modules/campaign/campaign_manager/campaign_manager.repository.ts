@@ -13,12 +13,22 @@ export class CampaignManagerRepository {
     userId: string;
     assignedBy: string;
   }) {
-    return this.prisma.campaignManager.create({
-      data: {
+    // A removed manager keeps a soft-deleted row under the composite key: restore it.
+    return this.prisma.campaignManager.upsert({
+      where: {
+        campaignId_userId: { campaignId: data.campaignId, userId: data.userId },
+      },
+      create: {
         campaignId: data.campaignId,
         userId: data.userId,
         assignedBy: data.assignedBy,
         createdBy: data.assignedBy,
+        updatedBy: data.assignedBy,
+      },
+      update: {
+        deletedAt: null,
+        assignedBy: data.assignedBy,
+        assignedAt: new Date(),
         updatedBy: data.assignedBy,
       },
     });
@@ -97,6 +107,23 @@ export class CampaignManagerRepository {
       },
       data: { deletedAt: new Date(), updatedBy: removedBy },
     });
+  }
+
+  /**
+   * Someone left (or was removed from) an organization: they stop managing its campaigns.
+   * Runs inside the membership change's transaction.
+   */
+  async removeFromOrganizationCampaigns(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    userId: string,
+    removedBy: string,
+  ): Promise<number> {
+    const result = await tx.campaignManager.updateMany({
+      where: { userId, deletedAt: null, campaign: { organizationId } },
+      data: { deletedAt: new Date(), updatedBy: removedBy },
+    });
+    return result.count;
   }
 
   async isManager(campaignId: string, userId: string): Promise<boolean> {

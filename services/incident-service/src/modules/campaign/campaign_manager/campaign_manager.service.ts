@@ -7,6 +7,8 @@ import {
 } from "../campaign.dto";
 import { campaignRepository } from "../campaign.repository";
 import { HttpError, HTTP_STATUS } from "../../../constants/http-status";
+import { organizationMemberRepository } from "../../organization/organization_member.repository";
+import { campaignAccessService } from "../campaign-access.service";
 import {
   fetchOrganizationOwnersByUserIds,
   getUserProfile,
@@ -15,24 +17,24 @@ import {
 export class CampaignManagerService {
   constructor() {}
 
-  /**
-   * Campaign creator or a campaign manager may manage the campaign (tasks,
-   * manager roster, assignments, etc.).
-   */
+  /** See `campaignAccessService`: creator, campaign manager or organization owner. */
   async canManageCampaign(
     campaignId: string,
     userId: string,
   ): Promise<boolean> {
-    const campaign = await campaignRepository.findById(campaignId);
-    if (!campaign) {
-      return false;
-    }
+    return campaignAccessService.canManage(campaignId, userId);
+  }
 
-    if (campaign.createdBy === userId) {
-      return true;
+  /** Managers must be active members of the organization that runs the campaign. */
+  async assertAllMembers(organizationId: string, userIds: string[]): Promise<void> {
+    const unique = [...new Set(userIds)];
+    const members = await organizationMemberRepository.findActiveMemberUserIds(
+      organizationId,
+      unique,
+    );
+    if (members.size !== unique.length) {
+      throw new HttpError(HTTP_STATUS.CAMPAIGN_MANAGER_NOT_MEMBER);
     }
-
-    return campaignManagerRepository.isManager(campaignId, userId);
   }
 
   /**
@@ -51,14 +53,8 @@ export class CampaignManagerService {
       );
     }
 
-    const canManage = await this.canManageCampaign(campaignId, assignedBy);
-    if (!canManage) {
-      throw new HttpError(
-        HTTP_STATUS.FORBIDDEN.withMessage(
-          "Only the campaign creator or campaign managers can assign managers",
-        ),
-      );
-    }
+    await campaignAccessService.assertCanManage(campaign, assignedBy);
+    await this.assertAllMembers(campaign.organizationId, request.userIds);
 
     const addedManagers: CampaignManagerAssignmentResponse[] = [];
 
@@ -118,13 +114,9 @@ export class CampaignManagerService {
       );
     }
 
-    const canRemove = await this.canManageCampaign(campaignId, removedBy);
-    if (!canRemove) {
-      throw new HttpError(
-        HTTP_STATUS.FORBIDDEN.withMessage(
-          "Only the campaign creator or campaign managers can remove managers",
-        ),
-      );
+    await campaignAccessService.assertCanManage(campaign, removedBy);
+    if (campaign.createdBy === userId) {
+      throw new HttpError(HTTP_STATUS.CANNOT_REMOVE_CAMPAIGN_CREATOR);
     }
 
     const existing = await campaignManagerRepository.findByCampaignIdAndUserId(

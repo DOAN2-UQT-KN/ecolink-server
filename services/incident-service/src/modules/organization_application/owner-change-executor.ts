@@ -33,6 +33,7 @@ import {
   OwnerChangeOutcome,
   notifyDecided,
 } from "./owner-change-notify.client";
+import { campaignManagerRepository } from "../campaign/campaign_manager/campaign_manager.repository";
 
 const OPEN = ApplicationStatus.AWAITING_OWNER_CONFIRMATION;
 const OWNER_ROLE_VALUES: string[] = [...OWNER_ROLES];
@@ -127,6 +128,12 @@ async function demoteOrRemove(
       where,
       data: { deletedAt: new Date(), updatedBy: actorId },
     });
+    await campaignManagerRepository.removeFromOrganizationCampaigns(
+      tx,
+      organizationId,
+      userId,
+      actorId ?? userId,
+    );
   }
 }
 

@@ -24,8 +24,10 @@ const memberUpdateMock = jest.fn();
 const reconcileMock = jest.fn();
 const ownerLeftMock = jest.fn();
 
+const campaignManagerUpdateManyMock = jest.fn(async () => ({ count: 0 }));
 const txFake = {
   organizationJoiningRequest: { update: jest.fn() },
+  campaignManager: { updateMany: (...a: unknown[]) => campaignManagerUpdateManyMock(...(a as [])) },
   organizationMember: { update: (...a: unknown[]) => memberUpdateMock(...a) },
   $queryRaw: (...a: unknown[]) => ownerRowsMock(...a),
 };
@@ -384,6 +386,12 @@ describe("OrganizationService — owner tự rút lui", () => {
       data: expect.objectContaining({ deletedAt: expect.any(Date), updatedBy: ACTOR }),
     });
     expect(softDeleteMembershipMock).not.toHaveBeenCalled();
+    // Leaving the organization also ends their campaign-manager rows there.
+    expect(campaignManagerUpdateManyMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ userId: ACTOR, campaign: { organizationId: ORG } }),
+      }),
+    );
     expect(reconcileMock).toHaveBeenCalledWith(ORG);
     expect(ownerLeftMock).toHaveBeenCalledWith(
       [TARGET],

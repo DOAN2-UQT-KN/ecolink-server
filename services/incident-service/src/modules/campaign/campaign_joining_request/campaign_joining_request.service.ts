@@ -24,6 +24,7 @@ import type {
   GetJoinRequestsQuery,
   MyJoinRequestsQuery,
 } from "../campaign.dto";
+import { campaignAccessService } from "../campaign-access.service";
 
 export type JoinRequestResponse = CampaignJoinRequestResponse;
 export type JoinRequestDetailResponse = CampaignJoinRequestDetailResponse;
@@ -148,13 +149,7 @@ export class CampaignJoiningRequestService {
     limit: number;
     totalPages: number;
   }> {
-    const isManager = await campaignManagerRepository.isManager(
-      campaignId,
-      managerId,
-    );
-    if (!isManager) {
-      throw new Error("Only campaign managers can view join requests");
-    }
+    await campaignAccessService.assertCanManage(campaignId, managerId);
 
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
@@ -249,15 +244,7 @@ export class CampaignJoiningRequestService {
       throw new Error("Join request has no associated campaign");
     }
 
-    const isManager = await campaignManagerRepository.isManager(
-      request.campaignId,
-      managerId,
-    );
-    if (!isManager) {
-      throw new Error(
-        "Only campaign managers can approve/reject join requests",
-      );
-    }
+    await campaignAccessService.assertCanManage(request.campaignId, managerId);
 
     if (request.status !== JoinRequestStatus._STATUS_PENDING) {
       throw new Error("Join request already processed");
@@ -356,11 +343,12 @@ export class CampaignJoiningRequestService {
   }
 
   /**
-   * List approved volunteers for a campaign (managers only), with filters and pagination.
+   * List approved volunteers for a campaign, with filters and pagination. Visible to the
+   * people managing the campaign, its approved volunteers and platform admins.
    */
   async getApprovedVolunteersForManager(
     campaignId: string,
-    // managerId: string,
+    viewer: { userId: string; role?: string | null },
     query: GetApprovedVolunteersQuery,
   ): Promise<{
     volunteers: JoinRequestResponse[];
@@ -369,13 +357,11 @@ export class CampaignJoiningRequestService {
     limit: number;
     totalPages: number;
   }> {
-    // const isManager = await campaignManagerRepository.isManager(
-    //     campaignId,
-    //     managerId,
-    // );
-    // if (!isManager) {
-    //     throw new Error("Only campaign managers can view approved volunteers");
-    // }
+    await campaignAccessService.assertCanViewVolunteers(
+      campaignId,
+      viewer.userId,
+      viewer.role,
+    );
 
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;

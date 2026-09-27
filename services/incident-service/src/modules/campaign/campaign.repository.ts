@@ -1,6 +1,7 @@
 import { Prisma, PrismaClient } from "@prisma/client";
 import prisma from "../../config/prisma.client";
 import { GlobalStatus, ReportStatus } from "../../constants/status.enum";
+import { OWNER_ROLES } from "@da2/constants";
 import { CampaignWithReports } from "./campaign.entity";
 
 const SUBMISSION_STATUSES_AWAITING_REVIEW: number[] = [
@@ -139,6 +140,8 @@ export class CampaignRepository {
       ...(filters.myCampaignsUserId
         ? filters.isOwner
           ? {
+              // Campaigns I run: created, managed, or of an organization I own
+              // (owners may manage every campaign of their organization).
               OR: [
                 { createdBy: filters.myCampaignsUserId },
                 {
@@ -146,6 +149,17 @@ export class CampaignRepository {
                     some: {
                       userId: filters.myCampaignsUserId,
                       deletedAt: null,
+                    },
+                  },
+                },
+                {
+                  organization: {
+                    members: {
+                      some: {
+                        userId: filters.myCampaignsUserId,
+                        deletedAt: null,
+                        role: { in: [...OWNER_ROLES] },
+                      },
                     },
                   },
                 },

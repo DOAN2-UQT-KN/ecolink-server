@@ -730,6 +730,7 @@ export class CampaignController {
         );
       } catch (error) {
         console.error("Mark campaign done error:", error);
+        if (sendHttpErrorResponse(res, error)) return;
         if (error instanceof Error) {
           if (error.message.includes("not found")) {
             return sendError(
@@ -855,22 +856,12 @@ export class CampaignController {
         sendSuccess(res, HTTP_STATUS.OK, { campaign });
       } catch (error) {
         console.error("Update campaign error:", error);
+        if (sendHttpErrorResponse(res, error)) return;
         if (error instanceof Error) {
           if (error.message.includes("not found")) {
             return sendError(
               res,
               HTTP_STATUS.NOT_FOUND.withMessage("Campaign not found"),
-            );
-          }
-          if (
-            error.message.includes("Only campaign manager") ||
-            error.message.includes("Forbidden")
-          ) {
-            return sendError(
-              res,
-              HTTP_STATUS.FORBIDDEN.withMessage(
-                "Only campaign manager can modify campaign",
-              ),
             );
           }
           if (error.message.includes("reportIds")) {
@@ -926,22 +917,12 @@ export class CampaignController {
         );
       } catch (error) {
         console.error("Delete campaign error:", error);
+        if (sendHttpErrorResponse(res, error)) return;
         if (error instanceof Error) {
           if (error.message.includes("not found")) {
             return sendError(
               res,
               HTTP_STATUS.NOT_FOUND.withMessage("Campaign not found"),
-            );
-          }
-          if (
-            error.message.includes("Only campaign manager") ||
-            error.message.includes("Forbidden")
-          ) {
-            return sendError(
-              res,
-              HTTP_STATUS.FORBIDDEN.withMessage(
-                "Only campaign manager can modify campaign",
-              ),
             );
           }
         }
@@ -983,6 +964,7 @@ export class CampaignController {
         sendSuccess(res, HTTP_STATUS.CREATED, { joinRequest });
       } catch (error) {
         console.error("Create campaign join request error:", error);
+        if (sendHttpErrorResponse(res, error)) return;
         if (error instanceof Error) {
           if (error.message.includes("Campaign not found")) {
             return sendError(
@@ -1063,6 +1045,7 @@ export class CampaignController {
         sendSuccess(res, HTTP_STATUS.OK, result);
       } catch (error) {
         console.error("Get campaign join requests error:", error);
+        if (sendHttpErrorResponse(res, error)) return;
         if (error instanceof Error) {
           if (error.message.includes("Only campaign managers")) {
             return sendError(res, HTTP_STATUS.FORBIDDEN);
@@ -1123,6 +1106,7 @@ export class CampaignController {
         sendSuccess(res, HTTP_STATUS.OK, result);
       } catch (error) {
         console.error("Get my join requests error:", error);
+        if (sendHttpErrorResponse(res, error)) return;
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     },
@@ -1168,6 +1152,7 @@ export class CampaignController {
         }
       } catch (error) {
         console.error("Process join request error:", error);
+        if (sendHttpErrorResponse(res, error)) return;
         if (error instanceof Error) {
           if (error.message.includes("not found")) {
             return sendError(res, HTTP_STATUS.NOT_FOUND);
@@ -1235,6 +1220,7 @@ export class CampaignController {
         );
       } catch (error) {
         console.error("Cancel join request error:", error);
+        if (sendHttpErrorResponse(res, error)) return;
         if (error instanceof Error) {
           if (error.message.includes("not found")) {
             return sendError(res, HTTP_STATUS.NOT_FOUND);
@@ -1304,12 +1290,13 @@ export class CampaignController {
         const result =
           await campaignJoiningRequestService.getApprovedVolunteersForManager(
             q.campaignId,
-            // managerId,
+            { userId: managerId, role: req.user?.role },
             q,
           );
         sendSuccess(res, HTTP_STATUS.OK, result);
       } catch (error) {
         console.error("Get approved volunteers error:", error);
+        if (sendHttpErrorResponse(res, error)) return;
         if (error instanceof Error) {
           if (error.message.includes("Only campaign managers")) {
             return sendError(res, HTTP_STATUS.FORBIDDEN);

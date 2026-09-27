@@ -131,6 +131,7 @@ export interface CampaignResponse {
   requestStatus?: number;
   /** True when the viewer is the campaign creator or an assigned campaign manager. */
   canManageCampaign?: boolean;
+  canDeleteCampaign?: boolean;
 }
 
 export interface AddCampaignManagersRequest {

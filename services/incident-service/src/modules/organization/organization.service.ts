@@ -60,6 +60,7 @@ import {
   TranslationFieldTarget,
   TranslationResourceType,
 } from "../../constants/job-type.enum";
+import { campaignManagerRepository } from "../campaign/campaign_manager/campaign_manager.repository";
 
 /**
  * Best-effort enqueue of a TRANSLATE_TEXT job for an organization. Failure is
@@ -1555,6 +1556,14 @@ export class OrganizationService {
             ? { role: newRole, updatedBy: userId }
             : { deletedAt: new Date(), updatedBy: userId },
         });
+        if (!newRole) {
+          await campaignManagerRepository.removeFromOrganizationCampaigns(
+            tx,
+            org.id,
+            userId,
+            userId,
+          );
+        }
         remaining = owners.map((o) => o.user_id).filter((id) => id !== userId);
       });
     } catch (error) {

@@ -307,6 +307,26 @@ export const HTTP_STATUS = {
     "Use step down or leave to change your own role",
     "CANNOT_TARGET_SELF",
   ),
+  CAMPAIGN_PERMISSION_DENIED: createStatus(
+    403,
+    "Only the campaign's creator, its managers or the organization's owners can do this",
+    "CAMPAIGN_PERMISSION_DENIED",
+  ),
+  SOS_PERMISSION_DENIED: createStatus(
+    403,
+    "Only the campaign's managers or a platform admin can resolve this SOS",
+    "SOS_PERMISSION_DENIED",
+  ),
+  CAMPAIGN_MANAGER_NOT_MEMBER: createStatus(
+    422,
+    "Campaign managers must be active members of the campaign's organization",
+    "CAMPAIGN_MANAGER_NOT_MEMBER",
+  ),
+  CANNOT_REMOVE_CAMPAIGN_CREATOR: createStatus(
+    422,
+    "The campaign's creator cannot be removed as a manager",
+    "CANNOT_REMOVE_CAMPAIGN_CREATOR",
+  ),
   ORG_MUST_HAVE_OWNER: createStatus(
     409,
     "An organization must keep at least one owner",

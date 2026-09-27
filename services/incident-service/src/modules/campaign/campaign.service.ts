@@ -27,6 +27,10 @@ import { rewardServiceClient } from "../reward/reward-service.client";
 import { campaignJoiningRequestRepository } from "./campaign_joining_request/campaign_joining_request.repository";
 import { campaignAttendanceRepository } from "./campaign_attendance/campaign_attendance.repository";
 import { campaignRepository } from "./campaign.repository";
+import { campaignAccessService } from "./campaign-access.service";
+import { campaignManagerService } from "./campaign_manager/campaign_manager.service";
+import { OrgPermission } from "@da2/constants";
+import { orgAccessService } from "../organization/org-access.service";
 import {
   CampaignListQuery,
   CampaignMultiSubmissionReviewListQuery,
@@ -157,9 +161,18 @@ export class CampaignService {
       ),
     ];
 
-    const [organizations, reportsByCampaignId] = await Promise.all([
+    const [organizations, reportsByCampaignId, accessByCampaignId] = await Promise.all([
       organizationRepository.findManyByIds(organizationIds).catch(() => []),
       this.getReportsByCampaignIds(campaignIds, viewerUserId),
+      campaignAccessService.resolveMany(
+        campaigns.map((c) => ({
+          id: c.id,
+          organizationId: c.organizationId,
+          createdBy: c.createdBy ?? null,
+          managerIds: c.managers.map((m) => m.id),
+        })),
+        viewerUserId,
+      ),
     ]);
 
     // The person who created the campaign on the organization's behalf. An organization
@@ -203,10 +216,9 @@ export class CampaignService {
           }
         : undefined;
 
-      const canManageCampaign =
-        viewerUserId != null &&
-        (campaign.createdBy === viewerUserId ||
-          campaign.managers.some((m) => m.id === viewerUserId));
+      const access = accessByCampaignId.get(campaign.id);
+      const canManageCampaign = access?.canManage ?? false;
+      const canDeleteCampaign = access?.canDelete ?? false;
 
       return {
         ...campaign,
@@ -221,7 +233,7 @@ export class CampaignService {
             avatar: profile?.avatar ?? null,
           };
         }),
-        ...(viewerUserId != null ? { canManageCampaign } : {}),
+        ...(viewerUserId != null ? { canManageCampaign, canDeleteCampaign } : {}),
       };
     });
   }
@@ -406,14 +418,11 @@ export class CampaignService {
         HTTP_STATUS.NOT_FOUND.withMessage("Organization not found"),
       );
     }
-    const isOwner = await organizationMemberRepository.isOwner(org.id, userId);
-    if (!isOwner) {
-      throw new HttpError(
-        HTTP_STATUS.FORBIDDEN.withMessage(
-          "Only an organization owner can create campaigns",
-        ),
-      );
-    }
+    await orgAccessService.assertOrgPermission(
+      org.id,
+      userId,
+      OrgPermission.CAMPAIGN_CREATE,
+    );
 
     const tier = await rewardServiceClient.getDifficultyByLevel(
       request.difficulty,
@@ -1040,7 +1049,7 @@ export class CampaignService {
       throw new Error("Campaign not found");
     }
 
-    this.ensureOwner(existing.createdBy, userId);
+    await campaignAccessService.assertCanManage(existing, userId);
 
     if (request.difficulty !== undefined) {
       const nextTier = await rewardServiceClient.getDifficultyByLevel(
@@ -1067,6 +1076,9 @@ export class CampaignService {
 
     if (shouldUpdateReports) {
       await this.validateReportIds(reportIds);
+    }
+    if (shouldUpdateManagers) {
+      await campaignManagerService.assertAllMembers(existing.organizationId, managerIds);
     }
 
     const updated = await prisma.$transaction(
@@ -1398,12 +1410,7 @@ export class CampaignService {
       return this.toResponseWithVotes(existing, viewerUserId ?? userId);
     }
 
-    const isManager = await campaignManagerRepository.isManager(id, userId);
-    if (!isManager) {
-      throw new Error(
-        "Only campaign managers can submit completion for admin approval",
-      );
-    }
+    await campaignAccessService.assertCanManage(existing, userId);
 
     const incompleteTaskCount = await prisma.campaignTask.count({
       where: {
@@ -1756,7 +1763,7 @@ export class CampaignService {
       throw new Error("Campaign not found");
     }
 
-    this.ensureOwner(existing.createdBy, userId);
+    await campaignAccessService.assertCanDelete(existing, userId);
 
     await prisma.$transaction(
       async (tx) => {
@@ -1795,16 +1802,6 @@ export class CampaignService {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
       },
     );
-  }
-
-  private ensureOwner(ownerId: string | null, userId: string): void {
-    if (!ownerId || ownerId !== userId) {
-      throw new Error(
-        HTTP_STATUS.FORBIDDEN.withMessage(
-          "Only campaign manager can modify campaign",
-        ).message,
-      );
-    }
   }
 
   private normalizeReportIds(reportIds?: string[]): string[] {

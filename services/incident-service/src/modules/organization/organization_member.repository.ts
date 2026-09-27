@@ -1,6 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 import { OWNER_ROLES, OrgMemberRole } from "@da2/constants";
 import prisma from "../../config/prisma.client";
+import { campaignManagerRepository } from "../campaign/campaign_manager/campaign_manager.repository";
 
 const OWNER_ROLE_VALUES: string[] = [...OWNER_ROLES];
 
@@ -120,6 +121,19 @@ export class OrganizationMemberRepository {
     return new Map(groups.map((g) => [g.userId, g._count._all]));
   }
 
+  /** Which of `userIds` are active members of the organization. */
+  async findActiveMemberUserIds(
+    organizationId: string,
+    userIds: string[],
+  ): Promise<Set<string>> {
+    if (userIds.length === 0) return new Set();
+    const rows = await this.prisma.organizationMember.findMany({
+      where: { organizationId, userId: { in: userIds }, deletedAt: null },
+      select: { userId: true },
+    });
+    return new Set(rows.map((r) => r.userId));
+  }
+
   async isActiveMember(organizationId: string, userId: string): Promise<boolean> {
     const row = await this.prisma.organizationMember.findFirst({
       where: { organizationId, userId, deletedAt: null },
@@ -212,25 +226,37 @@ export class OrganizationMemberRepository {
     });
   }
 
-  /** Soft-delete active membership; returns whether a row was updated. */
+  /**
+   * Soft-delete active membership; returns whether a row was updated. The person also stops
+   * managing the organization's campaigns, in the same transaction.
+   */
   async softDeleteMembership(
     organizationId: string,
     userId: string,
     actorId: string = userId,
   ): Promise<boolean> {
-    const result = await this.prisma.organizationMember.updateMany({
-      where: {
+    return this.prisma.$transaction(async (tx) => {
+      const result = await tx.organizationMember.updateMany({
+        where: {
+          organizationId,
+          userId,
+          deletedAt: null,
+        },
+        data: {
+          deletedAt: new Date(),
+          updatedAt: new Date(),
+          updatedBy: actorId,
+        },
+      });
+      if (result.count === 0) return false;
+      await campaignManagerRepository.removeFromOrganizationCampaigns(
+        tx,
         organizationId,
         userId,
-        deletedAt: null,
-      },
-      data: {
-        deletedAt: new Date(),
-        updatedAt: new Date(),
-        updatedBy: actorId,
-      },
+        actorId,
+      );
+      return true;
     });
-    return result.count > 0;
   }
 }
 
