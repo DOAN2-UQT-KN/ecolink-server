@@ -1,5 +1,6 @@
 /**
  * Phase 4 — campaign permissions by organization role, against a real Postgres.
+ * (Status rules — what may be edited or deleted when — are in campaign-lifecycle.it.test.ts.)
  *
  *   - who may create a campaign (CAMPAIGN_CREATE: LR / OWNER / CAMPAIGN_MANAGER)
  *   - owners manage campaigns they did not create; org admins do not
@@ -90,11 +91,11 @@ async function seedOrganization() {
 }
 
 /** A campaign created by `creator`, who is also its first manager (as the service does). */
-async function seedCampaign(creator: string) {
+async function seedCampaign(creator: string, status: number = GlobalStatus._STATUS_ACTIVE) {
   return prisma.campaign.create({
     data: {
       title: `Campaign ${randomUUID().slice(0, 8)}`,
-      status: GlobalStatus._STATUS_ACTIVE,
+      status,
       organizationId: orgId,
       createdBy: creator,
       latitude: 10.77,
@@ -140,7 +141,8 @@ describe("creating a campaign needs CAMPAIGN_CREATE", () => {
 
 describe("managing a campaign", () => {
   it("an owner may edit a campaign someone else created; an org admin may not", async () => {
-    const campaign = await seedCampaign(CM);
+    // Under review: every field is still editable (the title locks once approved).
+    const campaign = await seedCampaign(CM, GlobalStatus._STATUS_PENDING);
     await campaignService.updateCampaign(campaign.id, OWNER, { title: "Renamed" } as never);
     expect((await prisma.campaign.findUnique({ where: { id: campaign.id } }))?.title).toBe(
       "Renamed",
@@ -151,7 +153,8 @@ describe("managing a campaign", () => {
   });
 
   it("a manager may not delete; the legal representative may", async () => {
-    const campaign = await seedCampaign(CM);
+    // Only campaigns not yet approved (or blocked/expired) can be deleted.
+    const campaign = await seedCampaign(CM, GlobalStatus._STATUS_PENDING);
     await campaignManagerService.addManagers(campaign.id, { userIds: [MEMBER] }, CM);
     await expect(campaignService.deleteCampaign(campaign.id, MEMBER)).rejects.toMatchObject(
       code("CAMPAIGN_PERMISSION_DENIED"),

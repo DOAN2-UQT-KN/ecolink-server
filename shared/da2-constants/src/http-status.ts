@@ -312,6 +312,41 @@ export const HTTP_STATUS = {
     "Only the campaign's creator, its managers or the organization's owners can do this",
     "CAMPAIGN_PERMISSION_DENIED",
   ),
+  CAMPAIGN_INVALID: createStatus(
+    400,
+    "The campaign is missing information or breaks a rule",
+    "CAMPAIGN_INVALID",
+  ),
+  CAMPAIGN_REPORTS_TAKEN: createStatus(
+    409,
+    "Some waste points were just taken by another campaign; remove them and try again",
+    "CAMPAIGN_REPORTS_TAKEN",
+  ),
+  CAMPAIGN_CREATE_NOT_ALLOWED: createStatus(
+    403,
+    "This organization cannot create or submit a campaign right now",
+    "CAMPAIGN_CREATE_NOT_ALLOWED",
+  ),
+  CAMPAIGN_INVALID_TRANSITION: createStatus(
+    409,
+    "The campaign cannot move to that status from its current status",
+    "CAMPAIGN_INVALID_TRANSITION",
+  ),
+  CAMPAIGN_REVIEW_CONFLICT_OF_INTEREST: createStatus(
+    403,
+    "Admins cannot review campaigns of an organization they belong to",
+    "CAMPAIGN_REVIEW_CONFLICT_OF_INTEREST",
+  ),
+  CAMPAIGN_NOT_EDITABLE: createStatus(
+    409,
+    "These fields cannot be changed in the campaign's current status",
+    "CAMPAIGN_NOT_EDITABLE",
+  ),
+  CAMPAIGN_NOT_DELETABLE: createStatus(
+    409,
+    "The campaign cannot be deleted in its current status",
+    "CAMPAIGN_NOT_DELETABLE",
+  ),
   SOS_PERMISSION_DENIED: createStatus(
     403,
     "Only the campaign's managers or a platform admin can resolve this SOS",
@@ -434,11 +469,14 @@ export const createHttpStatus = (
 
 export class HttpError extends Error {
   readonly statusResponse: HttpStatusResponse;
+  /** Extra fields merged into the error body (e.g. per-field `details`). */
+  readonly data?: Record<string, any>;
 
-  constructor(statusResponse: HttpStatusResponse) {
+  constructor(statusResponse: HttpStatusResponse, data?: Record<string, any>) {
     super(statusResponse.message);
     this.name = "HttpError";
     this.statusResponse = statusResponse;
+    this.data = data;
     Object.setPrototypeOf(this, new.target.prototype);
   }
 
@@ -449,7 +487,7 @@ export class HttpError extends Error {
 
 export const sendHttpErrorResponse = (res: any, error: unknown): boolean => {
   if (HttpError.isHttpError(error)) {
-    sendError(res, error.statusResponse);
+    sendError(res, error.statusResponse, error.data);
     return true;
   }
   return false;

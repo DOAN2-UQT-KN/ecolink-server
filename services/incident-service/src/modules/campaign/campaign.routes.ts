@@ -38,6 +38,18 @@ router.get("/all", authenticate, campaignController.getAllActiveCampaigns);
 router.get("/by-ids", authenticate, campaignController.getCampaignsByIds);
 
 /**
+ * @route   GET /api/v1/campaigns/create-eligibility
+ * @desc    Whether the caller may create a campaign for the organization, with reasons
+ * @access  Private
+ * @query   organizationId
+ */
+router.get(
+  "/create-eligibility",
+  authenticate,
+  campaignController.getCreateEligibility,
+);
+
+/**
  * @route   GET /api/v1/campaigns/my
  * @desc    List campaigns that the user is owner or their join request is approved
  * @access  Private
@@ -144,8 +156,30 @@ router.put(
 );
 
 /**
+ * @route   POST /api/v1/campaigns/:id/submit
+ * @desc    Send a draft (or a campaign waiting for changes) for admin review; locks its reports
+ * @access  Private (Campaign manager)
+ */
+router.post("/:id/submit", authenticate, campaignController.submitCampaign);
+
+/**
+ * @route   PUT /api/v1/campaigns/:id/review
+ * @desc    Admin: approve, request_revision or block a campaign waiting for review
+ * @access  Private (Admin only, not a member of the campaign's organization)
+ * @body    { decision, reason? } — reason required unless approving
+ */
+router.put("/:id/review", authenticate, campaignController.reviewCampaign);
+
+/**
+ * @route   GET /api/v1/campaigns/:id/history
+ * @desc    Status changes and edits under review
+ * @access  Private (Campaign manager or admin)
+ */
+router.get("/:id/history", authenticate, campaignController.getCampaignHistory);
+
+/**
  * @route   PUT /api/v1/campaigns/:id/verify
- * @desc    Admin verify (ACTIVE) or ban (INACTIVE) a campaign; ban requires reject_reason
+ * @desc    Deprecated, use /:id/review. status 1 approves, 2 blocks (or bans when running)
  * @access  Private (Admin only)
  */
 router.put("/:id/verify", authenticate, campaignController.adminVerifyCampaign);

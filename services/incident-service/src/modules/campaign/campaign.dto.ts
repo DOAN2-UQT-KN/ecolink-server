@@ -1,4 +1,4 @@
-import { GlobalStatus } from "../../constants/status.enum";
+import type { CampaignRequirements } from "@da2/constants";
 import type { OrganizationOwnerResponse } from "../organization/organization.dto";
 import type { ResourceVoteSummary } from "../vote/vote.dto";
 import type { CampaignCompletionVerificationSummary } from "./campaign_completion_verification/campaign_completion_verification.dto";
@@ -36,7 +36,63 @@ export interface CreateCampaignRequest {
   radiusKm?: number;
   /** 1 = easy … 4 = very hard; must exist in reward-service `difficulties` table. */
   difficulty: number;
+  /**
+   * Legacy single-location input: when `meetingPoints` is absent, one meeting point is built
+   * from latitude/longitude/radiusKm and these reports.
+   */
   reportIds?: string[];
+  contactName?: string | null;
+  contactPhone?: string | null;
+  safetyNotes?: string | null;
+  requirements?: CampaignRequirements | null;
+  meetingPoints?: MeetingPointInput[];
+}
+
+/** One gathering point in a create/update body. */
+export interface MeetingPointInput {
+  name?: string | null;
+  latitude: number;
+  longitude: number;
+  detailAddress?: string | null;
+  radiusKm: number;
+  gatherAt?: string | null;
+  slots?: number | null;
+  leaderUserId?: string | null;
+  reportIds?: string[];
+}
+
+export interface MeetingPointResponse {
+  id: string;
+  name: string | null;
+  latitude: number;
+  longitude: number;
+  detailAddress: string | null;
+  radiusKm: number;
+  gatherAt: Date | null;
+  slots: number | null;
+  leaderUserId: string | null;
+  sortOrder: number;
+  reportIds: string[];
+}
+
+/** Body for PUT /api/v1/campaigns/:id/review (admin). */
+export interface AdminReviewCampaignBody {
+  decision: "approve" | "request_revision" | "block";
+  /** Required for request_revision and block. */
+  reason?: string | null;
+}
+
+export interface CampaignStatusLogResponse {
+  id: string;
+  type: string;
+  event: string;
+  fromStatus: number | null;
+  toStatus: number | null;
+  actorId: string | null;
+  actorRole: string;
+  reason: string | null;
+  changes: unknown;
+  createdAt: Date;
 }
 
 /**
@@ -68,7 +124,6 @@ export interface UpdateCampaignRequest {
   description?: string;
   descriptionVi?: string;
   descriptionEn?: string;
-  status?: GlobalStatus;
   difficulty?: number;
   startDate?: string | null;
   endDate?: string | null;
@@ -78,6 +133,12 @@ export interface UpdateCampaignRequest {
   radiusKm?: number | null;
   reportIds?: string[];
   managerIds?: string[];
+  contactName?: string | null;
+  contactPhone?: string | null;
+  safetyNotes?: string | null;
+  requirements?: CampaignRequirements | null;
+  /** Replaces all meeting points (and their reports) when present. */
+  meetingPoints?: MeetingPointInput[];
 }
 
 export interface CampaignResponse {
@@ -104,6 +165,15 @@ export interface CampaignResponse {
   longitude: number | null;
   radiusKm: number | null;
   difficulty: number;
+  contactName: string | null;
+  /** Only for the campaign's managers, admins and accepted volunteers; null otherwise. */
+  contactPhone: string | null;
+  safetyNotes: string | null;
+  requirements: CampaignRequirements | null;
+  /** Resubmit before this while NEEDS_REVISION. */
+  revisionDeadline: Date | null;
+  submittedAt: Date | null;
+  meetingPoints: MeetingPointResponse[];
   /** Green points for this difficulty tier (reward rules). */
   greenPoints: number;
   /** Count of approved campaign join requests (volunteers). */
@@ -312,6 +382,10 @@ export interface CampaignListQuery {
   greenPointsFrom?: number;
   greenPointsTo?: number;
   isOwner?: boolean;
+  /** Admin review queue: leave out organizations the admin belongs to. */
+  excludeMemberOrgsOfUserId?: string;
+  /** Restrict to publicly visible statuses (non-admin browsing). */
+  publicOnly?: boolean;
 }
 
 /** Query for GET /campaigns/admin/awaiting-multi-submission-review. */

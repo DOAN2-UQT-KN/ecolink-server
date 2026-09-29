@@ -61,10 +61,11 @@ model Report {
   deletedAt DateTime? @map("deleted_at")
 
   // Relations
-  reportMediaFiles ReportMediaFile[]
-  reportIssues     ReportIssue[]
-  aiAnalysisLogs   AiAnalysisLog[]
-  campaign         Campaign?         @relation(fields: [campaignId], references: [id])
+  reportMediaFiles  ReportMediaFile[]
+  reportIssues      ReportIssue[]
+  aiAnalysisLogs    AiAnalysisLog[]
+  campaign          Campaign?                    @relation(fields: [campaignId], references: [id])
+  meetingPointLinks CampaignMeetingPointReport[]
 
   @@index([campaignId])
   @@index([userId])
@@ -99,6 +100,20 @@ model Campaign {
    */
   difficulty Int @default(1)
 
+  /// Contact person shown to accepted volunteers (phone only to them).
+  contactName           String?   @map("contact_name") @db.VarChar(120)
+  contactPhone          String?   @map("contact_phone") @db.VarChar(20)
+  /// Tools, clothing, risks.
+  safetyNotes           String?   @map("safety_notes")
+  /// Optional participation conditions: { minAge, skills[], bringOwnTools }.
+  requirements          Json?
+  /// Deadline to resubmit while NEEDS_REVISION (reports stay locked until then).
+  revisionDeadline      DateTime? @map("revision_deadline")
+  /// Last time the campaign was sent for review.
+  submittedAt           DateTime? @map("submitted_at")
+  /// What was sent for review last time; the admin sees a diff on resubmit.
+  lastSubmittedSnapshot Json?     @map("last_submitted_snapshot")
+
   organizationId String       @map("organization_id") @db.Uuid
   organization   Organization @relation(fields: [organizationId], references: [id])
 
@@ -118,6 +133,9 @@ model Campaign {
   campaignResults                 CampaignResult[]
   campaignCompletionVerifications CampaignCompletionVerification[]
   sosList                         Sos[]
+  meetingPoints                   CampaignMeetingPoint[]
+  meetingPointReports             CampaignMeetingPointReport[]
+  statusLogs                      CampaignStatusLog[]
 
   @@index([status])
   @@index([createdBy])
@@ -1212,4 +1230,74 @@ model OrganizationViolation {
   @@index([organizationId])
   @@index([deletedAt])
   @@map("organization_violations")
+}
+
+/// A gathering point of a campaign (1–5). Every report of the campaign belongs to exactly one.
+model CampaignMeetingPoint {
+  id            String    @id @default(uuid()) @db.Uuid
+  campaignId    String    @map("campaign_id") @db.Uuid
+  name          String?   @db.VarChar(120)
+  latitude      Float
+  longitude     Float
+  detailAddress String?   @map("detail_address") @db.VarChar(255)
+  radiusKm      Float     @map("radius_km")
+  gatherAt      DateTime? @map("gather_at")
+  /// Volunteer slots at this point; null = no limit of its own.
+  slots         Int?
+  /// Campaign manager in charge of this point.
+  leaderUserId  String?   @map("leader_user_id") @db.Uuid
+  sortOrder     Int       @default(0) @map("sort_order")
+  createdBy     String?   @map("created_by") @db.Uuid
+  updatedBy     String?   @map("updated_by") @db.Uuid
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  deletedAt     DateTime? @map("deleted_at")
+
+  campaign Campaign                     @relation(fields: [campaignId], references: [id])
+  reports  CampaignMeetingPointReport[]
+
+  @@index([campaignId])
+  @@map("campaign_meeting_points")
+}
+
+/// Which report a meeting point covers. Also holds a draft's selection, which locks nothing:
+/// the lock is `report_issues.campaign_id` + status INPROCESS, taken on submit.
+model CampaignMeetingPointReport {
+  meetingPointId String   @map("meeting_point_id") @db.Uuid
+  reportId       String   @map("report_id") @db.Uuid
+  campaignId     String   @map("campaign_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  meetingPoint CampaignMeetingPoint @relation(fields: [meetingPointId], references: [id], onDelete: Cascade)
+  report       Report               @relation(fields: [reportId], references: [id])
+  campaign     Campaign             @relation(fields: [campaignId], references: [id])
+
+  @@id([meetingPointId, reportId])
+  @@unique([campaignId, reportId])
+  @@index([reportId])
+  @@map("campaign_meeting_point_reports")
+}
+
+/// Audit log: every status change and every edit made while the campaign is under review.
+model CampaignStatusLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  campaignId String   @map("campaign_id") @db.Uuid
+  /// STATUS_CHANGE | EDIT
+  type       String   @db.VarChar(20)
+  /// Transition event (submit, approve, block, ...) or "edit".
+  event      String   @db.VarChar(40)
+  fromStatus Int?     @map("from_status")
+  toStatus   Int?     @map("to_status")
+  actorId    String?  @map("actor_id") @db.Uuid
+  /// manager | admin | system
+  actorRole  String   @map("actor_role") @db.VarChar(20)
+  reason     String?
+  /// Field diff { field: { from, to } } for edits; extra context otherwise.
+  changes    Json?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  campaign Campaign @relation(fields: [campaignId], references: [id])
+
+  @@index([campaignId, createdAt])
+  @@map("campaign_status_logs")
 }

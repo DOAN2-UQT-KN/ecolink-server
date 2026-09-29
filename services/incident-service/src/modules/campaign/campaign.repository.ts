@@ -1,8 +1,8 @@
 import { Prisma, PrismaClient } from "@prisma/client";
 import prisma from "../../config/prisma.client";
 import { GlobalStatus, ReportStatus } from "../../constants/status.enum";
-import { OWNER_ROLES } from "@da2/constants";
-import { CampaignWithReports } from "./campaign.entity";
+import { CAMPAIGN_PUBLIC_STATUSES, OWNER_ROLES } from "@da2/constants";
+import { CAMPAIGN_INCLUDE, CampaignWithReports } from "./campaign.entity";
 
 const SUBMISSION_STATUSES_AWAITING_REVIEW: number[] = [
   GlobalStatus._STATUS_INREVIEW,
@@ -22,32 +22,14 @@ export class CampaignRepository {
   async create(data: Prisma.CampaignCreateInput): Promise<CampaignWithReports> {
     return this.prisma.campaign.create({
       data,
-      include: {
-        campaignManagers: {
-          where: { deletedAt: null },
-          select: { userId: true },
-        },
-        reports: {
-          where: { deletedAt: null },
-          select: { id: true },
-        },
-      },
+      include: CAMPAIGN_INCLUDE,
     });
   }
 
   async findById(id: string): Promise<CampaignWithReports | null> {
     return this.prisma.campaign.findFirst({
       where: { id, deletedAt: null },
-      include: {
-        campaignManagers: {
-          where: { deletedAt: null },
-          select: { userId: true },
-        },
-        reports: {
-          where: { deletedAt: null },
-          select: { id: true },
-        },
-      },
+      include: CAMPAIGN_INCLUDE,
     });
   }
 
@@ -57,29 +39,11 @@ export class CampaignRepository {
     }
     return this.prisma.campaign.findMany({
       where: { id: { in: ids }, deletedAt: null },
-      include: {
-        campaignManagers: {
-          where: { deletedAt: null },
-          select: { userId: true },
-        },
-        reports: {
-          where: { deletedAt: null },
-          select: { id: true },
-        },
-      },
+      include: CAMPAIGN_INCLUDE,
     });
   }
 
-  private static readonly listInclude = {
-    campaignManagers: {
-      where: { deletedAt: null },
-      select: { userId: true },
-    },
-    reports: {
-      where: { deletedAt: null },
-      select: { id: true },
-    },
-  } as const;
+  private static readonly listInclude = CAMPAIGN_INCLUDE;
 
   async findManyPaginated(params: {
     filters: {
@@ -97,6 +61,8 @@ export class CampaignRepository {
       myCampaignsUserId?: string;
       excludeMyCampaignsUserId?: string;
       isOwner?: boolean;
+      excludeMemberOrgsOfUserId?: string;
+      publicOnly?: boolean;
     };
     skip: number;
     take: number;
@@ -105,13 +71,32 @@ export class CampaignRepository {
   }): Promise<{ rows: CampaignWithReports[]; total: number }> {
     const { filters, skip, take, sortBy, sortOrder } = params;
 
-    const where: Prisma.CampaignWhereInput = {
-      deletedAt: null,
-      ...(filters.statuses && filters.statuses.length > 0
+    const statusFilter: Prisma.CampaignWhereInput =
+      filters.statuses && filters.statuses.length > 0
         ? { status: { in: filters.statuses } }
         : filters.status !== undefined
           ? { status: filters.status }
-          : {}),
+          : {};
+    const where: Prisma.CampaignWhereInput = {
+      deletedAt: null,
+      AND: [
+        statusFilter,
+        filters.publicOnly
+          ? { status: { in: [...CAMPAIGN_PUBLIC_STATUSES] } }
+          : {},
+        filters.excludeMemberOrgsOfUserId
+          ? {
+              organization: {
+                members: {
+                  none: {
+                    userId: filters.excludeMemberOrgsOfUserId,
+                    deletedAt: null,
+                  },
+                },
+              },
+            }
+          : {},
+      ],
       ...(filters.createdBy ? { createdBy: filters.createdBy } : {}),
       ...(filters.organizationId
         ? { organizationId: filters.organizationId }
@@ -278,16 +263,7 @@ export class CampaignRepository {
     return this.prisma.campaign.update({
       where: { id },
       data,
-      include: {
-        campaignManagers: {
-          where: { deletedAt: null },
-          select: { userId: true },
-        },
-        reports: {
-          where: { deletedAt: null },
-          select: { id: true },
-        },
-      },
+      include: CAMPAIGN_INCLUDE,
     });
   }
 
@@ -301,16 +277,7 @@ export class CampaignRepository {
         deletedAt: new Date(),
         updatedBy: deletedBy,
       },
-      include: {
-        campaignManagers: {
-          where: { deletedAt: null },
-          select: { userId: true },
-        },
-        reports: {
-          where: { deletedAt: null },
-          select: { id: true },
-        },
-      },
+      include: CAMPAIGN_INCLUDE,
     });
   }
 

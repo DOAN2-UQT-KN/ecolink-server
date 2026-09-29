@@ -21,7 +21,7 @@ import {
   enqueueCampaignCompletionPendingAdminWebsiteNotification,
   enqueueWebsiteNotificationsToUsers,
 } from "./notification-jobs.client";
-import { getCampaignCompletionAdminNotifyUserIds } from "./campaign-completion-admin-notify.config";
+import { getCampaignAdminNotifyUserIds } from "./campaign-completion-admin-notify.config";
 import { campaignManagerRepository } from "./campaign_manager/campaign_manager.repository";
 import { rewardServiceClient } from "../reward/reward-service.client";
 import { campaignJoiningRequestRepository } from "./campaign_joining_request/campaign_joining_request.repository";
@@ -29,8 +29,20 @@ import { campaignAttendanceRepository } from "./campaign_attendance/campaign_att
 import { campaignRepository } from "./campaign.repository";
 import { campaignAccessService } from "./campaign-access.service";
 import { campaignManagerService } from "./campaign_manager/campaign_manager.service";
-import { OrgPermission } from "@da2/constants";
-import { orgAccessService } from "../organization/org-access.service";
+import {
+  CAMPAIGN_DELETABLE_STATUSES,
+  CAMPAIGN_PUBLIC_STATUSES,
+  CampaignStatus,
+} from "@da2/constants";
+import { campaignEligibilityService } from "./campaign-eligibility.service";
+import {
+  campaignLifecycleService,
+  diffSnapshots,
+  isPreApproval,
+  meetingPointsFromRequest,
+} from "./campaign-lifecycle.service";
+import { logCampaignEdit, transitionCampaign } from "./campaign-state-machine";
+import { isPlatformAdmin } from "./campaign-access.service";
 import {
   CampaignListQuery,
   CampaignMultiSubmissionReviewListQuery,
@@ -247,10 +259,26 @@ export class CampaignService {
       return out;
     }
 
+    // Locked reports carry `campaignId`; a draft's picks are only linked to its meeting points.
+    const links = await prisma.campaignMeetingPointReport.findMany({
+      where: { campaignId: { in: campaignIds } },
+      select: { campaignId: true, reportId: true },
+    });
+    const linkedCampaignIdsByReport = new Map<string, Set<string>>();
+    for (const link of links) {
+      const set = linkedCampaignIdsByReport.get(link.reportId) ?? new Set<string>();
+      set.add(link.campaignId);
+      linkedCampaignIdsByReport.set(link.reportId, set);
+    }
     const rows = await prisma.report.findMany({
       where: {
-        campaignId: { in: campaignIds },
         deletedAt: null,
+        OR: [
+          { campaignId: { in: campaignIds } },
+          ...(links.length > 0
+            ? [{ id: { in: [...linkedCampaignIdsByReport.keys()] } }]
+            : []),
+        ],
       },
       orderBy: { createdAt: "desc" },
     });
@@ -284,14 +312,19 @@ export class CampaignService {
     }
 
     const byId = new Map(reportResponses.map((report) => [report.id, report]));
+    const wanted = new Set(campaignIds);
     for (const row of rows) {
       const mapped = byId.get(row.id);
       if (!mapped) continue;
-      const list = out.get(row.campaignId ?? "");
-      if (!list) {
-        out.set(row.campaignId ?? "", [mapped]);
-      } else {
-        list.push(mapped);
+      const owners = new Set(linkedCampaignIdsByReport.get(row.id) ?? []);
+      if (row.campaignId && wanted.has(row.campaignId)) owners.add(row.campaignId);
+      for (const campaignId of owners) {
+        const list = out.get(campaignId);
+        if (!list) {
+          out.set(campaignId, [mapped]);
+        } else {
+          list.push(mapped);
+        }
       }
     }
 
@@ -407,6 +440,10 @@ export class CampaignService {
     });
   }
 
+  /**
+   * Creates a DRAFT (spec 1.5). Nothing is locked yet: the chosen reports are only remembered
+   * on the meeting points, and the full rules run when the draft is sent for review.
+   */
   async createCampaign(
     userId: string,
     request: CreateCampaignRequest,
@@ -418,11 +455,7 @@ export class CampaignService {
         HTTP_STATUS.NOT_FOUND.withMessage("Organization not found"),
       );
     }
-    await orgAccessService.assertOrgPermission(
-      org.id,
-      userId,
-      OrgPermission.CAMPAIGN_CREATE,
-    );
+    await campaignEligibilityService.assertCanCreateDraft(userId, org.id);
 
     const tier = await rewardServiceClient.getDifficultyByLevel(
       request.difficulty,
@@ -433,9 +466,20 @@ export class CampaignService {
       );
     }
 
-    const reportIds = this.normalizeReportIds(request.reportIds);
-    const managerIds = [userId];
-    await this.validateReportIds(reportIds);
+    const meetingPoints = meetingPointsFromRequest(request, userId) ?? [];
+    await campaignLifecycleService.assertReportsSelectable(
+      prisma,
+      null,
+      meetingPoints.flatMap((p) => p.reportIds),
+    );
+    if (meetingPoints.length > 0) {
+      await campaignManagerService.assertAllMembers(
+        org.id,
+        meetingPoints
+          .map((p) => p.leaderUserId)
+          .filter((id): id is string => !!id),
+      );
+    }
 
     const sourceTitle = request.title.trim();
     const titleVi =
@@ -472,45 +516,34 @@ export class CampaignService {
             longitude: request.longitude,
             radiusKm: request.radiusKm,
             difficulty: request.difficulty,
-            status: GlobalStatus._STATUS_PENDING,
+            contactName: request.contactName?.trim() || null,
+            contactPhone: request.contactPhone?.trim() || null,
+            safetyNotes: request.safetyNotes?.trim() || null,
+            ...(request.requirements != null
+              ? { requirements: request.requirements as Prisma.InputJsonValue }
+              : {}),
+            status: CampaignStatus.DRAFT,
             organizationId: request.organizationId,
             createdBy: userId,
             updatedBy: userId,
-          } as any,
+          },
         });
 
-        await this.assignManagersToCampaign(
+        // The creator manages the draft right away, so co-managers can see it too.
+        await this.assignManagersToCampaign(tx, campaign.id, [userId], userId);
+        await campaignLifecycleService.replaceMeetingPoints(
           tx,
           campaign.id,
-          managerIds,
+          meetingPoints,
           userId,
         );
 
-        // Campaign ownership is manager ownership. Do not create report managers here.
-        await this.assignReportsToCampaign(tx, campaign.id, reportIds);
-
-        return tx.campaign.findFirst({
-          where: { id: campaign.id, deletedAt: null },
-          include: {
-            campaignManagers: {
-              where: { deletedAt: null },
-              select: { userId: true },
-            },
-            reports: {
-              where: { deletedAt: null },
-              select: { id: true },
-            },
-          },
-        });
+        return campaignLifecycleService.loadInTx(tx, campaign.id);
       },
       {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
       },
     );
-
-    if (!created) {
-      throw new Error("Failed to create campaign");
-    }
 
     enqueueCampaignTranslationJob(created.id, [
       {
@@ -529,54 +562,43 @@ export class CampaignService {
         : []),
     ]);
 
-    void this.notifyOrganizationMembersOfNewCampaign({
-      organizationId: org.id,
-      organizationName: org.name,
-      campaign: created,
-      creatorUserId: userId,
-    }).catch((err) => {
-      console.warn(
-        "[campaign] failed to notify organization members of new campaign",
-        err,
-      );
-    });
-
     return this.toResponseWithVotes(created, viewerUserId ?? userId);
   }
 
-  /** In-app: approved org members (except the creator) when a new campaign is created. */
-  private async notifyOrganizationMembersOfNewCampaign(args: {
-    organizationId: string;
-    organizationName: string;
-    campaign: {
-      id: string;
-      title: string;
-      titleVi?: string | null;
-      titleEn?: string | null;
-    };
-    creatorUserId: string;
-  }): Promise<void> {
-    const members =
-      await organizationMemberRepository.findAllActiveByOrganization(
-        args.organizationId,
-      );
-    const recipientIds = [
-      ...new Set(members.map((m) => m.userId).filter(Boolean)),
-    ].filter((id) => id !== args.creatorUserId);
-    if (recipientIds.length === 0) {
-      return;
-    }
+  /** Sends a draft (or a campaign waiting for changes) for admin review. */
+  async submitCampaign(
+    id: string,
+    userId: string,
+  ): Promise<CampaignResponse> {
+    const campaign = await campaignLifecycleService.submit(id, userId);
+    return this.getCampaignById(campaign.id, userId, null, null) as Promise<CampaignResponse>;
+  }
 
-    await enqueueWebsiteNotificationsToUsers({
-      kind: "CAMPAIGN_CREATED",
-      userIds: recipientIds,
-      payload: {
-        organizationName: args.organizationName,
-        organizationId: args.organizationId,
-        campaignId: args.campaign.id,
-        ...campaignTitleNotificationPayload(args.campaign),
-      },
-    });
+  /** Admin decision on a campaign waiting for review. */
+  async reviewCampaign(
+    id: string,
+    adminUserId: string,
+    decision: "approve" | "request_revision" | "block",
+    reason: string | null | undefined,
+  ): Promise<CampaignResponse> {
+    const campaign = await campaignLifecycleService.review(
+      id,
+      adminUserId,
+      decision,
+      reason,
+    );
+    if (decision === "approve") {
+      void this.notifyNearbyCitizensToJoinApprovedCampaign({
+        campaign,
+        adminUserId,
+      }).catch((err) => {
+        console.warn(
+          "[campaign] failed to notify nearby citizens to join approved campaign",
+          err,
+        );
+      });
+    }
+    return this.toResponseWithVotes(campaign, adminUserId);
   }
 
   /**
@@ -675,27 +697,51 @@ export class CampaignService {
     });
   }
 
+  /**
+   * Drafts and campaigns under review, blocked or expired are visible only to the people who
+   * manage them and to admins; everyone else gets null (404). The contact phone is shown to
+   * managers, admins and accepted volunteers.
+   */
   async getCampaignById(
     id: string,
     viewerUserId?: string | null,
     locale?: AppLocale | null,
+    viewerRole?: string | null,
   ): Promise<CampaignResponse | null> {
     const campaign = await campaignRepository.findById(id);
     if (!campaign) return null;
+    const isAdmin = isPlatformAdmin(viewerRole);
+    const canManage = viewerUserId
+      ? (await campaignAccessService.resolve(campaign, viewerUserId)).canManage
+      : false;
+    if (
+      !isAdmin &&
+      !canManage &&
+      !CAMPAIGN_PUBLIC_STATUSES.includes(campaign.status)
+    ) {
+      return null;
+    }
+
     const baseRaw = await this.toResponseWithVotes(
       campaign,
       viewerUserId,
       locale,
     );
-    const [base] = await this.enrichCampaignsForGet([baseRaw], viewerUserId);
+    const [enriched] = await this.enrichCampaignsForGet([baseRaw], viewerUserId);
     if (!viewerUserId) {
-      return base;
+      return enriched;
     }
     const latestJoin =
       await campaignJoiningRequestRepository.findLatestByCampaignAndVolunteer(
         id,
         viewerUserId,
       );
+    const isAcceptedVolunteer =
+      latestJoin?.status === JoinRequestStatus._STATUS_APPROVED;
+    const base =
+      isAdmin || canManage || isAcceptedVolunteer
+        ? { ...enriched, contactPhone: campaign.contactPhone ?? null }
+        : enriched;
 
     const requestStatus = this.joinRequestStatusForCampaignDetail(
       latestJoin?.status,
@@ -813,6 +859,8 @@ export class CampaignService {
         myCampaignsUserId,
         excludeMyCampaignsUserId,
         isOwner: query.isOwner,
+        excludeMemberOrgsOfUserId: query.excludeMemberOrgsOfUserId,
+        publicOnly: query.publicOnly,
       },
       skip,
       take: limit,
@@ -1038,6 +1086,13 @@ export class CampaignService {
     };
   }
 
+  /**
+   * Before approval (draft, under review, needs revision) every field may change; under review
+   * each edit is logged for the admin and report locks follow the meeting points at once.
+   * Once approved only the free fields may change (description, cover, safety notes, contact);
+   * the rest waits for the edit/reschedule flow of phase 3.
+   * The status never changes here — only through the lifecycle endpoints.
+   */
   async updateCampaign(
     id: string,
     userId: string,
@@ -1051,6 +1106,32 @@ export class CampaignService {
 
     await campaignAccessService.assertCanManage(existing, userId);
 
+    const preApproval = isPreApproval(existing.status);
+    if (!preApproval) {
+      const restricted = (
+        [
+          "title",
+          "titleVi",
+          "titleEn",
+          "difficulty",
+          "startDate",
+          "endDate",
+          "detailAddress",
+          "latitude",
+          "longitude",
+          "radiusKm",
+          "reportIds",
+          "requirements",
+          "meetingPoints",
+        ] as const
+      ).filter((key) => request[key] !== undefined);
+      if (restricted.length > 0) {
+        throw new HttpError(HTTP_STATUS.CAMPAIGN_NOT_EDITABLE, {
+          fields: restricted,
+        });
+      }
+    }
+
     if (request.difficulty !== undefined) {
       const nextTier = await rewardServiceClient.getDifficultyByLevel(
         request.difficulty,
@@ -1062,10 +1143,29 @@ export class CampaignService {
       }
     }
 
-    const shouldUpdateReports = request.reportIds !== undefined;
-    const reportIds = shouldUpdateReports
-      ? this.normalizeReportIds(request.reportIds)
-      : [];
+    const meetingPoints = meetingPointsFromRequest(
+      {
+        ...request,
+        latitude: request.latitude ?? existing.latitude,
+        longitude: request.longitude ?? existing.longitude,
+        radiusKm: request.radiusKm ?? existing.radiusKm,
+      },
+      existing.createdBy ?? userId,
+    );
+    if (meetingPoints) {
+      await campaignLifecycleService.assertReportsSelectable(
+        prisma,
+        id,
+        meetingPoints.flatMap((p) => p.reportIds),
+      );
+      await campaignManagerService.assertAllMembers(
+        existing.organizationId,
+        meetingPoints
+          .map((p) => p.leaderUserId)
+          .filter((leader): leader is string => !!leader),
+      );
+    }
+
     const shouldUpdateManagers = request.managerIds !== undefined;
     const managerIds = shouldUpdateManagers
       ? this.normalizeManagerIds(
@@ -1073,16 +1173,24 @@ export class CampaignService {
           existing.createdBy ?? userId,
         )
       : [];
-
-    if (shouldUpdateReports) {
-      await this.validateReportIds(reportIds);
-    }
     if (shouldUpdateManagers) {
       await campaignManagerService.assertAllMembers(existing.organizationId, managerIds);
     }
 
+    const optionalText = (value: string | null | undefined) =>
+      value === undefined ? undefined : value?.trim() || null;
+
     const updated = await prisma.$transaction(
       async (tx) => {
+        const before = await campaignLifecycleService.loadInTx(tx, id);
+        if (before.status !== existing.status) {
+          throw new HttpError(
+            HTTP_STATUS.CAMPAIGN_INVALID_TRANSITION.withMessage(
+              "The campaign changed meanwhile; reload and try again",
+            ),
+          );
+        }
+
         await tx.campaign.update({
           where: { id },
           data: {
@@ -1115,64 +1223,54 @@ export class CampaignService {
             ...(request.radiusKm !== undefined
               ? { radiusKm: request.radiusKm }
               : {}),
-            status: request.status,
             ...(request.difficulty !== undefined
               ? { difficulty: request.difficulty }
+              : {}),
+            contactName: optionalText(request.contactName),
+            contactPhone: optionalText(request.contactPhone),
+            safetyNotes: optionalText(request.safetyNotes),
+            ...(request.requirements !== undefined
+              ? {
+                  requirements:
+                    request.requirements === null
+                      ? Prisma.DbNull
+                      : (request.requirements as Prisma.InputJsonValue),
+                }
               : {}),
             updatedBy: userId,
           },
         });
 
-        if (shouldUpdateReports) {
-          await tx.report.updateMany({
-            where: {
-              campaignId: id,
-              deletedAt: null,
-              status: ReportStatus._STATUS_INPROCESS,
-            },
-            data: {
-              campaignId: null,
-              status: ReportStatus._STATUS_TODO,
-              updatedBy: userId,
-            },
-          });
-          await tx.report.updateMany({
-            where: {
-              campaignId: id,
-              deletedAt: null,
-            },
-            data: {
-              campaignId: null,
-              updatedBy: userId,
-            },
-          });
-
-          await this.assignReportsToCampaign(tx, id, reportIds);
+        if (meetingPoints) {
+          await campaignLifecycleService.replaceMeetingPoints(
+            tx,
+            id,
+            meetingPoints,
+            userId,
+          );
+          // Drafts lock nothing; once sent for review, locks follow the meeting points.
+          if (before.status !== CampaignStatus.DRAFT) {
+            await campaignLifecycleService.syncReportLocks(tx, id, userId);
+          }
         }
 
         if (shouldUpdateManagers) {
           await this.syncManagersForCampaign(tx, id, managerIds, userId);
         }
 
-        const campaign = await tx.campaign.findFirst({
-          where: { id, deletedAt: null },
-          include: {
-            campaignManagers: {
-              where: { deletedAt: null },
-              select: { userId: true },
-            },
-            reports: {
-              where: { deletedAt: null },
-              select: { id: true },
-            },
-          },
-        });
-
-        if (!campaign) {
-          throw new Error("Campaign not found");
+        const after = await campaignLifecycleService.loadInTx(tx, id);
+        if (before.status !== CampaignStatus.DRAFT) {
+          await logCampaignEdit(tx, {
+            campaignId: id,
+            status: before.status,
+            actorId: userId,
+            changes: diffSnapshots(
+              campaignLifecycleService.snapshotOf(before),
+              campaignLifecycleService.snapshotOf(after),
+            ),
+          });
         }
-
-        return campaign;
+        return after;
       },
       {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
@@ -1182,145 +1280,21 @@ export class CampaignService {
     return this.toResponseWithVotes(updated, viewerUserId ?? userId);
   }
 
-  /** Admin-only at controller: verify (`ACTIVE`) or ban (`INACTIVE`) a campaign. */
+  /**
+   * Legacy `PUT /:id/verify`: status 1 approves, status 2 blocks (under review) or bans
+   * (running). Kept for one release while clients move to `PUT /:id/review`.
+   */
   async adminVerifyCampaign(
     id: string,
     adminUserId: string,
     targetStatus: GlobalStatus._STATUS_ACTIVE | GlobalStatus._STATUS_INACTIVE,
     rejectReason?: string | null,
-    viewerUserId?: string | null,
   ): Promise<CampaignResponse> {
-    const existing = await campaignRepository.findById(id);
-    if (!existing) {
-      throw new HttpError(
-        HTTP_STATUS.NOT_FOUND.withMessage("Campaign not found"),
-      );
-    }
-
-    const trimmedReason =
-      typeof rejectReason === "string" ? rejectReason.trim() : "";
-
-    if (targetStatus === GlobalStatus._STATUS_ACTIVE) {
-      if (existing.status === GlobalStatus._STATUS_ACTIVE) {
-        return this.toResponseWithVotes(existing, viewerUserId ?? adminUserId);
-      }
-
-      const canApprove =
-        existing.status === GlobalStatus._STATUS_PENDING ||
-        existing.status === GlobalStatus._STATUS_DRAFT ||
-        existing.status === GlobalStatus._STATUS_NEW ||
-        existing.status === GlobalStatus._STATUS_INACTIVE;
-      if (!canApprove) {
-        throw new HttpError(
-          HTTP_STATUS.BAD_REQUEST.withMessage(
-            "Campaign cannot be approved from its current status",
-          ),
-        );
-      }
-
-      const updated = await campaignRepository.update(id, {
-        status: GlobalStatus._STATUS_ACTIVE,
-        rejectReason: trimmedReason || null,
-        updatedBy: adminUserId,
-      });
-
-      void this.notifyNearbyCitizensToJoinApprovedCampaign({
-        campaign: updated,
-        adminUserId,
-      }).catch((err) => {
-        console.warn(
-          "[campaign] failed to notify nearby citizens to join approved campaign",
-          err,
-        );
-      });
-
-      return this.toResponseWithVotes(updated, viewerUserId ?? adminUserId);
-    }
-
-    if (!trimmedReason) {
-      throw new HttpError(
-        HTTP_STATUS.VALIDATION_ERROR.withMessage(
-          "reject_reason is required when banning a campaign",
-        ),
-      );
-    }
-
-    if (existing.status === GlobalStatus._STATUS_INACTIVE) {
-      if (existing.rejectReason === trimmedReason) {
-        return this.toResponseWithVotes(existing, viewerUserId ?? adminUserId);
-      }
-      const updated = await campaignRepository.update(id, {
-        rejectReason: trimmedReason,
-        updatedBy: adminUserId,
-      });
-      return this.toResponseWithVotes(updated, viewerUserId ?? adminUserId);
-    }
-
-    const canBan =
-      existing.status === GlobalStatus._STATUS_PENDING ||
-      existing.status === GlobalStatus._STATUS_DRAFT ||
-      existing.status === GlobalStatus._STATUS_NEW ||
-      existing.status === GlobalStatus._STATUS_ACTIVE;
-    if (!canBan) {
-      throw new HttpError(
-        HTTP_STATUS.BAD_REQUEST.withMessage(
-          "Campaign cannot be banned from its current status",
-        ),
-      );
-    }
-
-    await this.banCampaignAndUnlinkReports(id, adminUserId, trimmedReason);
-
-    const updated = await campaignRepository.findById(id);
-    if (!updated) {
-      throw new HttpError(
-        HTTP_STATUS.NOT_FOUND.withMessage("Campaign not found"),
-      );
-    }
-    return this.toResponseWithVotes(updated, viewerUserId ?? adminUserId);
-  }
-
-  private async banCampaignAndUnlinkReports(
-    campaignId: string,
-    adminUserId: string,
-    rejectReason: string,
-  ): Promise<void> {
-    await prisma.$transaction(
-      async (tx) => {
-        await tx.report.updateMany({
-          where: {
-            campaignId,
-            deletedAt: null,
-            status: ReportStatus._STATUS_INPROCESS,
-          },
-          data: {
-            campaignId: null,
-            status: ReportStatus._STATUS_TODO,
-            updatedBy: adminUserId,
-          },
-        });
-        await tx.report.updateMany({
-          where: {
-            campaignId,
-            deletedAt: null,
-          },
-          data: {
-            campaignId: null,
-            updatedBy: adminUserId,
-          },
-        });
-        await tx.campaign.update({
-          where: { id: campaignId },
-          data: {
-            status: GlobalStatus._STATUS_INACTIVE,
-            rejectReason,
-            updatedBy: adminUserId,
-          },
-        });
-      },
-      {
-        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-      },
+    return this.reviewCampaign(
+      id,
+      adminUserId,
+      targetStatus === GlobalStatus._STATUS_ACTIVE ? "approve" : "block",
+      rejectReason,
     );
   }
 
@@ -1363,10 +1337,17 @@ export class CampaignService {
 
     if (existing.status === GlobalStatus._STATUS_WAITING_CONFIRMED) {
       const trimmedReason = rejectReason.trim();
-      const updated = await campaignRepository.update(id, {
-        status: GlobalStatus._STATUS_ACTIVE,
-        rejectReason: trimmedReason,
-        updatedBy: adminUserId,
+      const updated = await prisma.$transaction(async (tx) => {
+        await transitionCampaign(tx, {
+          campaignId: id,
+          event: "reject_completion",
+          fromStatus: existing.status,
+          actor: "admin",
+          actorId: adminUserId,
+          reason: trimmedReason,
+          data: { rejectReason: trimmedReason },
+        });
+        return campaignLifecycleService.loadInTx(tx, id);
       });
 
       void this.notifyOrganizationOwnerOfCompletionReview({
@@ -1432,9 +1413,15 @@ export class CampaignService {
       );
     }
 
-    const updated = await campaignRepository.update(id, {
-      status: GlobalStatus._STATUS_WAITING_CONFIRMED,
-      updatedBy: userId,
+    const updated = await prisma.$transaction(async (tx) => {
+      await transitionCampaign(tx, {
+        campaignId: id,
+        event: "submit_completion",
+        fromStatus: existing.status,
+        actor: "manager",
+        actorId: userId,
+      });
+      return campaignLifecycleService.loadInTx(tx, id);
     });
 
     void this.notifyAdminsCampaignCompletionPendingApproval({
@@ -1581,13 +1568,13 @@ export class CampaignService {
     // there is no post-commit enqueue/rollback dance.
     await prisma.$transaction(
       async (tx) => {
-        await tx.campaign.update({
-          where: { id },
-          data: {
-            status: GlobalStatus._STATUS_COMPLETED,
-            rejectReason: null,
-            updatedBy: userId,
-          },
+        await transitionCampaign(tx, {
+          campaignId: id,
+          event: "approve_completion",
+          fromStatus: existing.status,
+          actor: "admin",
+          actorId: userId,
+          data: { rejectReason: null },
         });
         await tx.report.updateMany({
           where: { campaignId: id, deletedAt: null },
@@ -1691,10 +1678,10 @@ export class CampaignService {
       titleEn?: string | null;
     };
   }): Promise<void> {
-    const adminIds = getCampaignCompletionAdminNotifyUserIds();
+    const adminIds = getCampaignAdminNotifyUserIds();
     if (adminIds.length === 0) {
       console.warn(
-        "[campaign] CAMPAIGN_COMPLETION_ADMIN_NOTIFY_USER_IDS empty; skipping admin completion-pending notifications",
+        "[campaign] CAMPAIGN_ADMIN_NOTIFY_USER_IDS empty; skipping admin completion-pending notifications",
         { campaignId: args.campaignId },
       );
       return;
@@ -1764,31 +1751,14 @@ export class CampaignService {
     }
 
     await campaignAccessService.assertCanDelete(existing, userId);
+    // Running or finished campaigns are cancelled, never deleted.
+    if (!CAMPAIGN_DELETABLE_STATUSES.includes(existing.status)) {
+      throw new HttpError(HTTP_STATUS.CAMPAIGN_NOT_DELETABLE);
+    }
 
     await prisma.$transaction(
       async (tx) => {
-        await tx.report.updateMany({
-          where: {
-            campaignId: id,
-            deletedAt: null,
-            status: ReportStatus._STATUS_INPROCESS,
-          },
-          data: {
-            campaignId: null,
-            status: ReportStatus._STATUS_TODO,
-            updatedBy: userId,
-          },
-        });
-        await tx.report.updateMany({
-          where: {
-            campaignId: id,
-            deletedAt: null,
-          },
-          data: {
-            campaignId: null,
-            updatedBy: userId,
-          },
-        });
+        await campaignLifecycleService.releaseAllReports(tx, id, userId);
 
         await tx.campaign.update({
           where: { id },
@@ -1804,18 +1774,6 @@ export class CampaignService {
     );
   }
 
-  private normalizeReportIds(reportIds?: string[]): string[] {
-    if (!reportIds || reportIds.length === 0) {
-      return [];
-    }
-
-    return [
-      ...new Set(
-        reportIds.map((id) => id.trim()).filter((id) => id.length > 0),
-      ),
-    ];
-  }
-
   private normalizeManagerIds(
     managerIds: string[] | undefined,
     ownerId: string,
@@ -1826,46 +1784,6 @@ export class CampaignService {
 
     // Owner is always the first manager.
     return [...new Set([ownerId, ...normalized])];
-  }
-
-  private async validateReportIds(reportIds: string[]): Promise<void> {
-    if (reportIds.length === 0) {
-      return;
-    }
-
-    const validIds = await campaignRepository.findValidReportIds(reportIds);
-    if (validIds.length !== reportIds.length) {
-      throw new Error("One or more reportIds are invalid");
-    }
-  }
-
-  private async assignReportsToCampaign(
-    tx: Prisma.TransactionClient,
-    campaignId: string,
-    reportIds: string[],
-  ): Promise<void> {
-    if (reportIds.length === 0) {
-      return;
-    }
-
-    const result = await tx.report.updateMany({
-      where: {
-        id: { in: reportIds },
-        deletedAt: null,
-        campaignId: null,
-        status: ReportStatus._STATUS_TODO,
-      },
-      data: {
-        campaignId,
-        status: ReportStatus._STATUS_INPROCESS,
-      },
-    });
-
-    if (result.count !== reportIds.length) {
-      throw new Error(
-        "Some reports could not be linked to campaign (must be admin-approved, not in another campaign, or were modified concurrently)",
-      );
-    }
   }
 
   private async assignManagersToCampaign(

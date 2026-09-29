@@ -27,6 +27,10 @@ export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
 /** Kinds that bypass user opt-out (e.g. admin workflow). */
 const ADMIN_ONLY_NOTIFICATION_KINDS = new Set([
   "CAMPAIGN_COMPLETION_PENDING_ADMIN",
+  "CAMPAIGN_PENDING_REVIEW",
+  "CAMPAIGN_REVISION_REQUESTED",
+  "CAMPAIGN_BLOCKED",
+  "CAMPAIGN_EXPIRED",
   "ORGANIZATION_CONTACT_VERIFY",
   "ORGANIZATION_APPROVED",
   "ORGANIZATION_REJECTED",
@@ -64,6 +68,7 @@ export function notificationKindToPreferenceKey(
   }
   switch (kind) {
     case "CAMPAIGN_CREATED":
+    case "CAMPAIGN_APPROVED":
       return "campaignNew";
     case "CAMPAIGN_VERIFY_INVITE":
     case "CAMPAIGN_COMPLETION_VERIFY_INVITE":

@@ -12,8 +12,16 @@ import { campaignTaskService } from "./campaign_task/campaign_task.service";
 import { campaignJoiningRequestService } from "./campaign_joining_request/campaign_joining_request.service";
 import { campaignAttendanceService } from "./campaign_attendance/campaign_attendance.service";
 import { GlobalStatus, JoinRequestStatus } from "../../constants/status.enum";
+import {
+  CAMPAIGN_MEETING_POINT_MAX,
+  CAMPAIGN_REVIEW_REASON_MAX_LENGTH,
+} from "@da2/constants";
+import { isPlatformAdmin } from "./campaign-access.service";
+import { campaignEligibilityService } from "./campaign-eligibility.service";
+import { campaignLifecycleService } from "./campaign-lifecycle.service";
 import type {
   AdminCompletionReviewBody,
+  AdminReviewCampaignBody,
   AdminVerifyCampaignBody,
   CampaignListQuery,
   CampaignManagersListQuery,
@@ -26,6 +34,66 @@ import { normalizeQueryUuidList } from "../../utils/query-uuid-list";
 import { resolveRequestLocale } from "../../utils/resolve-request-locale";
 
 const CAMPAIGN_BATCH_QUERY_MAX_IDS = 100;
+
+/**
+ * Shape checks for the fields added with drafts and meeting points. Business rules (lengths,
+ * dates, distances, slots) run on submit, so a draft can be saved half-filled.
+ */
+const campaignDetailValidators = () => [
+  body("contactName")
+    .optional({ nullable: true })
+    .isString()
+    .isLength({ max: 120 })
+    .withMessage("contactName must be at most 120 characters")
+    .trim(),
+  body("contactPhone")
+    .optional({ nullable: true })
+    .isString()
+    .isLength({ max: 20 })
+    .withMessage("contactPhone must be at most 20 characters")
+    .trim(),
+  body("safetyNotes").optional({ nullable: true }).isString().trim(),
+  body("requirements")
+    .optional({ nullable: true })
+    .isObject()
+    .withMessage("requirements must be an object"),
+  body("requirements.minAge")
+    .optional({ nullable: true })
+    .isInt({ min: 0, max: 100 })
+    .withMessage("requirements.minAge must be 0–100"),
+  body("requirements.skills")
+    .optional()
+    .isArray({ max: 20 })
+    .withMessage("requirements.skills must be an array"),
+  body("requirements.skills.*").optional().isString().isLength({ max: 100 }),
+  body("requirements.bringOwnTools").optional().isBoolean(),
+  body("meetingPoints")
+    .optional()
+    .isArray({ max: CAMPAIGN_MEETING_POINT_MAX })
+    .withMessage(`meetingPoints must be an array of at most ${CAMPAIGN_MEETING_POINT_MAX}`),
+  body("meetingPoints.*.name")
+    .optional({ nullable: true })
+    .isString()
+    .isLength({ max: 120 }),
+  body("meetingPoints.*.latitude")
+    .isFloat({ min: -90, max: 90 })
+    .withMessage("meeting point latitude must be between -90 and 90"),
+  body("meetingPoints.*.longitude")
+    .isFloat({ min: -180, max: 180 })
+    .withMessage("meeting point longitude must be between -180 and 180"),
+  body("meetingPoints.*.radiusKm")
+    .isFloat({ min: 0 })
+    .withMessage("meeting point radiusKm must be a non-negative number"),
+  body("meetingPoints.*.detailAddress")
+    .optional({ nullable: true })
+    .isString()
+    .isLength({ max: 255 }),
+  body("meetingPoints.*.gatherAt").optional({ nullable: true }).isISO8601(),
+  body("meetingPoints.*.slots").optional({ nullable: true }).isInt({ min: 1 }),
+  body("meetingPoints.*.leaderUserId").optional({ nullable: true }).isUUID(),
+  body("meetingPoints.*.reportIds").optional().isArray(),
+  body("meetingPoints.*.reportIds.*").isUUID(),
+];
 
 export class CampaignController {
   constructor() {}
@@ -105,6 +173,7 @@ export class CampaignController {
       .optional()
       .isUUID()
       .withMessage("Each reportId must be a valid UUID"),
+    ...campaignDetailValidators(),
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
@@ -182,6 +251,7 @@ export class CampaignController {
     query("difficulty").optional().isInt({ min: 1 }),
     query("greenPointsFrom").optional().isInt({ min: 0 }),
     query("greenPointsTo").optional().isInt({ min: 0 }),
+    query("excludeMemberOrgs").optional().isBoolean(),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -192,7 +262,15 @@ export class CampaignController {
       }
 
       try {
+        const isAdmin = isPlatformAdmin(req.user?.role);
         const q: CampaignListQuery = {
+          // Drafts and campaigns under review, blocked or expired are admin-only here;
+          // their managers find them under GET /campaigns/my.
+          publicOnly: !isAdmin,
+          excludeMemberOrgsOfUserId:
+            isAdmin && String(req.query.excludeMemberOrgs) === "true"
+              ? req.user?.userId
+              : undefined,
           lang: resolveRequestLocale(req),
           search: req.query.search
             ? String(req.query.search).trim()
@@ -428,6 +506,7 @@ export class CampaignController {
           req.params.id,
           req.user?.userId,
           resolveRequestLocale(req),
+          req.user?.role,
         );
         if (!campaign) {
           return sendError(
@@ -439,6 +518,142 @@ export class CampaignController {
         sendSuccess(res, HTTP_STATUS.OK, { campaign });
       } catch (error) {
         console.error("Get campaign error:", error);
+        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+      }
+    },
+  ];
+
+  /** Whether the caller may create a campaign for an organization, and why not. */
+  getCreateEligibility = [
+    query("organizationId")
+      .isUUID()
+      .withMessage("organizationId must be a valid UUID"),
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: errors.array(),
+        });
+      }
+      const userId = req.user?.userId;
+      if (!userId) return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+      try {
+        const eligibility = await campaignEligibilityService.get(
+          userId,
+          String(req.query.organizationId),
+        );
+        sendSuccess(res, HTTP_STATUS.OK, { eligibility });
+      } catch (error) {
+        if (sendHttpErrorResponse(res, error)) return;
+        console.error("Campaign eligibility error:", error);
+        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+      }
+    },
+  ];
+
+  /** Send a draft, or a campaign waiting for changes, for admin review. */
+  submitCampaign = [
+    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: errors.array(),
+        });
+      }
+      const userId = req.user?.userId;
+      if (!userId) return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+      try {
+        const campaign = await campaignService.submitCampaign(
+          req.params.id,
+          userId,
+        );
+        sendSuccess(
+          res,
+          HTTP_STATUS.OK.withMessage("Campaign sent for review"),
+          { campaign },
+        );
+      } catch (error) {
+        if (sendHttpErrorResponse(res, error)) return;
+        console.error("Submit campaign error:", error);
+        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+      }
+    },
+  ];
+
+  /** Admin: approve, request changes to, or block a campaign waiting for review. */
+  reviewCampaign = [
+    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+    body("decision")
+      .isIn(["approve", "request_revision", "block"])
+      .withMessage("decision must be approve, request_revision or block"),
+    body("reason")
+      .optional({ nullable: true })
+      .isString()
+      .isLength({ max: CAMPAIGN_REVIEW_REASON_MAX_LENGTH })
+      .withMessage(
+        `reason must be at most ${CAMPAIGN_REVIEW_REASON_MAX_LENGTH} characters`,
+      ),
+    body("reason").custom((value, { req }) => {
+      if (req.body.decision !== "approve" && !String(value ?? "").trim()) {
+        throw new Error("reason is required to request changes or block");
+      }
+      return true;
+    }),
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: errors.array(),
+        });
+      }
+      const userId = req.user?.userId;
+      if (!userId) return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+      if (!isPlatformAdmin(req.user?.role)) {
+        return sendError(
+          res,
+          HTTP_STATUS.FORBIDDEN.withMessage("Only admin can review a campaign"),
+        );
+      }
+      const { decision, reason } = req.body as AdminReviewCampaignBody;
+      try {
+        const campaign = await campaignService.reviewCampaign(
+          req.params.id,
+          userId,
+          decision,
+          reason,
+        );
+        sendSuccess(res, HTTP_STATUS.OK, { campaign });
+      } catch (error) {
+        if (sendHttpErrorResponse(res, error)) return;
+        console.error("Review campaign error:", error);
+        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+      }
+    },
+  ];
+
+  /** Status changes and edits under review (managers and admins). */
+  getCampaignHistory = [
+    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: errors.array(),
+        });
+      }
+      const userId = req.user?.userId;
+      if (!userId) return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+      try {
+        const history = await campaignLifecycleService.getHistory(
+          req.params.id,
+          userId,
+          req.user?.role,
+        );
+        sendSuccess(res, HTTP_STATUS.OK, { history });
+      } catch (error) {
+        if (sendHttpErrorResponse(res, error)) return;
+        console.error("Campaign history error:", error);
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     },
@@ -809,7 +1024,12 @@ export class CampaignController {
       .optional({ nullable: true })
       .isFloat({ min: 0 })
       .withMessage("radiusKm must be a non-negative number"),
-    body("status").optional().isInt().withMessage("Status must be an integer"),
+    body("status")
+      .not()
+      .exists()
+      .withMessage(
+        "status cannot be set here; use submit, review or mark-done",
+      ),
     body("difficulty")
       .optional()
       .isInt({ min: 1 })
@@ -832,6 +1052,7 @@ export class CampaignController {
       .optional()
       .isUUID()
       .withMessage("Each managerId must be a valid UUID"),
+    ...campaignDetailValidators(),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
