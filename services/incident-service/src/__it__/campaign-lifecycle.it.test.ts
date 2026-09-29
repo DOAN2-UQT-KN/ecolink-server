@@ -374,6 +374,14 @@ describe("admin review", () => {
     const pub = await campaignService.getCampaigns({ publicOnly: true }, outsider);
     expect(pub.campaigns).toHaveLength(0);
   });
+
+  it("a draft is private to its managers, admins included", async () => {
+    const draft = await campaignService.createCampaign(CM, draftRequest([]) as never);
+    expect(await campaignService.getCampaignById(draft.id, ADMIN, null, "admin")).toBeNull();
+    expect(await campaignService.getCampaignById(draft.id, OWNER)).not.toBeNull();
+    const adminList = await campaignService.getCampaigns({ excludeDrafts: true }, ADMIN);
+    expect(adminList.campaigns.map((c) => c.id)).not.toContain(draft.id);
+  });
 });
 
 describe("lifecycle sweep", () => {

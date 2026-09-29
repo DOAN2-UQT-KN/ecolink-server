@@ -386,6 +386,8 @@ export interface CampaignListQuery {
   excludeMemberOrgsOfUserId?: string;
   /** Restrict to publicly visible statuses (non-admin browsing). */
   publicOnly?: boolean;
+  /** Drafts belong to their creator and managers only (GET /campaigns/my). */
+  excludeDrafts?: boolean;
 }
 
 /** Query for GET /campaigns/admin/awaiting-multi-submission-review. */

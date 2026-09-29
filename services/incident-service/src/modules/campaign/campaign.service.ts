@@ -698,8 +698,8 @@ export class CampaignService {
   }
 
   /**
-   * Drafts and campaigns under review, blocked or expired are visible only to the people who
-   * manage them and to admins; everyone else gets null (404). The contact phone is shown to
+   * Drafts are visible only to the people who manage them; campaigns under review, blocked or
+   * expired also to admins; everyone else gets null (404). The contact phone is shown to
    * managers, admins and accepted volunteers.
    */
   async getCampaignById(
@@ -714,6 +714,10 @@ export class CampaignService {
     const canManage = viewerUserId
       ? (await campaignAccessService.resolve(campaign, viewerUserId)).canManage
       : false;
+    // A draft is private to the people managing it, admins included out.
+    if (campaign.status === CampaignStatus.DRAFT && !canManage) {
+      return null;
+    }
     if (
       !isAdmin &&
       !canManage &&
@@ -861,6 +865,7 @@ export class CampaignService {
         isOwner: query.isOwner,
         excludeMemberOrgsOfUserId: query.excludeMemberOrgsOfUserId,
         publicOnly: query.publicOnly,
+        excludeDrafts: query.excludeDrafts,
       },
       skip,
       take: limit,

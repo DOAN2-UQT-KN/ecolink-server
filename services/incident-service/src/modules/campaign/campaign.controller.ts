@@ -267,6 +267,7 @@ export class CampaignController {
           // Drafts and campaigns under review, blocked or expired are admin-only here;
           // their managers find them under GET /campaigns/my.
           publicOnly: !isAdmin,
+          excludeDrafts: true,
           excludeMemberOrgsOfUserId:
             isAdmin && String(req.query.excludeMemberOrgs) === "true"
               ? req.user?.userId

@@ -1,7 +1,7 @@
 import { Prisma, PrismaClient } from "@prisma/client";
 import prisma from "../../config/prisma.client";
 import { GlobalStatus, ReportStatus } from "../../constants/status.enum";
-import { CAMPAIGN_PUBLIC_STATUSES, OWNER_ROLES } from "@da2/constants";
+import { CAMPAIGN_PUBLIC_STATUSES, CampaignStatus, OWNER_ROLES } from "@da2/constants";
 import { CAMPAIGN_INCLUDE, CampaignWithReports } from "./campaign.entity";
 
 const SUBMISSION_STATUSES_AWAITING_REVIEW: number[] = [
@@ -63,6 +63,7 @@ export class CampaignRepository {
       isOwner?: boolean;
       excludeMemberOrgsOfUserId?: string;
       publicOnly?: boolean;
+      excludeDrafts?: boolean;
     };
     skip: number;
     take: number;
@@ -84,6 +85,7 @@ export class CampaignRepository {
         filters.publicOnly
           ? { status: { in: [...CAMPAIGN_PUBLIC_STATUSES] } }
           : {},
+        filters.excludeDrafts ? { status: { not: CampaignStatus.DRAFT } } : {},
         filters.excludeMemberOrgsOfUserId
           ? {
               organization: {
