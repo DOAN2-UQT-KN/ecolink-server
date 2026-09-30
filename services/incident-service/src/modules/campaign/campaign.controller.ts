@@ -15,6 +15,7 @@ import { GlobalStatus, JoinRequestStatus } from "../../constants/status.enum";
 import {
   CAMPAIGN_DIFFICULTY_MAX,
   CAMPAIGN_DIFFICULTY_MIN,
+  CAMPAIGN_DAY_MAX,
   CAMPAIGN_MEETING_POINT_MAX,
   CAMPAIGN_REVIEW_REASON_MAX_LENGTH,
 } from "@da2/constants";
@@ -90,11 +91,27 @@ const campaignDetailValidators = () => [
     .optional({ nullable: true })
     .isString()
     .isLength({ max: 255 }),
-  body("meetingPoints.*.gatherAt").optional({ nullable: true }).isISO8601(),
-  body("meetingPoints.*.slots").optional({ nullable: true }).isInt({ min: 1 }),
-  body("meetingPoints.*.leaderUserId").optional({ nullable: true }).isUUID(),
   body("meetingPoints.*.reportIds").optional().isArray(),
   body("meetingPoints.*.reportIds.*").isUUID(),
+  body(["startDate", "endDate"])
+    .not()
+    .exists()
+    .withMessage("startDate and endDate were replaced by days"),
+  body("days")
+    .optional()
+    .isArray({ max: CAMPAIGN_DAY_MAX })
+    .withMessage(`days must be an array of at most ${CAMPAIGN_DAY_MAX}`),
+  body("days.*.startAt").isISO8601().withMessage("day startAt must be an ISO 8601 datetime"),
+  body("days.*.endAt").isISO8601().withMessage("day endAt must be an ISO 8601 datetime"),
+  body("shifts")
+    .optional()
+    .isArray({ max: CAMPAIGN_DAY_MAX * CAMPAIGN_MEETING_POINT_MAX })
+    .withMessage("shifts must be an array"),
+  body("shifts.*.dayIndex").isInt({ min: 0, max: CAMPAIGN_DAY_MAX - 1 }),
+  body("shifts.*.meetingPointIndex").isInt({ min: 0, max: CAMPAIGN_MEETING_POINT_MAX - 1 }),
+  body("shifts.*.slots").isInt({ min: 0 }).withMessage("shift slots must be a whole number ≥ 0"),
+  body("shifts.*.gatherAt").optional({ nullable: true }).isISO8601(),
+  body("shifts.*.leaderUserId").optional({ nullable: true }).isUUID(),
 ];
 
 export class CampaignController {
@@ -136,45 +153,11 @@ export class CampaignController {
       .withMessage("banner must be at most 2048 characters")
       .trim(),
     body("description").optional().trim(),
-    body("startDate")
-      .optional()
-      .isISO8601()
-      .withMessage("startDate must be a valid ISO 8601 datetime"),
-    body("endDate")
-      .optional()
-      .isISO8601()
-      .withMessage("endDate must be a valid ISO 8601 datetime"),
-    body("detailAddress")
-      .optional()
-      .isString()
-      .isLength({ max: 255 })
-      .withMessage("detailAddress must be at most 255 characters")
-      .trim(),
-    body("latitude")
-      .optional()
-      .isFloat({ min: -90, max: 90 })
-      .withMessage("latitude must be between -90 and 90"),
-    body("longitude")
-      .optional()
-      .isFloat({ min: -180, max: 180 })
-      .withMessage("longitude must be between -180 and 180"),
-    body("radiusKm")
-      .optional()
-      .isFloat({ min: 0 })
-      .withMessage("radiusKm must be a non-negative number"),
     body("difficulty")
       .isInt({ min: CAMPAIGN_DIFFICULTY_MIN, max: CAMPAIGN_DIFFICULTY_MAX })
       .withMessage(
         `difficulty must be between ${CAMPAIGN_DIFFICULTY_MIN} and ${CAMPAIGN_DIFFICULTY_MAX}`,
       ),
-    body("reportIds")
-      .optional()
-      .isArray()
-      .withMessage("reportIds must be an array"),
-    body("reportIds.*")
-      .optional()
-      .isUUID()
-      .withMessage("Each reportId must be a valid UUID"),
     ...campaignDetailValidators(),
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -991,32 +974,6 @@ export class CampaignController {
       .withMessage("banner must be at most 2048 characters")
       .trim(),
     body("description").optional().trim(),
-    body("startDate")
-      .optional({ nullable: true })
-      .isISO8601()
-      .withMessage("startDate must be a valid ISO 8601 datetime"),
-    body("endDate")
-      .optional({ nullable: true })
-      .isISO8601()
-      .withMessage("endDate must be a valid ISO 8601 datetime"),
-    body("detailAddress")
-      .optional({ nullable: true })
-      .isString()
-      .isLength({ max: 255 })
-      .withMessage("detailAddress must be at most 255 characters")
-      .trim(),
-    body("latitude")
-      .optional({ nullable: true })
-      .isFloat({ min: -90, max: 90 })
-      .withMessage("latitude must be between -90 and 90"),
-    body("longitude")
-      .optional({ nullable: true })
-      .isFloat({ min: -180, max: 180 })
-      .withMessage("longitude must be between -180 and 180"),
-    body("radiusKm")
-      .optional({ nullable: true })
-      .isFloat({ min: 0 })
-      .withMessage("radiusKm must be a non-negative number"),
     body("status")
       .not()
       .exists()
@@ -1029,14 +986,6 @@ export class CampaignController {
       .withMessage(
         `difficulty must be between ${CAMPAIGN_DIFFICULTY_MIN} and ${CAMPAIGN_DIFFICULTY_MAX}`,
       ),
-    body("reportIds")
-      .optional()
-      .isArray()
-      .withMessage("reportIds must be an array"),
-    body("reportIds.*")
-      .optional()
-      .isUUID()
-      .withMessage("Each reportId must be a valid UUID"),
     body("managerIds")
       .optional()
       .isArray()

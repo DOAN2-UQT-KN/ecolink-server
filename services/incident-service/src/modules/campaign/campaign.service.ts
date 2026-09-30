@@ -41,7 +41,9 @@ import {
   campaignLifecycleService,
   diffSnapshots,
   isPreApproval,
-  meetingPointsFromRequest,
+  scheduleFromRequest,
+  scheduleOf,
+  type NormalizedSchedule,
 } from "./campaign-lifecycle.service";
 import { logCampaignEdit, transitionCampaign } from "./campaign-state-machine";
 import { isPlatformAdmin } from "./campaign-access.service";
@@ -460,6 +462,30 @@ export class CampaignService {
    * Creates a DRAFT (spec 1.5). Nothing is locked yet: the chosen reports are only remembered
    * on the meeting points, and the full rules run when the draft is sent for review.
    */
+  /**
+   * Waste points of a schedule must be selectable, and shift leaders must be members of the
+   * organization. Leaders of off shifts count too: they come back when the shift is turned on.
+   */
+  private async assertScheduleUsable(
+    schedule: NormalizedSchedule,
+    campaignId: string | null,
+    organizationId: string,
+  ): Promise<void> {
+    await campaignLifecycleService.assertReportsSelectable(
+      prisma,
+      campaignId,
+      schedule.meetingPoints.flatMap((p) => p.reportIds),
+    );
+    const leaderIds = [
+      ...new Set(
+        schedule.shifts.map((sh) => sh.leaderUserId).filter((x): x is string => !!x),
+      ),
+    ];
+    if (leaderIds.length > 0) {
+      await campaignManagerService.assertAllMembers(organizationId, leaderIds);
+    }
+  }
+
   async createCampaign(
     userId: string,
     request: CreateCampaignRequest,
@@ -477,20 +503,12 @@ export class CampaignService {
     // saving a draft does not depend on reward-service.
     assertDifficultyInRange(request.difficulty);
 
-    const meetingPoints = meetingPointsFromRequest(request, userId) ?? [];
-    await campaignLifecycleService.assertReportsSelectable(
-      prisma,
-      null,
-      meetingPoints.flatMap((p) => p.reportIds),
-    );
-    if (meetingPoints.length > 0) {
-      await campaignManagerService.assertAllMembers(
-        org.id,
-        meetingPoints
-          .map((p) => p.leaderUserId)
-          .filter((id): id is string => !!id),
-      );
-    }
+    const schedule: NormalizedSchedule = scheduleFromRequest(request, null, userId) ?? {
+      days: [],
+      meetingPoints: [],
+      shifts: [],
+    };
+    await this.assertScheduleUsable(schedule, null, org.id);
 
     const sourceTitle = request.title.trim();
     const titleVi =
@@ -520,12 +538,6 @@ export class CampaignService {
             description: sourceDesc || null,
             descriptionVi,
             descriptionEn,
-            startDate: request.startDate ? new Date(request.startDate) : null,
-            endDate: request.endDate ? new Date(request.endDate) : null,
-            detailAddress: request.detailAddress,
-            latitude: request.latitude,
-            longitude: request.longitude,
-            radiusKm: request.radiusKm,
             difficulty: request.difficulty,
             contactName: request.contactName?.trim() || null,
             contactPhone: request.contactPhone?.trim() || null,
@@ -542,12 +554,7 @@ export class CampaignService {
 
         // The creator manages the draft right away, so co-managers can see it too.
         await this.assignManagersToCampaign(tx, campaign.id, [userId], userId);
-        await campaignLifecycleService.replaceMeetingPoints(
-          tx,
-          campaign.id,
-          meetingPoints,
-          userId,
-        );
+        await campaignLifecycleService.replaceSchedule(tx, campaign.id, schedule, userId);
 
         return campaignLifecycleService.loadInTx(tx, campaign.id);
       },
@@ -1177,15 +1184,10 @@ export class CampaignService {
           "titleVi",
           "titleEn",
           "difficulty",
-          "startDate",
-          "endDate",
-          "detailAddress",
-          "latitude",
-          "longitude",
-          "radiusKm",
-          "reportIds",
           "requirements",
+          "days",
           "meetingPoints",
+          "shifts",
         ] as const
       ).filter((key) => request[key] !== undefined);
       if (restricted.length > 0) {
@@ -1199,27 +1201,13 @@ export class CampaignService {
       assertDifficultyInRange(request.difficulty);
     }
 
-    const meetingPoints = meetingPointsFromRequest(
-      {
-        ...request,
-        latitude: request.latitude ?? existing.latitude,
-        longitude: request.longitude ?? existing.longitude,
-        radiusKm: request.radiusKm ?? existing.radiusKm,
-      },
+    const schedule = scheduleFromRequest(
+      request,
+      scheduleOf(existing),
       existing.createdBy ?? userId,
     );
-    if (meetingPoints) {
-      await campaignLifecycleService.assertReportsSelectable(
-        prisma,
-        id,
-        meetingPoints.flatMap((p) => p.reportIds),
-      );
-      await campaignManagerService.assertAllMembers(
-        existing.organizationId,
-        meetingPoints
-          .map((p) => p.leaderUserId)
-          .filter((leader): leader is string => !!leader),
-      );
+    if (schedule) {
+      await this.assertScheduleUsable(schedule, id, existing.organizationId);
     }
 
     const shouldUpdateManagers = request.managerIds !== undefined;
@@ -1253,32 +1241,6 @@ export class CampaignService {
             title: request.title,
             ...(request.banner !== undefined ? { banner: request.banner } : {}),
             description: request.description,
-            ...(request.startDate !== undefined
-              ? {
-                  startDate:
-                    request.startDate === null
-                      ? null
-                      : new Date(request.startDate),
-                }
-              : {}),
-            ...(request.endDate !== undefined
-              ? {
-                  endDate:
-                    request.endDate === null ? null : new Date(request.endDate),
-                }
-              : {}),
-            ...(request.detailAddress !== undefined
-              ? { detailAddress: request.detailAddress }
-              : {}),
-            ...(request.latitude !== undefined
-              ? { latitude: request.latitude }
-              : {}),
-            ...(request.longitude !== undefined
-              ? { longitude: request.longitude }
-              : {}),
-            ...(request.radiusKm !== undefined
-              ? { radiusKm: request.radiusKm }
-              : {}),
             ...(request.difficulty !== undefined
               ? { difficulty: request.difficulty }
               : {}),
@@ -1297,13 +1259,8 @@ export class CampaignService {
           },
         });
 
-        if (meetingPoints) {
-          await campaignLifecycleService.replaceMeetingPoints(
-            tx,
-            id,
-            meetingPoints,
-            userId,
-          );
+        if (schedule) {
+          await campaignLifecycleService.replaceSchedule(tx, id, schedule, userId);
           // Drafts lock nothing; once sent for review, locks follow the meeting points.
           if (before.status !== CampaignStatus.DRAFT) {
             await campaignLifecycleService.syncReportLocks(tx, id, userId);

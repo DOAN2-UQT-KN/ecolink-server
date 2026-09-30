@@ -28,24 +28,34 @@ export interface CreateCampaignRequest {
   description?: string;
   descriptionVi?: string;
   descriptionEn?: string;
-  startDate?: string;
-  endDate?: string;
-  detailAddress?: string;
-  latitude?: number;
-  longitude?: number;
-  radiusKm?: number;
   /** 1 = easy … 4 = very hard; must exist in reward-service `difficulties` table. */
   difficulty: number;
-  /**
-   * Legacy single-location input: when `meetingPoints` is absent, one meeting point is built
-   * from latitude/longitude/radiusKm and these reports.
-   */
-  reportIds?: string[];
   contactName?: string | null;
   contactPhone?: string | null;
   safetyNotes?: string | null;
   requirements?: CampaignRequirements | null;
+  days?: CampaignDayInput[];
   meetingPoints?: MeetingPointInput[];
+  shifts?: CampaignShiftInput[];
+}
+
+/** One campaign day in a create/update body. */
+export interface CampaignDayInput {
+  startAt: string;
+  endAt: string;
+}
+
+/**
+ * One shift (day × meeting point) in a create/update body, by position in `days` and
+ * `meetingPoints`. Shifts left out are off (0 slots).
+ */
+export interface CampaignShiftInput {
+  dayIndex: number;
+  meetingPointIndex: number;
+  gatherAt?: string | null;
+  /** 0 turns the shift off. */
+  slots: number;
+  leaderUserId?: string | null;
 }
 
 /** One gathering point in a create/update body. */
@@ -55,9 +65,6 @@ export interface MeetingPointInput {
   longitude: number;
   detailAddress?: string | null;
   radiusKm: number;
-  gatherAt?: string | null;
-  slots?: number | null;
-  leaderUserId?: string | null;
   reportIds?: string[];
 }
 
@@ -68,11 +75,24 @@ export interface MeetingPointResponse {
   longitude: number;
   detailAddress: string | null;
   radiusKm: number;
-  gatherAt: Date | null;
-  slots: number | null;
-  leaderUserId: string | null;
   sortOrder: number;
   reportIds: string[];
+}
+
+export interface CampaignDayResponse {
+  id: string;
+  startAt: Date;
+  endAt: Date;
+  sortOrder: number;
+}
+
+export interface CampaignShiftResponse {
+  id: string;
+  dayId: string;
+  meetingPointId: string;
+  gatherAt: Date | null;
+  slots: number;
+  leaderUserId: string | null;
 }
 
 /** Body for PUT /api/v1/campaigns/:id/review (admin). */
@@ -125,20 +145,18 @@ export interface UpdateCampaignRequest {
   descriptionVi?: string;
   descriptionEn?: string;
   difficulty?: number;
-  startDate?: string | null;
-  endDate?: string | null;
-  detailAddress?: string | null;
-  latitude?: number | null;
-  longitude?: number | null;
-  radiusKm?: number | null;
-  reportIds?: string[];
   managerIds?: string[];
   contactName?: string | null;
   contactPhone?: string | null;
   safetyNotes?: string | null;
   requirements?: CampaignRequirements | null;
-  /** Replaces all meeting points (and their reports) when present. */
+  /**
+   * The schedule (days, meeting points with their reports, shifts). Any of the three present
+   * replaces the whole schedule; the ones left out are kept from the campaign.
+   */
+  days?: CampaignDayInput[];
   meetingPoints?: MeetingPointInput[];
+  shifts?: CampaignShiftInput[];
 }
 
 export interface CampaignResponse {
@@ -158,8 +176,6 @@ export interface CampaignResponse {
   status: number;
   /** Admin ban reason; null when verified or never banned. */
   rejectReason: string | null;
-  startDate: Date | null;
-  endDate: Date | null;
   detailAddress: string | null;
   latitude: number | null;
   longitude: number | null;
@@ -173,12 +189,16 @@ export interface CampaignResponse {
   /** Resubmit before this while NEEDS_REVISION. */
   revisionDeadline: Date | null;
   submittedAt: Date | null;
+  /** Campaign days in time order; the campaign runs from the first start to the last end. */
+  days: CampaignDayResponse[];
   meetingPoints: MeetingPointResponse[];
+  /** Every day × meeting point; `slots` 0 = off. */
+  shifts: CampaignShiftResponse[];
   /** Green points for this difficulty tier (reward rules). */
   greenPoints: number;
   /** Count of approved campaign join requests (volunteers). */
   currentMembers: number;
-  /** Volunteer cap for this difficulty tier from reward-service; null means no limit. */
+  /** Volunteers allowed per day for this difficulty tier (reward-service); null = no limit. */
   maxMembers: number | null;
   createdBy: string | null;
   updatedBy: string | null;

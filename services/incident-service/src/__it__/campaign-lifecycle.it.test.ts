@@ -128,18 +128,23 @@ function draftRequest(reportIds: string[], overrides: Record<string, unknown> = 
     description: "<p>" + "Cùng nhau dọn sạch bờ kênh. ".repeat(6) + "</p>",
     banner: "https://example.com/banner.jpg",
     difficulty: 1,
-    startDate: start.toISOString(),
-    endDate: end.toISOString(),
+    days: [{ startAt: start.toISOString(), endAt: end.toISOString() }],
     contactName: "Nguyễn Văn A",
     contactPhone: "0901234567",
     meetingPoints: [
       {
         ...POINT,
         radiusKm: 1,
+        reportIds,
+      },
+    ],
+    shifts: [
+      {
+        dayIndex: 0,
+        meetingPointIndex: 0,
         gatherAt: new Date(start.getTime() - HOUR / 2).toISOString(),
         slots: 10,
         leaderUserId: CM,
-        reportIds,
       },
     ],
     ...overrides,
@@ -201,6 +206,46 @@ describe("draft and submit", () => {
     expect(submitted.status).toBe(S.PENDING_REVIEW);
   });
 
+  it("stores the day × meeting point grid; missing shifts are saved as off", async () => {
+    const { start, end } = schedule();
+    const DAY = 24 * HOUR;
+    const day2 = { startAt: new Date(start.getTime() + 2 * DAY), endAt: new Date(end.getTime() + 2 * DAY) };
+    const base = draftRequest([]);
+    const draft = await campaignService.createCampaign(CM, {
+      ...base,
+      // Sent out of order: the server sorts days and moves their shifts along.
+      days: [
+        { startAt: day2.startAt.toISOString(), endAt: day2.endAt.toISOString() },
+        base.days[0],
+      ],
+      meetingPoints: [
+        { ...base.meetingPoints[0], name: "Bắc" },
+        { ...base.meetingPoints[0], name: "Nam", latitude: POINT.latitude + 0.01 },
+      ],
+      shifts: [
+        { dayIndex: 1, meetingPointIndex: 0, slots: 12, leaderUserId: CM },
+        { dayIndex: 1, meetingPointIndex: 1, slots: 8, leaderUserId: CM },
+        { dayIndex: 0, meetingPointIndex: 0, slots: 20, leaderUserId: CM },
+      ],
+    } as never);
+
+    expect(draft.days.map((d) => d.startAt.toISOString())).toEqual([
+      start.toISOString(),
+      day2.startAt.toISOString(),
+    ]);
+    const [first, second] = draft.days.map((d) => d.id);
+    const [north, south] = draft.meetingPoints.map((p) => p.id);
+    const slotsOf = (dayId: string, pointId: string) =>
+      draft.shifts.find((sh) => sh.dayId === dayId && sh.meetingPointId === pointId)?.slots;
+    expect(draft.shifts).toHaveLength(4);
+    expect([slotsOf(first, north), slotsOf(first, south)]).toEqual([12, 8]);
+    expect([slotsOf(second, north), slotsOf(second, south)]).toEqual([20, 0]);
+
+    await campaignService.submitCampaign(draft.id, CM);
+    const submitted = await prisma.campaign.findUniqueOrThrow({ where: { id: draft.id } });
+    expect(submitted.status).toBe(S.PENDING_REVIEW);
+  });
+
   it("two drafts racing for one report: one wins, the other gets 409 naming it", async () => {
     const report = await seedReport();
     const a = await campaignService.createCampaign(CM, draftRequest([report.id]) as never);
@@ -226,7 +271,7 @@ describe("draft and submit", () => {
           expect.objectContaining({ field: "title" }),
           expect.objectContaining({ field: "description" }),
           expect.objectContaining({ field: "banner" }),
-          expect.objectContaining({ field: "startDate" }),
+          expect.objectContaining({ field: "days" }),
           expect.objectContaining({ field: "contactName" }),
           expect.objectContaining({ field: "meetingPoints" }),
         ]),
@@ -279,6 +324,17 @@ describe("draft and submit", () => {
       where: { campaignId: draft.id, type: "EDIT" },
     });
     expect(edit?.changes).toHaveProperty("meetingPoints");
+    // Shifts were not sent: the grid is kept as it was.
+    expect(edit?.changes).not.toHaveProperty("shifts");
+
+    await campaignService.updateCampaign(draft.id, CM, {
+      shifts: [{ dayIndex: 0, meetingPointIndex: 0, slots: 12, leaderUserId: CM }],
+    } as never);
+    const edits = await prisma.campaignStatusLog.findMany({
+      where: { campaignId: draft.id, type: "EDIT" },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(edits[0].changes).toHaveProperty("shifts");
   });
 });
 
@@ -453,9 +509,9 @@ describe("lifecycle sweep", () => {
     const report = await seedReport();
     const draft = await campaignService.createCampaign(CM, draftRequest([report.id]) as never);
     await campaignService.submitCampaign(draft.id, CM);
-    await prisma.campaign.update({
-      where: { id: draft.id },
-      data: { startDate: new Date(Date.now() - HOUR) },
+    await prisma.campaignDay.updateMany({
+      where: { campaignId: draft.id },
+      data: { startAt: new Date(Date.now() - HOUR) },
     });
 
     const stale = await campaignService.createCampaign(CM, draftRequest([]) as never);

@@ -1,15 +1,22 @@
 import {
   Campaign,
+  CampaignDay,
   CampaignManager,
   CampaignMeetingPoint,
   CampaignMeetingPointReport,
+  CampaignShift,
   Report,
 } from "@prisma/client";
 import type { AppLocale, CampaignRequirements } from "@da2/constants";
 import { pickLocalizedText, toLocalizedText } from "@da2/constants";
 import { defaultCampaignCompletionVerificationSummary } from "./campaign_completion_verification/campaign_completion_verification.dto";
 import { defaultResourceVoteSummary } from "../vote/vote.dto";
-import { CampaignResponse, MeetingPointResponse } from "./campaign.dto";
+import {
+  CampaignDayResponse,
+  CampaignResponse,
+  CampaignShiftResponse,
+  MeetingPointResponse,
+} from "./campaign.dto";
 
 export type CampaignEntity = Campaign;
 
@@ -21,6 +28,8 @@ export type CampaignWithReports = Campaign & {
   reports: Pick<Report, "id">[];
   campaignManagers: Pick<CampaignManager, "userId">[];
   meetingPoints?: MeetingPointWithReports[];
+  days?: CampaignDay[];
+  shifts?: CampaignShift[];
 };
 
 /** The relations every campaign read loads (managers, locked reports, meeting points). */
@@ -38,6 +47,8 @@ export const CAMPAIGN_INCLUDE = {
     orderBy: { sortOrder: "asc" },
     include: { reports: { select: { reportId: true } } },
   },
+  days: { orderBy: { startAt: "asc" } },
+  shifts: true,
 } as const;
 
 export const toMeetingPointResponse = (
@@ -49,12 +60,39 @@ export const toMeetingPointResponse = (
   longitude: point.longitude,
   detailAddress: point.detailAddress,
   radiusKm: point.radiusKm,
-  gatherAt: point.gatherAt,
-  slots: point.slots,
-  leaderUserId: point.leaderUserId,
   sortOrder: point.sortOrder,
   reportIds: point.reports.map((r) => r.reportId),
 });
+
+export const toCampaignDayResponse = (day: CampaignDay): CampaignDayResponse => ({
+  id: day.id,
+  startAt: day.startAt,
+  endAt: day.endAt,
+  sortOrder: day.sortOrder,
+});
+
+export const toCampaignShiftResponse = (shift: CampaignShift): CampaignShiftResponse => ({
+  id: shift.id,
+  dayId: shift.dayId,
+  meetingPointId: shift.meetingPointId,
+  gatherAt: shift.gatherAt,
+  slots: shift.slots,
+  leaderUserId: shift.leaderUserId,
+});
+
+/** First start and last end of a campaign's days; null when it has none yet. */
+export const campaignSpan = (
+  days: Pick<CampaignDay, "startAt" | "endAt">[] | undefined,
+): { startAt: Date; endAt: Date } | null => {
+  if (!days || days.length === 0) return null;
+  let startAt = days[0].startAt;
+  let endAt = days[0].endAt;
+  for (const d of days) {
+    if (d.startAt < startAt) startAt = d.startAt;
+    if (d.endAt > endAt) endAt = d.endAt;
+  }
+  return { startAt, endAt };
+};
 
 export const toCampaignResponse = (
   entity: CampaignWithReports,
@@ -90,8 +128,6 @@ export const toCampaignResponse = (
     descriptionEn: entity.descriptionEn ?? null,
     status: entity.status,
     rejectReason: entity.rejectReason ?? null,
-    startDate: entity.startDate,
-    endDate: entity.endDate,
     detailAddress: entity.detailAddress,
     latitude: entity.latitude,
     longitude: entity.longitude,
@@ -104,7 +140,9 @@ export const toCampaignResponse = (
     requirements: (entity.requirements as CampaignRequirements | null) ?? null,
     revisionDeadline: entity.revisionDeadline ?? null,
     submittedAt: entity.submittedAt ?? null,
+    days: (entity.days ?? []).map(toCampaignDayResponse),
     meetingPoints: (entity.meetingPoints ?? []).map(toMeetingPointResponse),
+    shifts: (entity.shifts ?? []).map(toCampaignShiftResponse),
     greenPoints,
     currentMembers,
     maxMembers,

@@ -13,16 +13,33 @@ const NOW = new Date("2026-10-01T01:00:00.000Z"); // 08:00 in Vietnam
 // 07:00–11:00 local on 2026-10-05
 const START = new Date("2026-10-05T00:00:00.000Z");
 const END = new Date("2026-10-05T04:00:00.000Z");
+const DAY = 24 * HOUR;
 const LEADER = "leader-1";
 const BASE = { latitude: 10.77, longitude: 106.7 };
+
+/** An active shift on day `d` at point `p`, gathering half an hour before the day starts. */
+function shift(d: number, p: number, slots = 10, day = START) {
+  return {
+    dayIndex: d,
+    meetingPointIndex: p,
+    gatherAt: new Date(day.getTime() - HOUR / 2),
+    slots,
+    leaderUserId: LEADER,
+  };
+}
+
+/** Day `n` days after START, same hours. */
+const dayAfter = (n: number) => ({
+  startAt: new Date(START.getTime() + n * DAY),
+  endAt: new Date(END.getTime() + n * DAY),
+});
 
 function input(overrides: Partial<SubmitCampaignInput> = {}): SubmitCampaignInput {
   return {
     title: "Dọn rác kênh Nhiêu Lộc",
     description: "<p>" + "Cùng nhau dọn sạch bờ kênh. ".repeat(6) + "</p>",
     banner: "https://example.com/banner.jpg",
-    startDate: START,
-    endDate: END,
+    days: [{ startAt: START, endAt: END }],
     contactName: "Nguyễn Văn A",
     contactPhone: "0901234567",
     difficulty: 1,
@@ -31,12 +48,10 @@ function input(overrides: Partial<SubmitCampaignInput> = {}): SubmitCampaignInpu
       {
         ...BASE,
         radiusKm: 1,
-        gatherAt: new Date(START.getTime() - HOUR / 2),
-        slots: 10,
-        leaderUserId: LEADER,
         reportIds: ["r1"],
       },
     ],
+    shifts: [shift(0, 0)],
     ...overrides,
   };
 }
@@ -76,26 +91,52 @@ describe("validateCampaignForSubmit", () => {
   it("requires 48 hours of lead time", () => {
     const soon = new Date(NOW.getTime() + 47 * HOUR);
     expect(
-      codes(input({ startDate: soon, endDate: new Date(soon.getTime() + HOUR) })),
+      codes(
+        input({
+          days: [{ startAt: soon, endAt: new Date(soon.getTime() + HOUR) }],
+          shifts: [{ ...shift(0, 0), gatherAt: null }],
+        }),
+      ),
     ).toContain("START_TOO_SOON");
   });
 
-  it("requires end after start, at most 12 hours, same local day", () => {
-    expect(codes(input({ endDate: START }))).toContain("END_BEFORE_START");
-    expect(codes(input({ endDate: new Date(START.getTime() + 13 * HOUR) }))).toContain(
-      "TOO_LONG",
+  it("requires each day to end after it starts, within 12 hours, on the same local date", () => {
+    expect(codes(input({ days: [{ startAt: START, endAt: START }] }))).toContain(
+      "END_BEFORE_START",
     );
+    expect(
+      codes(input({ days: [{ startAt: START, endAt: new Date(START.getTime() + 13 * HOUR) }] })),
+    ).toContain("TOO_LONG");
     // 22:00 → 02:00 local: 4 hours but across midnight
     const late = new Date("2026-10-05T15:00:00.000Z");
     expect(
       codes(
         input({
-          startDate: late,
-          endDate: new Date(late.getTime() + 4 * HOUR),
-          meetingPoints: [{ ...input().meetingPoints[0], gatherAt: null }],
+          days: [{ startAt: late, endAt: new Date(late.getTime() + 4 * HOUR) }],
+          shifts: [{ ...shift(0, 0), gatherAt: null }],
         }),
       ),
     ).toContain("MULTI_DAY_UNSUPPORTED");
+  });
+
+  it("runs on 1–7 distinct days within 14 days of the first", () => {
+    expect(codes(input({ days: [], shifts: [] }))).toContain("DAY_COUNT");
+    const eight = Array.from({ length: 8 }, (_, i) => dayAfter(i));
+    expect(
+      codes(input({ days: eight, shifts: eight.map((d, i) => shift(i, 0, 10, d.startAt)) })),
+    ).toContain("DAY_COUNT");
+    expect(
+      codes(input({ days: [dayAfter(0), dayAfter(0)], shifts: [shift(0, 0), shift(1, 0)] })),
+    ).toContain("DAY_DUPLICATED");
+    // Day 1 and day 14 are fine (not consecutive is fine too); day 15 is not.
+    const ok = [dayAfter(0), dayAfter(13)];
+    expect(
+      codes(input({ days: ok, shifts: ok.map((d, i) => shift(i, 0, 10, d.startAt)) })),
+    ).toEqual([]);
+    const tooWide = [dayAfter(0), dayAfter(14)];
+    expect(
+      codes(input({ days: tooWide, shifts: tooWide.map((d, i) => shift(i, 0, 10, d.startAt)) })),
+    ).toContain("DAY_SPAN_TOO_WIDE");
   });
 
   it("requires a contact and a valid phone", () => {
@@ -150,30 +191,91 @@ describe("validateCampaignForSubmit", () => {
     );
   });
 
-  it("caps the total slots at the difficulty's volunteer limit", () => {
-    const mp = input().meetingPoints[0];
-    const points = [
-      { ...mp, name: "A", slots: 15 },
-      { ...mp, name: "B", slots: 10, reportIds: ["r2"] },
+  describe("shifts (day × meeting point)", () => {
+    const mp = { ...BASE, radiusKm: 1, reportIds: [] as string[] };
+    const twoPoints = [
+      { ...mp, name: "Đầu kênh Bắc" },
+      { ...mp, name: "Đầu kênh Nam" },
     ];
-    expect(codes(input({ meetingPoints: points }))).toContain("SLOTS_OVER_LIMIT");
-    expect(codes(input({ meetingPoints: points }), ctx({ maxVolunteers: null }))).not.toContain(
-      "SLOTS_OVER_LIMIT",
-    );
-  });
+    const twoDays = [dayAfter(0), dayAfter(1)];
 
-  it("requires a leader who is an eligible member", () => {
-    const mp = input().meetingPoints[0];
-    expect(codes(input({ meetingPoints: [{ ...mp, leaderUserId: "stranger" }] }))).toContain(
-      "LEADER_INVALID",
-    );
-  });
+    it("accepts the spec example: 15 + 10 on day 1, 20 + off on day 2, cap 25", () => {
+      const issues = validateCampaignForSubmit(
+        input({
+          days: twoDays,
+          meetingPoints: twoPoints,
+          shifts: [
+            shift(0, 0, 15),
+            shift(0, 1, 10),
+            shift(1, 0, 20, twoDays[1].startAt),
+            { ...shift(1, 1, 0), gatherAt: null, leaderUserId: null },
+          ],
+        }),
+        ctx({ maxVolunteers: 25 }),
+      );
+      expect(issues).toEqual([]);
+    });
 
-  it("keeps the gathering time on the campaign day", () => {
-    const mp = input().meetingPoints[0];
-    expect(
-      codes(input({ meetingPoints: [{ ...mp, gatherAt: new Date(END.getTime() + HOUR) }] })),
-    ).toContain("GATHER_TIME_INVALID");
+    it("caps each day's slots at the per-day volunteer limit", () => {
+      const over = input({
+        days: twoDays,
+        meetingPoints: twoPoints,
+        shifts: [shift(0, 0, 15), shift(0, 1, 11), shift(1, 0, 20, twoDays[1].startAt)],
+      });
+      const issues = validateCampaignForSubmit(over, ctx({ maxVolunteers: 25 }));
+      expect(issues).toContainEqual(
+        expect.objectContaining({ field: "days[0]", code: "DAY_SLOTS_OVER_LIMIT" }),
+      );
+      expect(issues.map((i) => i.field)).not.toContain("days[1]");
+      expect(codes(over, ctx({ maxVolunteers: null }))).not.toContain("DAY_SLOTS_OVER_LIMIT");
+    });
+
+    it("needs an active shift on every day; missing shifts are off", () => {
+      const issues = validateCampaignForSubmit(
+        input({ days: twoDays, meetingPoints: twoPoints, shifts: [shift(0, 0)] }),
+        ctx(),
+      );
+      expect(issues).toContainEqual(
+        expect.objectContaining({ field: "days[1]", code: "DAY_NO_ACTIVE_SHIFT" }),
+      );
+    });
+
+    it("rejects negative or fractional slots", () => {
+      expect(codes(input({ shifts: [shift(0, 0, -1)] }))).toContain("SLOTS_INVALID");
+      expect(codes(input({ shifts: [shift(0, 0, 2.5)] }))).toContain("SLOTS_INVALID");
+    });
+
+    it("an active shift needs an eligible leader; an off one does not", () => {
+      const issues = validateCampaignForSubmit(
+        input({ shifts: [{ ...shift(0, 0), leaderUserId: "stranger" }] }),
+        ctx(),
+      );
+      expect(issues).toContainEqual(
+        expect.objectContaining({ field: "schedule[0][0].leaderUserId", code: "LEADER_INVALID" }),
+      );
+      expect(
+        codes(
+          input({
+            meetingPoints: twoPoints,
+            shifts: [shift(0, 0), { ...shift(0, 1, 0), leaderUserId: "stranger" }],
+          }),
+        ),
+      ).toEqual([]);
+    });
+
+    it("keeps the gathering time on the shift's day, before it ends", () => {
+      expect(
+        codes(input({ shifts: [{ ...shift(0, 0), gatherAt: new Date(END.getTime() + HOUR) }] })),
+      ).toContain("GATHER_TIME_INVALID");
+      expect(
+        codes(
+          input({
+            days: twoDays,
+            shifts: [shift(0, 0), { ...shift(1, 0), gatherAt: new Date(START.getTime()) }],
+          }),
+        ),
+      ).toContain("GATHER_TIME_INVALID");
+    });
   });
 });
 

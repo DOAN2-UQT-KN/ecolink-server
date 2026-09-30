@@ -1,4 +1,6 @@
 import {
+  CAMPAIGN_DAY_MAX,
+  CAMPAIGN_DAY_SPAN_DAYS,
   CAMPAIGN_DESCRIPTION_MIN_LENGTH,
   CAMPAIGN_HIGH_DIFFICULTY_LEVEL,
   CAMPAIGN_HIGH_DIFFICULTY_MIN_AGE,
@@ -15,6 +17,7 @@ import {
 /** Campaigns run in Vietnam; "same day" is judged on local (UTC+7) calendar days. */
 const LOCAL_UTC_OFFSET_MS = 7 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
 /** Vietnamese phone: 0xxxxxxxxx or +84xxxxxxxxx (9 digits after the prefix). */
 const VN_PHONE_RE = /^(?:\+84|0)\d{9}$/;
 
@@ -23,28 +26,40 @@ export interface SubmitMeetingPoint {
   latitude: number;
   longitude: number;
   radiusKm: number;
-  gatherAt?: Date | null;
-  slots?: number | null;
-  leaderUserId?: string | null;
   reportIds: string[];
+}
+
+export interface SubmitDay {
+  startAt: Date;
+  endAt: Date;
+}
+
+/** A shift by position; days × meeting points not listed are off. */
+export interface SubmitShift {
+  dayIndex: number;
+  meetingPointIndex: number;
+  gatherAt?: Date | null;
+  slots: number;
+  leaderUserId?: string | null;
 }
 
 export interface SubmitCampaignInput {
   title: string;
   description: string | null;
   banner: string | null;
-  startDate: Date | null;
-  endDate: Date | null;
+  /** In time order. */
+  days: SubmitDay[];
   contactName: string | null;
   contactPhone: string | null;
   difficulty: number;
   requirements: CampaignRequirements | null;
   meetingPoints: SubmitMeetingPoint[];
+  shifts: SubmitShift[];
 }
 
 export interface SubmitValidationContext {
   now: Date;
-  /** Volunteer cap of the difficulty tier; null = no cap. */
+  /** Volunteers allowed per day by the difficulty tier; null = no cap. */
   maxVolunteers: number | null;
   /** Highest difficulty the organization may use (1 when unverified). */
   maxDifficulty: number | null;
@@ -137,36 +152,7 @@ export function validateCampaignForSubmit(
     add("banner", "BANNER_REQUIRED", "A cover image is required");
   }
 
-  const { startDate, endDate } = input;
-  if (!startDate) add("startDate", "START_REQUIRED", "Start time is required");
-  if (!endDate) add("endDate", "END_REQUIRED", "End time is required");
-  if (startDate && endDate) {
-    if (startDate.getTime() < ctx.now.getTime() + CAMPAIGN_MIN_LEAD_HOURS * HOUR_MS) {
-      add(
-        "startDate",
-        "START_TOO_SOON",
-        `Start time must be at least ${CAMPAIGN_MIN_LEAD_HOURS} hours from now`,
-      );
-    }
-    if (endDate.getTime() <= startDate.getTime()) {
-      add("endDate", "END_BEFORE_START", "End time must be after the start time");
-    } else {
-      if (endDate.getTime() - startDate.getTime() > CAMPAIGN_MAX_HOURS_PER_DAY * HOUR_MS) {
-        add(
-          "endDate",
-          "TOO_LONG",
-          `A campaign day lasts at most ${CAMPAIGN_MAX_HOURS_PER_DAY} hours`,
-        );
-      }
-      if (localDayKey(startDate) !== localDayKey(endDate)) {
-        add(
-          "endDate",
-          "MULTI_DAY_UNSUPPORTED",
-          "The campaign must start and end on the same day",
-        );
-      }
-    }
-  }
+  validateDays(input.days, ctx.now, add);
 
   if (!input.contactName?.trim()) {
     add("contactName", "CONTACT_NAME_REQUIRED", "Contact name is required");
@@ -190,6 +176,7 @@ export function validateCampaignForSubmit(
   }
 
   validateMeetingPoints(input, ctx, add);
+  validateShifts(input, ctx, add);
   return issues;
 }
 
@@ -208,8 +195,6 @@ function validateMeetingPoints(
     if (points.length === 0) return;
   }
 
-  let totalSlots = 0;
-  let anySlots = false;
   const seenReports = new Set<string>();
   let reportCount = 0;
 
@@ -220,35 +205,6 @@ function validateMeetingPoints(
     }
     if (!(point.radiusKm > 0)) {
       add(`${at}.radiusKm`, "RADIUS_INVALID", "Radius must be greater than 0");
-    }
-    if (point.slots != null) {
-      if (!Number.isInteger(point.slots) || point.slots < 1) {
-        add(`${at}.slots`, "SLOTS_INVALID", "Slots must be a positive whole number");
-      } else {
-        totalSlots += point.slots;
-        anySlots = true;
-      }
-    }
-    if (!point.leaderUserId || !ctx.eligibleLeaderIds.has(point.leaderUserId)) {
-      add(
-        `${at}.leaderUserId`,
-        "LEADER_INVALID",
-        "The person in charge must be an active member who can manage campaigns",
-      );
-    }
-    if (point.gatherAt && input.startDate && input.endDate) {
-      const t = point.gatherAt.getTime();
-      // Gathering usually happens shortly before the start, but on the same day.
-      if (
-        t > input.endDate.getTime() ||
-        localDayKey(point.gatherAt) !== localDayKey(input.startDate)
-      ) {
-        add(
-          `${at}.gatherAt`,
-          "GATHER_TIME_INVALID",
-          "Gathering time must be on the campaign day, before it ends",
-        );
-      }
     }
 
     for (const reportId of point.reportIds) {
@@ -303,12 +259,117 @@ function validateMeetingPoints(
       }
     }
   }
+}
 
-  if (anySlots && ctx.maxVolunteers != null && totalSlots > ctx.maxVolunteers) {
+type AddIssue = (field: string, code: string, message: string) => void;
+
+/** Spec 1.4: 1–7 days within 14 days of the first, each on one local day, at most 12 hours. */
+function validateDays(days: SubmitDay[], now: Date, add: AddIssue): void {
+  if (days.length < 1 || days.length > CAMPAIGN_DAY_MAX) {
+    add("days", "DAY_COUNT", `A campaign runs on 1–${CAMPAIGN_DAY_MAX} days`);
+    if (days.length === 0) return;
+  }
+  const firstDay = Date.parse(localDayKey(days[0].startAt));
+  const seen = new Set<string>();
+
+  days.forEach((day, i) => {
+    const at = `days[${i}]`;
+    const key = localDayKey(day.startAt);
+    if (seen.has(key)) {
+      add(at, "DAY_DUPLICATED", "Each day can be added only once");
+    }
+    seen.add(key);
+    if (Date.parse(key) - firstDay > (CAMPAIGN_DAY_SPAN_DAYS - 1) * DAY_MS) {
+      add(
+        at,
+        "DAY_SPAN_TOO_WIDE",
+        `Every day must fall within ${CAMPAIGN_DAY_SPAN_DAYS} days of the first one`,
+      );
+    }
+    if (day.endAt.getTime() <= day.startAt.getTime()) {
+      add(`${at}.endAt`, "END_BEFORE_START", "End time must be after the start time");
+      return;
+    }
+    if (day.endAt.getTime() - day.startAt.getTime() > CAMPAIGN_MAX_HOURS_PER_DAY * HOUR_MS) {
+      add(
+        `${at}.endAt`,
+        "TOO_LONG",
+        `A campaign day lasts at most ${CAMPAIGN_MAX_HOURS_PER_DAY} hours`,
+      );
+    }
+    if (localDayKey(day.endAt) !== key) {
+      add(`${at}.endAt`, "MULTI_DAY_UNSUPPORTED", "A day must start and end on the same date");
+    }
+  });
+
+  if (days[0].startAt.getTime() < now.getTime() + CAMPAIGN_MIN_LEAD_HOURS * HOUR_MS) {
     add(
-      "meetingPoints",
-      "SLOTS_OVER_LIMIT",
-      `Total slots (${totalSlots}) exceed the ${ctx.maxVolunteers} volunteers allowed for this difficulty`,
+      "days[0].startAt",
+      "START_TOO_SOON",
+      `The first day must start at least ${CAMPAIGN_MIN_LEAD_HOURS} hours from now`,
     );
   }
+}
+
+/**
+ * Spec 1.4: each day × meeting point is a shift. An active shift (slots > 0) needs a leader who
+ * manages the campaign and a gathering time on its day; each day needs an active shift, and a
+ * day's slots may not exceed the per-day volunteer cap.
+ */
+function validateShifts(
+  input: SubmitCampaignInput,
+  ctx: SubmitValidationContext,
+  add: AddIssue,
+): void {
+  const { days, meetingPoints } = input;
+  if (days.length === 0 || meetingPoints.length === 0) return;
+  const byCell = new Map<string, SubmitShift>();
+  for (const shift of input.shifts) {
+    byCell.set(`${shift.dayIndex}:${shift.meetingPointIndex}`, shift);
+  }
+
+  days.forEach((day, d) => {
+    let total = 0;
+    let active = 0;
+    meetingPoints.forEach((_, p) => {
+      const shift = byCell.get(`${d}:${p}`);
+      const at = `schedule[${d}][${p}]`;
+      const slots = shift?.slots ?? 0;
+      if (!Number.isInteger(slots) || slots < 0) {
+        add(`${at}.slots`, "SLOTS_INVALID", "Slots must be a whole number, 0 to turn the shift off");
+        return;
+      }
+      if (slots === 0 || !shift) return;
+      active += 1;
+      total += slots;
+      if (!shift.leaderUserId || !ctx.eligibleLeaderIds.has(shift.leaderUserId)) {
+        add(
+          `${at}.leaderUserId`,
+          "LEADER_INVALID",
+          "The person in charge must be an active member who can manage campaigns",
+        );
+      }
+      if (
+        shift.gatherAt &&
+        (shift.gatherAt.getTime() > day.endAt.getTime() ||
+          localDayKey(shift.gatherAt) !== localDayKey(day.startAt))
+      ) {
+        add(
+          `${at}.gatherAt`,
+          "GATHER_TIME_INVALID",
+          "Gathering time must be on that day, before it ends",
+        );
+      }
+    });
+    if (active === 0) {
+      add(`days[${d}]`, "DAY_NO_ACTIVE_SHIFT", "Each day needs at least one shift with slots");
+    }
+    if (ctx.maxVolunteers != null && total > ctx.maxVolunteers) {
+      add(
+        `days[${d}]`,
+        "DAY_SLOTS_OVER_LIMIT",
+        `Slots on this day (${total}) exceed the ${ctx.maxVolunteers} volunteers allowed per day for this difficulty`,
+      );
+    }
+  });
 }

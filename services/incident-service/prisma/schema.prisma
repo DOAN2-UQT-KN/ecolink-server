@@ -88,8 +88,6 @@ model Campaign {
    * Admin-provided reason when the campaign is banned; cleared on verify.
    */
   rejectReason  String?   @map("reject_reason")
-  startDate     DateTime? @map("start_date")
-  endDate       DateTime? @map("end_date")
   detailAddress String?   @map("detail_address") @db.VarChar(255)
   latitude      Float?
   longitude     Float?
@@ -136,6 +134,8 @@ model Campaign {
   meetingPoints                   CampaignMeetingPoint[]
   meetingPointReports             CampaignMeetingPointReport[]
   statusLogs                      CampaignStatusLog[]
+  days                            CampaignDay[]
+  shifts                          CampaignShift[]
 
   @@index([status])
   @@index([createdBy])
@@ -1241,11 +1241,6 @@ model CampaignMeetingPoint {
   longitude     Float
   detailAddress String?   @map("detail_address") @db.VarChar(255)
   radiusKm      Float     @map("radius_km")
-  gatherAt      DateTime? @map("gather_at")
-  /// Volunteer slots at this point; null = no limit of its own.
-  slots         Int?
-  /// Campaign manager in charge of this point.
-  leaderUserId  String?   @map("leader_user_id") @db.Uuid
   sortOrder     Int       @default(0) @map("sort_order")
   createdBy     String?   @map("created_by") @db.Uuid
   updatedBy     String?   @map("updated_by") @db.Uuid
@@ -1255,9 +1250,48 @@ model CampaignMeetingPoint {
 
   campaign Campaign                     @relation(fields: [campaignId], references: [id])
   reports  CampaignMeetingPointReport[]
+  shifts   CampaignShift[]
 
   @@index([campaignId])
   @@map("campaign_meeting_points")
+}
+
+/// One day of a campaign (1–7, within 14 days of the first), with its own start and end.
+model CampaignDay {
+  id         String   @id @default(uuid()) @db.Uuid
+  campaignId String   @map("campaign_id") @db.Uuid
+  startAt    DateTime @map("start_at")
+  endAt      DateTime @map("end_at")
+  sortOrder  Int      @default(0) @map("sort_order")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  campaign Campaign        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  shifts   CampaignShift[]
+
+  @@index([campaignId])
+  @@index([startAt])
+  @@map("campaign_days")
+}
+
+/// A shift: one meeting point on one day. `slots` 0 turns the shift off.
+model CampaignShift {
+  id             String    @id @default(uuid()) @db.Uuid
+  campaignId     String    @map("campaign_id") @db.Uuid
+  dayId          String    @map("day_id") @db.Uuid
+  meetingPointId String    @map("meeting_point_id") @db.Uuid
+  gatherAt       DateTime? @map("gather_at")
+  slots          Int       @default(0)
+  /// Campaign manager in charge of this shift.
+  leaderUserId   String?   @map("leader_user_id") @db.Uuid
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  campaign     Campaign             @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  day          CampaignDay          @relation(fields: [dayId], references: [id], onDelete: Cascade)
+  meetingPoint CampaignMeetingPoint @relation(fields: [meetingPointId], references: [id], onDelete: Cascade)
+
+  @@unique([dayId, meetingPointId])
+  @@index([campaignId])
+  @@map("campaign_shifts")
 }
 
 /// Which report a meeting point covers. Also holds a draft's selection, which locks nothing:

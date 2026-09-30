@@ -80,6 +80,9 @@ export const CAMPAIGN_UNVERIFIED_MAX_OPEN = 2;
 export const CAMPAIGN_UNVERIFIED_MAX_DIFFICULTY = 1;
 export const CAMPAIGN_REVISION_HOLD_DAYS = 7;
 export const CAMPAIGN_DRAFT_TTL_DAYS = 30;
+/** A campaign runs on 1–7 days, all within this many days from the first one. */
+export const CAMPAIGN_DAY_MAX = 7;
+export const CAMPAIGN_DAY_SPAN_DAYS = 14;
 export const CAMPAIGN_MEETING_POINT_MAX = 5;
 /**
  * Spec: a campaign covers at least one approved waste point. Temporarily off on request, so a

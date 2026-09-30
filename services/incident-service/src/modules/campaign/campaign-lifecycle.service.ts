@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import {
+  CAMPAIGN_DAY_MAX,
   CAMPAIGN_DRAFT_TTL_DAYS,
   CAMPAIGN_MEETING_POINT_MAX,
   CAMPAIGN_PRE_APPROVAL_STATUSES,
@@ -26,6 +27,8 @@ import {
   withDefaultRequirements,
 } from "./campaign-submit-validation";
 import type {
+  CampaignDayInput,
+  CampaignShiftInput,
   CampaignStatusLogResponse,
   MeetingPointInput,
 } from "./campaign.dto";
@@ -43,10 +46,28 @@ export interface NormalizedMeetingPoint {
   longitude: number;
   detailAddress: string | null;
   radiusKm: number;
-  gatherAt: Date | null;
-  slots: number | null;
-  leaderUserId: string | null;
   reportIds: string[];
+}
+
+export interface NormalizedDay {
+  startAt: Date;
+  endAt: Date;
+}
+
+/** One cell of the day × meeting point grid, by position. */
+export interface NormalizedShift {
+  dayIndex: number;
+  meetingPointIndex: number;
+  gatherAt: Date | null;
+  slots: number;
+  leaderUserId: string | null;
+}
+
+/** A campaign's whole schedule; `shifts` holds every day × meeting point, days in time order. */
+export interface NormalizedSchedule {
+  days: NormalizedDay[];
+  meetingPoints: NormalizedMeetingPoint[];
+  shifts: NormalizedShift[];
 }
 
 /** What the admin compares between two submissions. */
@@ -54,14 +75,14 @@ export interface CampaignSnapshot {
   title: string;
   description: string | null;
   banner: string | null;
-  startDate: string | null;
-  endDate: string | null;
   difficulty: number;
   contactName: string | null;
   contactPhone: string | null;
   safetyNotes: string | null;
   requirements: CampaignRequirements | null;
-  meetingPoints: Array<Omit<NormalizedMeetingPoint, "gatherAt"> & { gatherAt: string | null }>;
+  days: Array<{ startAt: string; endAt: string }>;
+  meetingPoints: NormalizedMeetingPoint[];
+  shifts: Array<Omit<NormalizedShift, "gatherAt"> & { gatherAt: string | null }>;
 }
 
 export type FieldDiff = Record<string, { from: unknown; to: unknown }>;
@@ -72,95 +93,172 @@ function uniqueIds(ids: string[] | undefined): string[] {
   return [...new Set((ids ?? []).map((id) => id.trim()).filter(Boolean))];
 }
 
-export function normalizeMeetingPoints(
-  input: MeetingPointInput[],
-  defaultLeaderId: string,
-): NormalizedMeetingPoint[] {
+const invalid = (message: string) =>
+  new HttpError(HTTP_STATUS.VALIDATION_ERROR.withMessage(message));
+
+export function normalizeMeetingPoints(input: MeetingPointInput[]): NormalizedMeetingPoint[] {
   return input.map((p) => ({
     name: p.name?.trim() || null,
     latitude: Number(p.latitude),
     longitude: Number(p.longitude),
     detailAddress: p.detailAddress?.trim() || null,
     radiusKm: Number(p.radiusKm),
-    gatherAt: p.gatherAt ? new Date(p.gatherAt) : null,
-    slots: p.slots == null ? null : Number(p.slots),
-    leaderUserId: p.leaderUserId?.trim() || defaultLeaderId,
     reportIds: uniqueIds(p.reportIds),
   }));
 }
 
-/**
- * The meeting points a create/update body asks for. Old clients send one location and a flat
- * `reportIds`; that becomes a single meeting point. Returns undefined when the body leaves the
- * meeting points untouched.
- */
-export function meetingPointsFromRequest(
-  request: {
-    meetingPoints?: MeetingPointInput[];
-    reportIds?: string[];
-    latitude?: number | null;
-    longitude?: number | null;
-    radiusKm?: number | null;
-    detailAddress?: string | null;
-    startDate?: string | null;
-  },
-  defaultLeaderId: string,
-): NormalizedMeetingPoint[] | undefined {
-  if (request.meetingPoints !== undefined) {
-    if (request.meetingPoints.length > CAMPAIGN_MEETING_POINT_MAX) {
-      throw new HttpError(
-        HTTP_STATUS.VALIDATION_ERROR.withMessage(
-          `At most ${CAMPAIGN_MEETING_POINT_MAX} meeting points`,
-        ),
-      );
-    }
-    return normalizeMeetingPoints(request.meetingPoints, defaultLeaderId);
-  }
-  if (request.reportIds === undefined) return undefined;
-  if (request.latitude == null || request.longitude == null) {
-    throw new HttpError(
-      HTTP_STATUS.VALIDATION_ERROR.withMessage(
-        "latitude and longitude are required to attach waste points",
-      ),
-    );
-  }
-  return normalizeMeetingPoints(
-    [
-      {
-        latitude: request.latitude,
-        longitude: request.longitude,
-        radiusKm: request.radiusKm ?? 1,
-        detailAddress: request.detailAddress,
-        gatherAt: request.startDate ?? null,
-        reportIds: request.reportIds,
-      },
-    ],
-    defaultLeaderId,
+/** The stored schedule of a campaign, in the same shape a request normalizes to. */
+export function scheduleOf(campaign: CampaignWithReports): NormalizedSchedule {
+  const days = [...(campaign.days ?? [])].sort(
+    (a, b) => a.startAt.getTime() - b.startAt.getTime(),
   );
-}
-
-function toSnapshot(campaign: CampaignWithReports): CampaignSnapshot {
+  const points = campaign.meetingPoints ?? [];
+  const dayIndex = new Map(days.map((d, i) => [d.id, i]));
+  const pointIndex = new Map(points.map((p, i) => [p.id, i]));
+  const shifts: NormalizedShift[] = [];
+  for (const shift of campaign.shifts ?? []) {
+    const d = dayIndex.get(shift.dayId);
+    const p = pointIndex.get(shift.meetingPointId);
+    if (d === undefined || p === undefined) continue;
+    shifts.push({
+      dayIndex: d,
+      meetingPointIndex: p,
+      gatherAt: shift.gatherAt,
+      slots: shift.slots,
+      leaderUserId: shift.leaderUserId,
+    });
+  }
+  shifts.sort((a, b) => a.dayIndex - b.dayIndex || a.meetingPointIndex - b.meetingPointIndex);
   return {
-    title: campaign.title,
-    description: campaign.description,
-    banner: campaign.banner,
-    startDate: campaign.startDate?.toISOString() ?? null,
-    endDate: campaign.endDate?.toISOString() ?? null,
-    difficulty: campaign.difficulty,
-    contactName: campaign.contactName,
-    contactPhone: campaign.contactPhone,
-    safetyNotes: campaign.safetyNotes,
-    requirements: (campaign.requirements as CampaignRequirements | null) ?? null,
-    meetingPoints: (campaign.meetingPoints ?? []).map((p) => ({
+    days: days.map((d) => ({ startAt: d.startAt, endAt: d.endAt })),
+    meetingPoints: points.map((p) => ({
       name: p.name,
       latitude: p.latitude,
       longitude: p.longitude,
       detailAddress: p.detailAddress,
       radiusKm: p.radiusKm,
-      gatherAt: p.gatherAt?.toISOString() ?? null,
-      slots: p.slots,
-      leaderUserId: p.leaderUserId,
       reportIds: p.reports.map((r) => r.reportId).sort(),
+    })),
+    shifts,
+  };
+}
+
+/**
+ * The schedule a create/update body asks for, or undefined when it leaves the schedule alone.
+ * Any of `days`, `meetingPoints`, `shifts` present replaces the schedule; the parts left out are
+ * kept from `current`. Days are put in time order (shifts follow them) and the grid is filled:
+ * a day × meeting point without a shift gets one that is off.
+ */
+export function scheduleFromRequest(
+  request: {
+    days?: CampaignDayInput[];
+    meetingPoints?: MeetingPointInput[];
+    shifts?: CampaignShiftInput[];
+  },
+  current: NormalizedSchedule | null,
+  defaultLeaderId: string,
+): NormalizedSchedule | undefined {
+  if (
+    request.days === undefined &&
+    request.meetingPoints === undefined &&
+    request.shifts === undefined
+  ) {
+    return undefined;
+  }
+
+  const rawDays: NormalizedDay[] =
+    request.days?.map((d) => ({ startAt: new Date(d.startAt), endAt: new Date(d.endAt) })) ??
+    current?.days ??
+    [];
+  if (rawDays.length > CAMPAIGN_DAY_MAX) {
+    throw invalid(`At most ${CAMPAIGN_DAY_MAX} days`);
+  }
+  if (rawDays.some((d) => Number.isNaN(d.startAt.getTime()) || Number.isNaN(d.endAt.getTime()))) {
+    throw invalid("Every day needs a valid start and end time");
+  }
+  const meetingPoints =
+    request.meetingPoints !== undefined
+      ? normalizeMeetingPoints(request.meetingPoints)
+      : (current?.meetingPoints ?? []);
+  if (meetingPoints.length > CAMPAIGN_MEETING_POINT_MAX) {
+    throw invalid(`At most ${CAMPAIGN_MEETING_POINT_MAX} meeting points`);
+  }
+
+  const order = rawDays
+    .map((day, index) => ({ day, index }))
+    .sort((a, b) => a.day.startAt.getTime() - b.day.startAt.getTime());
+  const newIndexOf = new Map(order.map((o, i) => [o.index, i]));
+  const days = order.map((o) => o.day);
+
+  const given: NormalizedShift[] =
+    request.shifts?.map((sh) => ({
+      dayIndex: Number(sh.dayIndex),
+      meetingPointIndex: Number(sh.meetingPointIndex),
+      gatherAt: sh.gatherAt ? new Date(sh.gatherAt) : null,
+      slots: Number(sh.slots ?? 0),
+      leaderUserId: sh.leaderUserId?.trim() || null,
+    })) ??
+    current?.shifts ??
+    [];
+
+  const cells = new Map<string, NormalizedShift>();
+  for (const sh of given) {
+    const d = newIndexOf.get(sh.dayIndex);
+    if (
+      d === undefined ||
+      !Number.isInteger(sh.meetingPointIndex) ||
+      sh.meetingPointIndex < 0 ||
+      sh.meetingPointIndex >= meetingPoints.length
+    ) {
+      // Only an error when the client sent it; stale cells of a kept grid are dropped.
+      if (request.shifts !== undefined) throw invalid("A shift points to a missing day or meeting point");
+      continue;
+    }
+    const key = `${d}:${sh.meetingPointIndex}`;
+    if (cells.has(key) && request.shifts !== undefined) {
+      throw invalid("Each day × meeting point can have only one shift");
+    }
+    if (sh.gatherAt && Number.isNaN(sh.gatherAt.getTime())) {
+      throw invalid("Gathering time must be a valid date");
+    }
+    cells.set(key, { ...sh, dayIndex: d });
+  }
+
+  const shifts: NormalizedShift[] = [];
+  days.forEach((_, d) =>
+    meetingPoints.forEach((__, p) => {
+      const cell = cells.get(`${d}:${p}`);
+      shifts.push({
+        dayIndex: d,
+        meetingPointIndex: p,
+        gatherAt: cell?.gatherAt ?? null,
+        slots: cell?.slots ?? 0,
+        leaderUserId: cell?.leaderUserId ?? defaultLeaderId,
+      });
+    }),
+  );
+  return { days, meetingPoints, shifts };
+}
+
+function toSnapshot(campaign: CampaignWithReports): CampaignSnapshot {
+  const schedule = scheduleOf(campaign);
+  return {
+    title: campaign.title,
+    description: campaign.description,
+    banner: campaign.banner,
+    difficulty: campaign.difficulty,
+    contactName: campaign.contactName,
+    contactPhone: campaign.contactPhone,
+    safetyNotes: campaign.safetyNotes,
+    requirements: (campaign.requirements as CampaignRequirements | null) ?? null,
+    days: schedule.days.map((d) => ({
+      startAt: d.startAt.toISOString(),
+      endAt: d.endAt.toISOString(),
+    })),
+    meetingPoints: schedule.meetingPoints,
+    shifts: schedule.shifts.map((sh) => ({
+      ...sh,
+      gatherAt: sh.gatherAt?.toISOString() ?? null,
     })),
   };
 }
@@ -243,19 +341,31 @@ export class CampaignLifecycleService {
     }
   }
 
-  /** Replaces the meeting points of a campaign and which reports each one covers. */
-  async replaceMeetingPoints(
+  /** Replaces a campaign's days, meeting points (with their reports) and shifts. */
+  async replaceSchedule(
     tx: Tx,
     campaignId: string,
-    points: NormalizedMeetingPoint[],
+    schedule: NormalizedSchedule,
     userId: string,
   ): Promise<void> {
+    await tx.campaignShift.deleteMany({ where: { campaignId } });
+    await tx.campaignDay.deleteMany({ where: { campaignId } });
     await tx.campaignMeetingPointReport.deleteMany({ where: { campaignId } });
     await tx.campaignMeetingPoint.updateMany({
       where: { campaignId, deletedAt: null },
       data: { deletedAt: new Date(), updatedBy: userId },
     });
-    for (const [index, point] of points.entries()) {
+
+    const dayIds: string[] = [];
+    for (const [index, day] of schedule.days.entries()) {
+      const created = await tx.campaignDay.create({
+        data: { campaignId, startAt: day.startAt, endAt: day.endAt, sortOrder: index },
+      });
+      dayIds.push(created.id);
+    }
+
+    const pointIds: string[] = [];
+    for (const [index, point] of schedule.meetingPoints.entries()) {
       const created = await tx.campaignMeetingPoint.create({
         data: {
           campaignId,
@@ -264,14 +374,12 @@ export class CampaignLifecycleService {
           longitude: point.longitude,
           detailAddress: point.detailAddress,
           radiusKm: point.radiusKm,
-          gatherAt: point.gatherAt,
-          slots: point.slots,
-          leaderUserId: point.leaderUserId,
           sortOrder: index,
           createdBy: userId,
           updatedBy: userId,
         },
       });
+      pointIds.push(created.id);
       if (point.reportIds.length > 0) {
         await tx.campaignMeetingPointReport.createMany({
           data: point.reportIds.map((reportId) => ({
@@ -282,8 +390,22 @@ export class CampaignLifecycleService {
         });
       }
     }
+
+    if (schedule.shifts.length > 0) {
+      await tx.campaignShift.createMany({
+        data: schedule.shifts.map((sh) => ({
+          campaignId,
+          dayId: dayIds[sh.dayIndex],
+          meetingPointId: pointIds[sh.meetingPointIndex],
+          gatherAt: sh.gatherAt,
+          slots: sh.slots,
+          leaderUserId: sh.leaderUserId,
+        })),
+      });
+    }
+
     // The campaign's own location mirrors the first meeting point, for maps and nearby invites.
-    const first = points[0];
+    const first = schedule.meetingPoints[0];
     if (first) {
       await tx.campaign.update({
         where: { id: campaignId },
@@ -403,10 +525,16 @@ export class CampaignLifecycleService {
           campaign.id,
         );
 
-        const points = campaign.meetingPoints ?? [];
-        const reportIds = points.flatMap((p) => p.reports.map((r) => r.reportId));
+        const schedule = scheduleOf(campaign);
+        const reportIds = schedule.meetingPoints.flatMap((p) => p.reportIds);
+        // Leaders of the shifts that run; an off shift keeps its leader but needs none.
         const leaderIds = [
-          ...new Set(points.map((p) => p.leaderUserId).filter((x): x is string => !!x)),
+          ...new Set(
+            schedule.shifts
+              .filter((sh) => sh.slots > 0)
+              .map((sh) => sh.leaderUserId)
+              .filter((x): x is string => !!x),
+          ),
         ];
         const [reports, leaderMembers] = await Promise.all([
           tx.report.findMany({
@@ -435,22 +563,13 @@ export class CampaignLifecycleService {
             title: campaign.title,
             description: campaign.description,
             banner: campaign.banner,
-            startDate: campaign.startDate,
-            endDate: campaign.endDate,
+            days: schedule.days,
             contactName: campaign.contactName,
             contactPhone: campaign.contactPhone,
             difficulty: campaign.difficulty,
             requirements,
-            meetingPoints: points.map((p) => ({
-              name: p.name,
-              latitude: p.latitude,
-              longitude: p.longitude,
-              radiusKm: p.radiusKm,
-              gatherAt: p.gatherAt,
-              slots: p.slots,
-              leaderUserId: p.leaderUserId,
-              reportIds: p.reports.map((r) => r.reportId),
-            })),
+            meetingPoints: schedule.meetingPoints,
+            shifts: schedule.shifts,
           },
           {
             now: new Date(),
@@ -466,7 +585,7 @@ export class CampaignLifecycleService {
 
         await this.syncReportLocks(tx, campaign.id, userId);
 
-        // The creator and every meeting point leader manage the campaign.
+        // The creator and every shift leader manage the campaign.
         const managerIds = [
           ...new Set([campaign.createdBy ?? userId, ...leaderIds]),
         ];
@@ -638,7 +757,8 @@ export class CampaignLifecycleService {
         OR: [
           {
             status: { in: [CampaignStatus.PENDING_REVIEW, CampaignStatus.NEEDS_REVISION] },
-            startDate: { lte: now },
+            // Any day started means the first one did.
+            days: { some: { startAt: { lte: now } } },
           },
           {
             status: CampaignStatus.NEEDS_REVISION,
@@ -646,7 +766,12 @@ export class CampaignLifecycleService {
           },
         ],
       },
-      select: { id: true, status: true, revisionDeadline: true, startDate: true },
+      select: {
+        id: true,
+        status: true,
+        revisionDeadline: true,
+        days: { select: { startAt: true }, orderBy: { startAt: "asc" }, take: 1 },
+      },
       take: 200,
     });
 
@@ -656,7 +781,7 @@ export class CampaignLifecycleService {
         c.status === CampaignStatus.NEEDS_REVISION &&
         c.revisionDeadline != null &&
         c.revisionDeadline <= now &&
-        !(c.startDate && c.startDate <= now);
+        !(c.days[0] && c.days[0].startAt <= now);
       try {
         const campaign = await prisma.$transaction(async (tx) => {
           await transitionCampaign(tx, {
