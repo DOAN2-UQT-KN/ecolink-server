@@ -404,6 +404,50 @@ describe("admin review", () => {
   });
 });
 
+describe("organization campaign list", () => {
+  /** A draft and a pending campaign by CM, and a running one created by the owner. */
+  async function seedList() {
+    const draft = await campaignService.createCampaign(CM, draftRequest([]) as never);
+    const pending = await campaignService.createCampaign(CM, draftRequest([]) as never);
+    await campaignService.submitCampaign(pending.id, CM);
+    const running = await campaignService.createCampaign(OWNER, draftRequest([]) as never);
+    await prisma.campaign.update({ where: { id: running.id }, data: { status: S.ACTIVE } });
+    return { draft: draft.id, pending: pending.id, running: running.id };
+  }
+  const ids = (r: { campaigns: { id: string }[] }) => r.campaigns.map((c) => c.id).sort();
+
+  it("owners see every campaign of their organization, like /my?is_owner=true", async () => {
+    const c = await seedList();
+    const list = await campaignService.listCampaigns({ organizationId: orgId }, OWNER);
+    expect(ids(list)).toEqual([c.draft, c.pending, c.running].sort());
+    const filtered = await campaignService.listCampaigns(
+      { organizationId: orgId, statuses: [S.PENDING_REVIEW] },
+      OWNER,
+    );
+    expect(ids(filtered)).toEqual([c.pending]);
+  });
+
+  it("other members and outsiders keep the public list", async () => {
+    const c = await seedList();
+    const publicQuery = { organizationId: orgId, publicOnly: true, excludeDrafts: true };
+    expect(ids(await campaignService.listCampaigns(publicQuery, randomUUID()))).toEqual([c.running]);
+    // A campaign manager is not an owner; their own campaigns stay under /campaigns/my.
+    expect(ids(await campaignService.listCampaigns(publicQuery, CM))).toEqual([c.running]);
+    // Owning another organization does not count.
+    const otherOwner = randomUUID();
+    await prisma.organization.create({
+      data: {
+        name: `Org ${randomUUID()}`,
+        slug: `org-${randomUUID()}`,
+        logoUrl: "https://example.com/logo.png",
+        status: 1,
+        members: { create: [{ userId: otherOwner, role: "OWNER", source: "INTERNAL" }] },
+      },
+    });
+    expect(ids(await campaignService.listCampaigns(publicQuery, otherOwner))).toEqual([c.running]);
+  });
+});
+
 describe("lifecycle sweep", () => {
   it("expires reviews past their start or revision deadline, deletes stale drafts", async () => {
     const report = await seedReport();

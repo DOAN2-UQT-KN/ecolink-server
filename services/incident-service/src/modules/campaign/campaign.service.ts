@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import type { AppLocale } from "@da2/constants";
+import { isOwnerRole, type AppLocale } from "@da2/constants";
 import prisma from "../../config/prisma.client";
 import {
   ReportJobType,
@@ -830,6 +830,33 @@ export class CampaignService {
     );
     const withVotes = await this.withCampaignVotes(list, viewerUserId);
     return this.enrichCampaignsForGet(withVotes, viewerUserId);
+  }
+
+  /**
+   * GET /campaigns. The public list leaves out the viewer's own campaigns (those live under
+   * /campaigns/my); but owners and legal representatives listing their own organization see
+   * all of its campaigns in every status, the scope of /campaigns/my?is_owner=true.
+   */
+  async listCampaigns(query: CampaignListQuery, userId?: string) {
+    const ownerView =
+      !!userId &&
+      !!query.organizationId &&
+      (await this.isOrganizationOwner(query.organizationId, userId));
+    if (!ownerView) {
+      return this.getCampaigns(query, userId, undefined, userId);
+    }
+    return this.getCampaigns(
+      { ...query, publicOnly: false, excludeDrafts: false, isOwner: true },
+      userId,
+      userId,
+    );
+  }
+
+  /** Whether the user is an active owner (owner / legal representative) of the organization. */
+  async isOrganizationOwner(organizationId: string, userId: string): Promise<boolean> {
+    return isOwnerRole(
+      await organizationMemberRepository.findActiveRole(organizationId, userId),
+    );
   }
 
   async getCampaigns(
