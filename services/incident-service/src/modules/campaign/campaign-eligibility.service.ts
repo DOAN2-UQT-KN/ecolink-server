@@ -9,6 +9,8 @@ import {
   type CampaignCreateBlockReasonValue,
   OrgPermission,
   hasOrgPermission,
+  isOrganizationVerified,
+  type OrganizationTrustFields,
 } from "@da2/constants";
 import prisma from "../../config/prisma.client";
 import { GlobalStatus } from "../../constants/status.enum";
@@ -33,16 +35,9 @@ export interface CampaignCreateEligibility {
   reviewQueueLimit: number;
 }
 
-interface OrgTrust {
+interface OrgTrust extends OrganizationTrustFields {
   id: string;
   status: number;
-  trustTier: string;
-  tickSuspended: boolean;
-}
-
-/** Blue tick: verified tier and not suspended (same rule as the client badge). */
-export function isOrganizationVerified(org: Pick<OrgTrust, "trustTier" | "tickSuspended">) {
-  return org.trustTier === "VERIFIED" && !org.tickSuspended;
 }
 
 /** Pure part of the rules in spec 1.1. */
@@ -93,7 +88,14 @@ export class CampaignEligibilityService {
     const db = options.db ?? prisma;
     const org = await db.organization.findFirst({
       where: { id: organizationId, deletedAt: null },
-      select: { id: true, status: true, trustTier: true, tickSuspended: true },
+      select: {
+        id: true,
+        status: true,
+        trustTier: true,
+        tickSuspended: true,
+        kycStatus: true,
+        verificationExpiresAt: true,
+      },
     });
     if (!org) {
       throw new HttpError(HTTP_STATUS.NOT_FOUND.withMessage("Organization not found"));

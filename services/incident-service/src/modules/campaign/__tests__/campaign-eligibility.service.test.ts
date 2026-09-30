@@ -4,11 +4,21 @@ jest.mock("../../organization/organization_member.repository", () => ({
 
 import { computeCreateEligibility } from "../campaign-eligibility.service";
 
-const org = (o: Partial<{ status: number; trustTier: string; tickSuspended: boolean }> = {}) => ({
+const org = (
+  o: Partial<{
+    status: number;
+    trustTier: string;
+    tickSuspended: boolean;
+    kycStatus: string;
+    verificationExpiresAt: Date | null;
+  }> = {},
+) => ({
   id: "org-1",
   status: 1,
   trustTier: "VERIFIED",
   tickSuspended: false,
+  kycStatus: "APPROVED",
+  verificationExpiresAt: null,
   ...o,
 });
 
@@ -24,7 +34,12 @@ describe("computeCreateEligibility", () => {
   });
 
   it("unverified (or suspended tick): lowest difficulty, 2 open campaigns", () => {
-    for (const o of [org({ trustTier: "BASIC" }), org({ tickSuspended: true })]) {
+    for (const o of [
+      org({ trustTier: "BASIC" }),
+      org({ tickSuspended: true }),
+      // Lane B verification past its date counts as unverified.
+      org({ verificationExpiresAt: new Date(Date.now() - 1000) }),
+    ]) {
       const ok = computeCreateEligibility({ org: o, role: "OWNER", openCount: 1, reviewQueueCount: 0 });
       expect(ok).toMatchObject({ canCreate: true, isVerified: false, maxDifficulty: 1, openLimit: 2 });
       const full = computeCreateEligibility({ org: o, role: "OWNER", openCount: 2, reviewQueueCount: 0 });

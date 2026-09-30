@@ -13,6 +13,7 @@ export type CampaignTransitionEvent =
   | "block"
   | "ban"
   | "expire"
+  | "cancel_org_locked"
   | "submit_completion"
   | "approve_completion"
   | "reject_completion";
@@ -79,6 +80,18 @@ export const CAMPAIGN_TRANSITIONS: readonly TransitionRule[] = [
     to: CampaignStatus.EXPIRED,
     actors: ["system"],
     reasonRequired: false,
+  },
+  {
+    // Spec, exceptions: locking the organization cancels what was not approved yet.
+    event: "cancel_org_locked",
+    from: [
+      CampaignStatus.DRAFT,
+      CampaignStatus.PENDING_REVIEW,
+      CampaignStatus.NEEDS_REVISION,
+    ],
+    to: CampaignStatus.CANCELLED,
+    actors: ["admin"],
+    reasonRequired: true,
   },
   {
     event: "submit_completion",

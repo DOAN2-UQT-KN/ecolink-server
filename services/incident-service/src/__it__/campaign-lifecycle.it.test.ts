@@ -20,13 +20,12 @@ jest.mock("../modules/organization/identity-user.client", () => ({
   getUserProfile: () => undefined,
   fetchUserIdsNearPoint: async () => [],
 }));
+const tierFor = (level: number) => ({ level, maxVolunteers: 20, greenPoints: 10 });
+const strictTier = jest.fn(async (level: number) => tierFor(level) as unknown);
 jest.mock("../modules/reward/reward-service.client", () => ({
   rewardServiceClient: {
-    getDifficultyByLevel: async (level: number) => ({
-      level,
-      maxVolunteers: 20,
-      greenPoints: 10,
-    }),
+    getDifficultyByLevel: async (level: number) => tierFor(level),
+    getDifficultyByLevelStrict: (level: number) => strictTier(level),
     getDifficulties: async () => [],
   },
 }));
@@ -45,6 +44,8 @@ jest.mock("../modules/campaign/notification-jobs.client", () => ({
 
 import { campaignService } from "../modules/campaign/campaign.service";
 import { campaignLifecycleService } from "../modules/campaign/campaign-lifecycle.service";
+import { campaignEligibilityService } from "../modules/campaign/campaign-eligibility.service";
+import { organizationService } from "../modules/organization/organization.service";
 import { CampaignStatus } from "@da2/constants";
 import { ReportStatus } from "../constants/status.enum";
 
@@ -80,6 +81,7 @@ async function resetTables(): Promise<void> {
 }
 
 async function seedOrganization(trustTier = "VERIFIED") {
+  // kycStatus APPROVED: verified orgs come out of an approved application.
   const org = await prisma.organization.create({
     data: {
       name: `Org ${randomUUID()}`,
@@ -87,6 +89,7 @@ async function seedOrganization(trustTier = "VERIFIED") {
       logoUrl: "https://example.com/logo.png",
       status: 1,
       trustTier,
+      kycStatus: "APPROVED",
       members: {
         create: [
           { userId: OWNER, role: "OWNER", source: "INTERNAL" },
@@ -153,6 +156,7 @@ async function reportState(id: string) {
 beforeEach(async () => {
   await resetTables();
   notify.mockClear();
+  strictTier.mockImplementation(async (level: number) => tierFor(level));
   orgId = await seedOrganization();
 });
 
@@ -189,6 +193,12 @@ describe("draft and submit", () => {
         expect.objectContaining({ kind: "CAMPAIGN_CREATED", userIds: [OWNER] }),
       ),
     );
+  });
+
+  it("a campaign without waste points can be sent for review (requirement switched off)", async () => {
+    const draft = await campaignService.createCampaign(CM, draftRequest([]) as never);
+    const submitted = await campaignService.submitCampaign(draft.id, CM);
+    expect(submitted.status).toBe(S.PENDING_REVIEW);
   });
 
   it("two drafts racing for one report: one wins, the other gets 409 naming it", async () => {
@@ -382,6 +392,16 @@ describe("admin review", () => {
     const adminList = await campaignService.getCampaigns({ excludeDrafts: true }, ADMIN);
     expect(adminList.campaigns.map((c) => c.id)).not.toContain(draft.id);
   });
+
+  it("by-ids applies the same visibility", async () => {
+    const draft = await campaignService.createCampaign(CM, draftRequest([]) as never);
+    const outsider = randomUUID();
+    expect(await campaignService.getCampaignsByIds([draft.id], outsider)).toEqual([]);
+    expect(await campaignService.getCampaignsByIds([draft.id], ADMIN, null, "admin")).toEqual([]);
+    expect(
+      (await campaignService.getCampaignsByIds([draft.id], CM)).map((c) => c.id),
+    ).toEqual([draft.id]);
+  });
 });
 
 describe("lifecycle sweep", () => {
@@ -441,5 +461,91 @@ describe("after approval", () => {
     await expect(campaignService.deleteCampaign(draft.id, OWNER)).rejects.toMatchObject(
       code("CAMPAIGN_NOT_DELETABLE"),
     );
+  });
+});
+
+describe("organization state", () => {
+  it("locking the organization cancels campaigns not yet approved; running ones continue", async () => {
+    const [r1, r2, r3] = [await seedReport(0.001), await seedReport(0.002), await seedReport(0.003)];
+    const draft = await campaignService.createCampaign(CM, draftRequest([r1.id]) as never);
+    const pending = await campaignService.createCampaign(CM, draftRequest([r2.id]) as never);
+    await campaignService.submitCampaign(pending.id, CM);
+    const running = await campaignService.createCampaign(CM, draftRequest([r3.id]) as never);
+    await campaignService.submitCampaign(running.id, CM);
+    await campaignService.reviewCampaign(running.id, ADMIN, "approve", null);
+    notify.mockClear();
+
+    await organizationService.adminVerifyOrganization(orgId, ADMIN, 2, "Vi phạm điều khoản");
+
+    const status = async (id: string) =>
+      (await prisma.campaign.findUnique({ where: { id } }))?.status;
+    expect(await status(draft.id)).toBe(S.CANCELLED);
+    expect(await status(pending.id)).toBe(S.CANCELLED);
+    expect(await status(running.id)).toBe(S.ACTIVE);
+    expect((await reportState(r2.id))?.campaignId).toBeNull();
+    expect((await reportState(r3.id))?.campaignId).toBe(running.id);
+    expect(
+      await prisma.campaignStatusLog.count({ where: { event: "cancel_org_locked" } }),
+    ).toBe(2);
+    await eventually(() =>
+      expect(notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: "CAMPAIGN_CANCELLED",
+          userIds: expect.arrayContaining([CM, OWNER]),
+          payload: expect.objectContaining({ reason: "Vi phạm điều khoản" }),
+        }),
+      ),
+    );
+
+    // A locked organization can no longer start campaigns, but its owners still manage the running one.
+    const detail = await organizationService.getById(orgId, OWNER);
+    expect(detail?.permissions?.canCreateCampaign).toBe(false);
+    expect(detail?.permissions?.canManageAllCampaigns).toBe(true);
+    await expect(
+      campaignService.createCampaign(CM, draftRequest([]) as never),
+    ).rejects.toMatchObject(code("CAMPAIGN_CREATE_NOT_ALLOWED"));
+  });
+
+  it("an expired lane-B verification gets the unverified limits", async () => {
+    await prisma.organization.update({
+      where: { id: orgId },
+      data: { verificationExpiresAt: new Date(Date.now() - 24 * HOUR) },
+    });
+    const e = await campaignEligibilityService.get(OWNER, orgId);
+    expect(e).toMatchObject({ isVerified: false, maxDifficulty: 1, openLimit: 2 });
+    const detail = await organizationService.getById(orgId, OWNER);
+    expect(detail?.isVerified).toBe(false);
+  });
+});
+
+describe("reward-service availability", () => {
+  it("a draft saves without reward-service; submitting says the service is down", async () => {
+    const { HttpError, HTTP_STATUS } = await import("../constants/http-status");
+    strictTier.mockImplementation(async () => {
+      throw new HttpError(HTTP_STATUS.REWARD_SERVICE_UNAVAILABLE);
+    });
+    const report = await seedReport();
+    const draft = await campaignService.createCampaign(CM, draftRequest([report.id]) as never);
+    expect(draft.status).toBe(S.DRAFT);
+    await expect(campaignService.submitCampaign(draft.id, CM)).rejects.toMatchObject(
+      code("REWARD_SERVICE_UNAVAILABLE"),
+    );
+    expect((await prisma.campaign.findUnique({ where: { id: draft.id } }))?.status).toBe(S.DRAFT);
+  });
+
+  it("a level reward-service does not know is a field error on submit", async () => {
+    strictTier.mockImplementation(async () => null);
+    const report = await seedReport();
+    const draft = await campaignService.createCampaign(CM, draftRequest([report.id]) as never);
+    await expect(campaignService.submitCampaign(draft.id, CM)).rejects.toMatchObject({
+      statusResponse: expect.objectContaining({ code: "CAMPAIGN_INVALID" }),
+      data: { details: [expect.objectContaining({ field: "difficulty", code: "DIFFICULTY_UNKNOWN" })] },
+    });
+  });
+
+  it("an out-of-range difficulty is rejected when saving the draft", async () => {
+    await expect(
+      campaignService.createCampaign(CM, draftRequest([], { difficulty: 9 }) as never),
+    ).rejects.toMatchObject(code("VALIDATION_ERROR"));
   });
 });

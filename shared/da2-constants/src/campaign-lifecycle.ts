@@ -16,6 +16,8 @@ export const CampaignStatus = {
   COMPLETED: GlobalStatus._STATUS_COMPLETED,
   BLOCKED: GlobalStatus._STATUS_INACTIVE,
   EXPIRED: GlobalStatus._STATUS_OBSOLETE,
+  /** Stopped before approval, e.g. because its organization was locked. */
+  CANCELLED: GlobalStatus._STATUS_CANCELED,
 } as const;
 
 export type CampaignStatusValue =
@@ -79,8 +81,16 @@ export const CAMPAIGN_UNVERIFIED_MAX_DIFFICULTY = 1;
 export const CAMPAIGN_REVISION_HOLD_DAYS = 7;
 export const CAMPAIGN_DRAFT_TTL_DAYS = 30;
 export const CAMPAIGN_MEETING_POINT_MAX = 5;
+/**
+ * Spec: a campaign covers at least one approved waste point. Temporarily off on request, so a
+ * campaign can be sent for review without any; set back to `true` to enforce the spec again.
+ */
+export const CAMPAIGN_REPORTS_REQUIRED = false;
 export const CAMPAIGN_MEETING_POINT_MAX_DISTANCE_KM = 5;
 /** Difficulty level from which volunteers must be adults by default. */
+/** Difficulty levels a draft may hold; the tier itself (limits, points) is read from reward-service on submit. */
+export const CAMPAIGN_DIFFICULTY_MIN = 1;
+export const CAMPAIGN_DIFFICULTY_MAX = 4;
 export const CAMPAIGN_HIGH_DIFFICULTY_LEVEL = 3;
 export const CAMPAIGN_HIGH_DIFFICULTY_MIN_AGE = 18;
 export const CAMPAIGN_REVIEW_REASON_MAX_LENGTH = 5000;

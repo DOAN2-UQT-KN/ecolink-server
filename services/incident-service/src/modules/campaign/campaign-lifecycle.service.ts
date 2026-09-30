@@ -376,14 +376,19 @@ export class CampaignLifecycleService {
     }
     await campaignAccessService.assertCanManage(existing, userId);
 
-    // Outside the transaction: an HTTP call to reward-service.
-    const tier = await rewardServiceClient.getDifficultyByLevel(existing.difficulty);
+    // Outside the transaction: an HTTP call to reward-service. Unreachable → 503 (thrown by the
+    // client); no such level → a field error the form can show on step 1.
+    const tier = await rewardServiceClient.getDifficultyByLevelStrict(existing.difficulty);
     if (!tier) {
-      throw new HttpError(
-        HTTP_STATUS.BAD_REQUEST.withMessage(
-          "Invalid campaign difficulty; no matching tier in reward service",
-        ),
-      );
+      throw new HttpError(HTTP_STATUS.CAMPAIGN_INVALID, {
+        details: [
+          {
+            field: "difficulty",
+            code: "DIFFICULTY_UNKNOWN",
+            message: `Difficulty level ${existing.difficulty} does not exist`,
+          },
+        ],
+      });
     }
 
     const { campaign, isResubmission } = await prisma.$transaction(
@@ -688,6 +693,77 @@ export class CampaignLifecycleService {
       data: { deletedAt: now },
     });
     return result.count;
+  }
+
+  /**
+   * Organization locked by an admin (spec, exceptions): its draft, under-review and
+   * waiting-for-changes campaigns are cancelled and their reports released, inside the caller's
+   * transaction. Running campaigns are left to finish. Returns what was cancelled so the caller
+   * can notify after commit (`notifyCancelledForLockedOrganization`).
+   */
+  async cancelForLockedOrganization(
+    tx: Tx,
+    organizationId: string,
+    adminUserId: string,
+    reason: string,
+  ): Promise<CampaignWithReports[]> {
+    const rows = await tx.campaign.findMany({
+      where: {
+        organizationId,
+        deletedAt: null,
+        status: {
+          in: [
+            CampaignStatus.DRAFT,
+            CampaignStatus.PENDING_REVIEW,
+            CampaignStatus.NEEDS_REVISION,
+          ],
+        },
+      },
+      select: { id: true, status: true },
+    });
+    const cancelled: CampaignWithReports[] = [];
+    for (const row of rows) {
+      await transitionCampaign(tx, {
+        campaignId: row.id,
+        event: "cancel_org_locked",
+        fromStatus: row.status,
+        actor: "admin",
+        actorId: adminUserId,
+        reason,
+        data: { rejectReason: reason, revisionDeadline: null },
+      });
+      await this.releaseAllReports(tx, row.id, adminUserId);
+      cancelled.push(await this.loadInTx(tx, row.id));
+    }
+    return cancelled;
+  }
+
+  /** Creator and owners of each campaign cancelled because its organization was locked. */
+  async notifyCancelledForLockedOrganization(
+    campaigns: CampaignWithReports[],
+    reason: string,
+  ): Promise<void> {
+    if (campaigns.length === 0) return;
+    const owners = await organizationMemberRepository.findOwnerUserIds(
+      campaigns[0].organizationId,
+    );
+    await Promise.all(
+      campaigns.map((campaign) => {
+        const recipients = [
+          ...new Set([...(campaign.createdBy ? [campaign.createdBy] : []), ...owners]),
+        ];
+        if (recipients.length === 0) return Promise.resolve();
+        return enqueueWebsiteNotificationsToUsers({
+          kind: "CAMPAIGN_CANCELLED",
+          userIds: recipients,
+          payload: {
+            campaignId: campaign.id,
+            reason,
+            ...campaignTitleNotificationPayload(campaign),
+          },
+        });
+      }),
+    );
   }
 
   // ---------------------------------------------------------------------------

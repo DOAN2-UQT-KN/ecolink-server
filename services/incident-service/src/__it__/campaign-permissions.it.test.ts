@@ -22,6 +22,7 @@ jest.mock("../modules/organization/identity-user.client", () => ({
 jest.mock("../modules/reward/reward-service.client", () => ({
   rewardServiceClient: {
     getDifficultyByLevel: async () => ({ level: 1, maxVolunteers: 10, greenPoints: 10 }),
+    getDifficultyByLevelStrict: async () => ({ level: 1, maxVolunteers: 10, greenPoints: 10 }),
     getDifficulties: async () => [],
   },
 }));

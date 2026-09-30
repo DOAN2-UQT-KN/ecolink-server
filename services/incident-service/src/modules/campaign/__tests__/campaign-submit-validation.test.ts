@@ -6,6 +6,7 @@ import {
   type SubmitCampaignInput,
   type SubmitValidationContext,
 } from "../campaign-submit-validation";
+import { CAMPAIGN_REPORTS_REQUIRED } from "@da2/constants";
 
 const HOUR = 60 * 60 * 1000;
 const NOW = new Date("2026-10-01T01:00:00.000Z"); // 08:00 in Vietnam
@@ -111,13 +112,17 @@ describe("validateCampaignForSubmit", () => {
     );
   });
 
-  it("needs 1–5 meeting points and at least one waste point", () => {
+  it("needs 1–5 meeting points", () => {
     expect(codes(input({ meetingPoints: [] }))).toContain("MEETING_POINT_COUNT");
     const six = Array.from({ length: 6 }, () => ({ ...input().meetingPoints[0], name: "P", reportIds: [] }));
     expect(codes(input({ meetingPoints: six }))).toContain("MEETING_POINT_COUNT");
+  });
+
+  it("waste points are optional while CAMPAIGN_REPORTS_REQUIRED is off", () => {
+    expect(CAMPAIGN_REPORTS_REQUIRED).toBe(false);
     expect(
       codes(input({ meetingPoints: [{ ...input().meetingPoints[0], reportIds: [] }] })),
-    ).toContain("REPORTS_REQUIRED");
+    ).toEqual([]);
   });
 
   it("checks waste points: available, inside the radius, one meeting point each", () => {

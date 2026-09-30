@@ -342,6 +342,11 @@ export const HTTP_STATUS = {
     "These fields cannot be changed in the campaign's current status",
     "CAMPAIGN_NOT_EDITABLE",
   ),
+  REWARD_SERVICE_UNAVAILABLE: createStatus(
+    503,
+    "The reward service is not reachable right now; try again shortly",
+    "REWARD_SERVICE_UNAVAILABLE",
+  ),
   CAMPAIGN_NOT_DELETABLE: createStatus(
     409,
     "The campaign cannot be deleted in its current status",

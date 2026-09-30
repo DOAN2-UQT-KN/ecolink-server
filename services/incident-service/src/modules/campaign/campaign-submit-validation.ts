@@ -6,6 +6,7 @@ import {
   CAMPAIGN_MEETING_POINT_MAX,
   CAMPAIGN_MEETING_POINT_MAX_DISTANCE_KM,
   CAMPAIGN_MIN_LEAD_HOURS,
+  CAMPAIGN_REPORTS_REQUIRED,
   CAMPAIGN_TITLE_MAX_LENGTH,
   CAMPAIGN_TITLE_MIN_LENGTH,
   type CampaignRequirements,
@@ -287,7 +288,7 @@ function validateMeetingPoints(
     }
   });
 
-  if (reportCount === 0) {
+  if (CAMPAIGN_REPORTS_REQUIRED && reportCount === 0) {
     add("meetingPoints", "REPORTS_REQUIRED", "Add at least one waste point");
   }
 

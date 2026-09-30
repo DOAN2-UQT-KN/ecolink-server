@@ -31,6 +31,8 @@ import { campaignAccessService } from "./campaign-access.service";
 import { campaignManagerService } from "./campaign_manager/campaign_manager.service";
 import {
   CAMPAIGN_DELETABLE_STATUSES,
+  CAMPAIGN_DIFFICULTY_MAX,
+  CAMPAIGN_DIFFICULTY_MIN,
   CAMPAIGN_PUBLIC_STATUSES,
   CampaignStatus,
 } from "@da2/constants";
@@ -75,6 +77,20 @@ import { reportService } from "../report/report.service";
 import { reportRepository } from "../report/report.repository";
 import { emitOutbox } from "../../outbox/outbox.writer";
 import { OutboxEventType } from "../../outbox/outbox.types";
+
+function assertDifficultyInRange(level: number): void {
+  if (
+    !Number.isInteger(level) ||
+    level < CAMPAIGN_DIFFICULTY_MIN ||
+    level > CAMPAIGN_DIFFICULTY_MAX
+  ) {
+    throw new HttpError(
+      HTTP_STATUS.VALIDATION_ERROR.withMessage(
+        `difficulty must be between ${CAMPAIGN_DIFFICULTY_MIN} and ${CAMPAIGN_DIFFICULTY_MAX}`,
+      ),
+    );
+  }
+}
 
 /** Hardcoded radius for community verify invites (meters). */
 const NOTIFY_NEARBY_VERIFY_RADIUS_METERS = 5_000;
@@ -457,14 +473,9 @@ export class CampaignService {
     }
     await campaignEligibilityService.assertCanCreateDraft(userId, org.id);
 
-    const tier = await rewardServiceClient.getDifficultyByLevel(
-      request.difficulty,
-    );
-    if (!tier) {
-      throw new Error(
-        "Invalid campaign difficulty; no matching tier in reward service",
-      );
-    }
+    // A draft only needs a level in range; the tier (volunteer cap) is checked on submit, so
+    // saving a draft does not depend on reward-service.
+    assertDifficultyInRange(request.difficulty);
 
     const meetingPoints = meetingPointsFromRequest(request, userId) ?? [];
     await campaignLifecycleService.assertReportsSelectable(
@@ -753,17 +764,37 @@ export class CampaignService {
     return requestStatus !== undefined ? { ...base, requestStatus } : base;
   }
 
-  /** campaignIds limited to 100 UUIDs at the controller. */
+  /**
+   * campaignIds limited to 100 UUIDs at the controller. Same visibility as GET /:id: campaigns
+   * that are not public are left out unless the viewer manages them (or, drafts aside, is an
+   * admin).
+   */
   async getCampaignsByIds(
     campaignIds: string[],
     viewerUserId?: string | null,
     locale?: AppLocale | null,
+    viewerRole?: string | null,
   ): Promise<CampaignResponse[]> {
     if (campaignIds.length === 0) {
       return [];
     }
     const rows = await campaignRepository.findManyByIds(campaignIds);
-    const byId = new Map(rows.map((row) => [row.id, row]));
+    const isAdmin = isPlatformAdmin(viewerRole);
+    const access = await campaignAccessService.resolveMany(
+      rows.map((c) => ({
+        id: c.id,
+        organizationId: c.organizationId,
+        createdBy: c.createdBy,
+        managerIds: c.campaignManagers.map((m) => m.userId),
+      })),
+      viewerUserId,
+    );
+    const visible = rows.filter((c) => {
+      const canManage = access.get(c.id)?.canManage ?? false;
+      if (c.status === CampaignStatus.DRAFT) return canManage;
+      return canManage || isAdmin || CAMPAIGN_PUBLIC_STATUSES.includes(c.status);
+    });
+    const byId = new Map(visible.map((row) => [row.id, row]));
     const resolved = campaignIds
       .map((id) => byId.get(id))
       .filter((row): row is CampaignWithReports => row !== undefined);
@@ -1138,14 +1169,7 @@ export class CampaignService {
     }
 
     if (request.difficulty !== undefined) {
-      const nextTier = await rewardServiceClient.getDifficultyByLevel(
-        request.difficulty,
-      );
-      if (!nextTier) {
-        throw new Error(
-          "Invalid campaign difficulty; no matching tier in reward service",
-        );
-      }
+      assertDifficultyInRange(request.difficulty);
     }
 
     const meetingPoints = meetingPointsFromRequest(

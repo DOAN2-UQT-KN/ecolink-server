@@ -13,6 +13,8 @@ import { campaignJoiningRequestService } from "./campaign_joining_request/campai
 import { campaignAttendanceService } from "./campaign_attendance/campaign_attendance.service";
 import { GlobalStatus, JoinRequestStatus } from "../../constants/status.enum";
 import {
+  CAMPAIGN_DIFFICULTY_MAX,
+  CAMPAIGN_DIFFICULTY_MIN,
   CAMPAIGN_MEETING_POINT_MAX,
   CAMPAIGN_REVIEW_REASON_MAX_LENGTH,
 } from "@da2/constants";
@@ -161,9 +163,9 @@ export class CampaignController {
       .isFloat({ min: 0 })
       .withMessage("radiusKm must be a non-negative number"),
     body("difficulty")
-      .isInt({ min: 1 })
+      .isInt({ min: CAMPAIGN_DIFFICULTY_MIN, max: CAMPAIGN_DIFFICULTY_MAX })
       .withMessage(
-        "difficulty must be a positive integer (reward-service tier)",
+        `difficulty must be between ${CAMPAIGN_DIFFICULTY_MIN} and ${CAMPAIGN_DIFFICULTY_MAX}`,
       ),
     body("reportIds")
       .optional()
@@ -197,12 +199,6 @@ export class CampaignController {
         }
         if (error instanceof Error) {
           if (error.message.includes("reportIds")) {
-            return sendError(
-              res,
-              HTTP_STATUS.BAD_REQUEST.withMessage(error.message),
-            );
-          }
-          if (error.message.includes("Invalid campaign difficulty")) {
             return sendError(
               res,
               HTTP_STATUS.BAD_REQUEST.withMessage(error.message),
@@ -482,6 +478,7 @@ export class CampaignController {
           campaignParsed.ids,
           req.user?.userId,
           resolveRequestLocale(req),
+          req.user?.role,
         );
         sendSuccess(res, HTTP_STATUS.OK, { campaigns });
       } catch (error) {
@@ -1033,9 +1030,9 @@ export class CampaignController {
       ),
     body("difficulty")
       .optional()
-      .isInt({ min: 1 })
+      .isInt({ min: CAMPAIGN_DIFFICULTY_MIN, max: CAMPAIGN_DIFFICULTY_MAX })
       .withMessage(
-        "difficulty must be a positive integer (reward-service tier)",
+        `difficulty must be between ${CAMPAIGN_DIFFICULTY_MIN} and ${CAMPAIGN_DIFFICULTY_MAX}`,
       ),
     body("reportIds")
       .optional()
@@ -1087,12 +1084,6 @@ export class CampaignController {
             );
           }
           if (error.message.includes("reportIds")) {
-            return sendError(
-              res,
-              HTTP_STATUS.BAD_REQUEST.withMessage(error.message),
-            );
-          }
-          if (error.message.includes("Invalid campaign difficulty")) {
             return sendError(
               res,
               HTTP_STATUS.BAD_REQUEST.withMessage(error.message),

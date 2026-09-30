@@ -4,6 +4,7 @@ import {
   HTTP_CIRCUIT_REWARD,
   type HttpCircuit,
 } from "../../resilience/http-circuit";
+import { HttpError, HTTP_STATUS } from "../../constants/http-status";
 
 export interface RewardDifficulty {
   id: string;
@@ -147,22 +148,46 @@ export class RewardServiceClient {
     }
   }
 
-  async getDifficultyByLevel(
+  /**
+   * The tier for a level: `null` only when reward-service answers 404 (no such level). Not being
+   * able to reach it (network, timeout, 5xx, open circuit, missing env) throws 503
+   * `REWARD_SERVICE_UNAVAILABLE`, so callers never mistake an outage for an invalid difficulty.
+   * A 404 is an answer, not a failure: it does not count against the circuit breaker.
+   */
+  async getDifficultyByLevelStrict(
     level: number,
   ): Promise<RewardDifficulty | null> {
     try {
       return await this.circuit.run(async () => {
         const client = this.getClient();
-        const { data } = await client.get<
-          SuccessEnvelope<{ difficulty: RewardDifficulty }>
-        >(`/internal/v1/difficulties/level/${level}`);
-        if (!data?.success || !data.data?.difficulty) {
-          return null;
+        try {
+          const { data } = await client.get<
+            SuccessEnvelope<{ difficulty: RewardDifficulty }>
+          >(`/internal/v1/difficulties/level/${level}`);
+          if (!data?.success || !data.data?.difficulty) {
+            return null;
+          }
+          return normalizeDifficulty(data.data.difficulty);
+        } catch (err) {
+          if (axios.isAxiosError(err) && err.response?.status === 404) {
+            return null;
+          }
+          throw err;
         }
-        return normalizeDifficulty(data.data.difficulty);
       });
     } catch (e) {
       this.logCallFailure("getDifficultyByLevel", e, { level });
+      throw new HttpError(HTTP_STATUS.REWARD_SERVICE_UNAVAILABLE);
+    }
+  }
+
+  /** Same lookup for display (points, volunteer cap): `null` on any failure, never throws. */
+  async getDifficultyByLevel(
+    level: number,
+  ): Promise<RewardDifficulty | null> {
+    try {
+      return await this.getDifficultyByLevelStrict(level);
+    } catch {
       return null;
     }
   }
