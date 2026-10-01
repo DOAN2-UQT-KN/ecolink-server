@@ -34,6 +34,8 @@ export interface CreateCampaignRequest {
   contactPhone?: string | null;
   safetyNotes?: string | null;
   requirements?: CampaignRequirements | null;
+  /** Required on submit when a day's minimum volunteers is below the difficulty's suggestion. */
+  minVolunteersReason?: string | null;
   days?: CampaignDayInput[];
   meetingPoints?: MeetingPointInput[];
   shifts?: CampaignShiftInput[];
@@ -47,14 +49,16 @@ export interface CampaignDayInput {
 
 /**
  * One shift (day × meeting point) in a create/update body, by position in `days` and
- * `meetingPoints`. Shifts left out are off (0 slots).
+ * `meetingPoints`. Shifts left out are off (0 minimum volunteers).
  */
 export interface CampaignShiftInput {
   dayIndex: number;
   meetingPointIndex: number;
   gatherAt?: string | null;
-  /** 0 turns the shift off. */
-  slots: number;
+  /** Volunteers needed; 0 turns the shift off. A warning level, not a cap. */
+  minVolunteers: number;
+  /** Expected maximum; optional, warning only. */
+  maxVolunteers?: number | null;
   leaderUserId?: string | null;
 }
 
@@ -91,7 +95,8 @@ export interface CampaignShiftResponse {
   dayId: string;
   meetingPointId: string;
   gatherAt: Date | null;
-  slots: number;
+  minVolunteers: number;
+  maxVolunteers: number | null;
   leaderUserId: string | null;
 }
 
@@ -150,6 +155,8 @@ export interface UpdateCampaignRequest {
   contactPhone?: string | null;
   safetyNotes?: string | null;
   requirements?: CampaignRequirements | null;
+  /** Required on submit when a day's minimum volunteers is below the difficulty's suggestion. */
+  minVolunteersReason?: string | null;
   /**
    * The schedule (days, meeting points with their reports, shifts). Any of the three present
    * replaces the whole schedule; the ones left out are kept from the campaign.
@@ -189,10 +196,14 @@ export interface CampaignResponse {
   /** Resubmit before this while NEEDS_REVISION. */
   revisionDeadline: Date | null;
   submittedAt: Date | null;
+  /** Why a day's minimum volunteers is below the difficulty's suggestion. */
+  minVolunteersReason: string | null;
+  /** Suggested minimum volunteers per day for this difficulty (detail responses only). */
+  suggestedMinVolunteers: number | null;
   /** Campaign days in time order; the campaign runs from the first start to the last end. */
   days: CampaignDayResponse[];
   meetingPoints: MeetingPointResponse[];
-  /** Every day × meeting point; `slots` 0 = off. */
+  /** Every day × meeting point; `minVolunteers` 0 = off. */
   shifts: CampaignShiftResponse[];
   /** Green points for this difficulty tier (reward rules). */
   greenPoints: number;

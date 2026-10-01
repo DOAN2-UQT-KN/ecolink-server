@@ -11,6 +11,8 @@ export interface RewardDifficulty {
   level: number;
   name: string;
   maxVolunteers: number | null;
+  /** Suggested minimum volunteers per campaign day; null = no suggestion. */
+  suggestedMinVolunteers: number | null;
   greenPoints: number;
 }
 
@@ -39,6 +41,7 @@ function normalizeDifficulty(row: unknown): RewardDifficulty | null {
   const greenPoints = toNumberOrNull(r.greenPoints);
   const maxVolunteersRaw = toNumberOrNull(r.maxVolunteers);
   const maxVolunteers = maxVolunteersRaw === null ? null : maxVolunteersRaw;
+  const suggestedMinVolunteers = toNumberOrNull(r.suggestedMinVolunteers);
 
   if (!id || level === null || greenPoints === null) return null;
 
@@ -48,6 +51,7 @@ function normalizeDifficulty(row: unknown): RewardDifficulty | null {
     level,
     greenPoints,
     maxVolunteers,
+    suggestedMinVolunteers,
   };
 }
 

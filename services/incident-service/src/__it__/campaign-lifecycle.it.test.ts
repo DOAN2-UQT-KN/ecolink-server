@@ -20,7 +20,12 @@ jest.mock("../modules/organization/identity-user.client", () => ({
   getUserProfile: () => undefined,
   fetchUserIdsNearPoint: async () => [],
 }));
-const tierFor = (level: number) => ({ level, maxVolunteers: 20, greenPoints: 10 });
+const tierFor = (level: number) => ({
+  level,
+  maxVolunteers: 20,
+  suggestedMinVolunteers: 10,
+  greenPoints: 10,
+});
 const strictTier = jest.fn(async (level: number) => tierFor(level) as unknown);
 jest.mock("../modules/reward/reward-service.client", () => ({
   rewardServiceClient: {
@@ -143,7 +148,7 @@ function draftRequest(reportIds: string[], overrides: Record<string, unknown> = 
         dayIndex: 0,
         meetingPointIndex: 0,
         gatherAt: new Date(start.getTime() - HOUR / 2).toISOString(),
-        slots: 10,
+        minVolunteers: 10,
         leaderUserId: CM,
       },
     ],
@@ -223,9 +228,9 @@ describe("draft and submit", () => {
         { ...base.meetingPoints[0], name: "Nam", latitude: POINT.latitude + 0.01 },
       ],
       shifts: [
-        { dayIndex: 1, meetingPointIndex: 0, slots: 12, leaderUserId: CM },
-        { dayIndex: 1, meetingPointIndex: 1, slots: 8, leaderUserId: CM },
-        { dayIndex: 0, meetingPointIndex: 0, slots: 20, leaderUserId: CM },
+        { dayIndex: 1, meetingPointIndex: 0, minVolunteers: 12, maxVolunteers: 20, leaderUserId: CM },
+        { dayIndex: 1, meetingPointIndex: 1, minVolunteers: 8, leaderUserId: CM },
+        { dayIndex: 0, meetingPointIndex: 0, minVolunteers: 20, leaderUserId: CM },
       ],
     } as never);
 
@@ -235,15 +240,43 @@ describe("draft and submit", () => {
     ]);
     const [first, second] = draft.days.map((d) => d.id);
     const [north, south] = draft.meetingPoints.map((p) => p.id);
-    const slotsOf = (dayId: string, pointId: string) =>
-      draft.shifts.find((sh) => sh.dayId === dayId && sh.meetingPointId === pointId)?.slots;
+    const shiftAt = (dayId: string, pointId: string) =>
+      draft.shifts.find((sh) => sh.dayId === dayId && sh.meetingPointId === pointId);
+    const slotsOf = (dayId: string, pointId: string) => shiftAt(dayId, pointId)?.minVolunteers;
     expect(draft.shifts).toHaveLength(4);
     expect([slotsOf(first, north), slotsOf(first, south)]).toEqual([12, 8]);
     expect([slotsOf(second, north), slotsOf(second, south)]).toEqual([20, 0]);
+    expect(shiftAt(first, north)?.maxVolunteers).toBe(20);
+    expect(shiftAt(first, south)?.maxVolunteers).toBeNull();
 
     await campaignService.submitCampaign(draft.id, CM);
     const submitted = await prisma.campaign.findUniqueOrThrow({ where: { id: draft.id } });
     expect(submitted.status).toBe(S.PENDING_REVIEW);
+  });
+
+  it("a day below the suggested minimum needs a reason before review", async () => {
+    const base = draftRequest([]);
+    const low = await campaignService.createCampaign(CM, {
+      ...base,
+      shifts: [{ ...base.shifts[0], minVolunteers: 4 }],
+    } as never);
+    await expect(campaignService.submitCampaign(low.id, CM)).rejects.toMatchObject({
+      data: {
+        details: expect.arrayContaining([
+          expect.objectContaining({
+            field: "minVolunteersReason",
+            code: "MIN_VOLUNTEERS_REASON_REQUIRED",
+          }),
+        ]),
+      },
+    });
+    await campaignService.updateCampaign(low.id, CM, {
+      minVolunteersReason: "A short stretch of canal; four people are enough",
+    } as never);
+    await campaignService.submitCampaign(low.id, CM);
+    const submitted = await prisma.campaign.findUniqueOrThrow({ where: { id: low.id } });
+    expect(submitted.status).toBe(S.PENDING_REVIEW);
+    expect(submitted.minVolunteersReason).toMatch(/four people/);
   });
 
   it("two drafts racing for one report: one wins, the other gets 409 naming it", async () => {
@@ -328,7 +361,7 @@ describe("draft and submit", () => {
     expect(edit?.changes).not.toHaveProperty("shifts");
 
     await campaignService.updateCampaign(draft.id, CM, {
-      shifts: [{ dayIndex: 0, meetingPointIndex: 0, slots: 12, leaderUserId: CM }],
+      shifts: [{ dayIndex: 0, meetingPointIndex: 0, minVolunteers: 12, leaderUserId: CM }],
     } as never);
     const edits = await prisma.campaignStatusLog.findMany({
       where: { campaignId: draft.id, type: "EDIT" },

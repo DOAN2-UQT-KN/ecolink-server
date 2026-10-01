@@ -59,7 +59,9 @@ export interface NormalizedShift {
   dayIndex: number;
   meetingPointIndex: number;
   gatherAt: Date | null;
-  slots: number;
+  /** 0 = the shift is off. */
+  minVolunteers: number;
+  maxVolunteers: number | null;
   leaderUserId: string | null;
 }
 
@@ -83,6 +85,7 @@ export interface CampaignSnapshot {
   days: Array<{ startAt: string; endAt: string }>;
   meetingPoints: NormalizedMeetingPoint[];
   shifts: Array<Omit<NormalizedShift, "gatherAt"> & { gatherAt: string | null }>;
+  minVolunteersReason: string | null;
 }
 
 export type FieldDiff = Record<string, { from: unknown; to: unknown }>;
@@ -124,7 +127,8 @@ export function scheduleOf(campaign: CampaignWithReports): NormalizedSchedule {
       dayIndex: d,
       meetingPointIndex: p,
       gatherAt: shift.gatherAt,
-      slots: shift.slots,
+      minVolunteers: shift.minVolunteers,
+      maxVolunteers: shift.maxVolunteers,
       leaderUserId: shift.leaderUserId,
     });
   }
@@ -195,7 +199,8 @@ export function scheduleFromRequest(
       dayIndex: Number(sh.dayIndex),
       meetingPointIndex: Number(sh.meetingPointIndex),
       gatherAt: sh.gatherAt ? new Date(sh.gatherAt) : null,
-      slots: Number(sh.slots ?? 0),
+      minVolunteers: Number(sh.minVolunteers ?? 0),
+      maxVolunteers: sh.maxVolunteers == null ? null : Number(sh.maxVolunteers),
       leaderUserId: sh.leaderUserId?.trim() || null,
     })) ??
     current?.shifts ??
@@ -232,7 +237,8 @@ export function scheduleFromRequest(
         dayIndex: d,
         meetingPointIndex: p,
         gatherAt: cell?.gatherAt ?? null,
-        slots: cell?.slots ?? 0,
+        minVolunteers: cell?.minVolunteers ?? 0,
+        maxVolunteers: cell?.maxVolunteers ?? null,
         leaderUserId: cell?.leaderUserId ?? defaultLeaderId,
       });
     }),
@@ -260,6 +266,7 @@ function toSnapshot(campaign: CampaignWithReports): CampaignSnapshot {
       ...sh,
       gatherAt: sh.gatherAt?.toISOString() ?? null,
     })),
+    minVolunteersReason: campaign.minVolunteersReason ?? null,
   };
 }
 
@@ -398,7 +405,8 @@ export class CampaignLifecycleService {
           dayId: dayIds[sh.dayIndex],
           meetingPointId: pointIds[sh.meetingPointIndex],
           gatherAt: sh.gatherAt,
-          slots: sh.slots,
+          minVolunteers: sh.minVolunteers,
+          maxVolunteers: sh.maxVolunteers,
           leaderUserId: sh.leaderUserId,
         })),
       });
@@ -531,7 +539,7 @@ export class CampaignLifecycleService {
         const leaderIds = [
           ...new Set(
             schedule.shifts
-              .filter((sh) => sh.slots > 0)
+              .filter((sh) => sh.minVolunteers > 0)
               .map((sh) => sh.leaderUserId)
               .filter((x): x is string => !!x),
           ),
@@ -570,10 +578,11 @@ export class CampaignLifecycleService {
             requirements,
             meetingPoints: schedule.meetingPoints,
             shifts: schedule.shifts,
+            minVolunteersReason: campaign.minVolunteersReason,
           },
           {
             now: new Date(),
-            maxVolunteers: tier.maxVolunteers,
+            suggestedMinPerDay: tier.suggestedMinVolunteers,
             maxDifficulty: eligibility.maxDifficulty,
             reports: new Map(reports.map((r) => [r.id, r])),
             eligibleLeaderIds: leaderMembers,

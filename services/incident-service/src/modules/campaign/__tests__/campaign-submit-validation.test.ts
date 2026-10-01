@@ -18,12 +18,13 @@ const LEADER = "leader-1";
 const BASE = { latitude: 10.77, longitude: 106.7 };
 
 /** An active shift on day `d` at point `p`, gathering half an hour before the day starts. */
-function shift(d: number, p: number, slots = 10, day = START) {
+function shift(d: number, p: number, minVolunteers = 10, day = START, maxVolunteers: number | null = null) {
   return {
     dayIndex: d,
     meetingPointIndex: p,
     gatherAt: new Date(day.getTime() - HOUR / 2),
-    slots,
+    minVolunteers,
+    maxVolunteers,
     leaderUserId: LEADER,
   };
 }
@@ -59,7 +60,7 @@ function input(overrides: Partial<SubmitCampaignInput> = {}): SubmitCampaignInpu
 function ctx(overrides: Partial<SubmitValidationContext> = {}): SubmitValidationContext {
   return {
     now: NOW,
-    maxVolunteers: 20,
+    suggestedMinPerDay: 5,
     maxDifficulty: null,
     reports: new Map([
       ["r1", { latitude: 10.771, longitude: 106.701 }],
@@ -199,35 +200,57 @@ describe("validateCampaignForSubmit", () => {
     ];
     const twoDays = [dayAfter(0), dayAfter(1)];
 
-    it("accepts the spec example: 15 + 10 on day 1, 20 + off on day 2, cap 25", () => {
+    it("accepts the spec example: 15 (max 25) + 10 on day 1, 20 (max 30) + off on day 2", () => {
       const issues = validateCampaignForSubmit(
         input({
           days: twoDays,
           meetingPoints: twoPoints,
           shifts: [
-            shift(0, 0, 15),
+            shift(0, 0, 15, START, 25),
             shift(0, 1, 10),
-            shift(1, 0, 20, twoDays[1].startAt),
+            shift(1, 0, 20, twoDays[1].startAt, 30),
             { ...shift(1, 1, 0), gatherAt: null, leaderUserId: null },
           ],
         }),
-        ctx({ maxVolunteers: 25 }),
+        ctx({ suggestedMinPerDay: 20 }),
       );
       expect(issues).toEqual([]);
     });
 
-    it("caps each day's slots at the per-day volunteer limit", () => {
-      const over = input({
+    it("never caps the number of volunteers: totals above the suggestion are fine", () => {
+      expect(
+        codes(input({ shifts: [shift(0, 0, 500)] }), ctx({ suggestedMinPerDay: 10 })),
+      ).toEqual([]);
+    });
+
+    it("a day below the suggested minimum needs a reason", () => {
+      const low = input({
         days: twoDays,
         meetingPoints: twoPoints,
-        shifts: [shift(0, 0, 15), shift(0, 1, 11), shift(1, 0, 20, twoDays[1].startAt)],
+        shifts: [shift(0, 0, 3), shift(0, 1, 2), shift(1, 0, 20, twoDays[1].startAt)],
       });
-      const issues = validateCampaignForSubmit(over, ctx({ maxVolunteers: 25 }));
+      const issues = validateCampaignForSubmit(low, ctx({ suggestedMinPerDay: 10 }));
       expect(issues).toContainEqual(
-        expect.objectContaining({ field: "days[0]", code: "DAY_SLOTS_OVER_LIMIT" }),
+        expect.objectContaining({
+          field: "minVolunteersReason",
+          code: "MIN_VOLUNTEERS_REASON_REQUIRED",
+        }),
       );
-      expect(issues.map((i) => i.field)).not.toContain("days[1]");
-      expect(codes(over, ctx({ maxVolunteers: null }))).not.toContain("DAY_SLOTS_OVER_LIMIT");
+      expect(
+        codes({ ...low, minVolunteersReason: "Small canal, 5 people are enough" }, ctx({ suggestedMinPerDay: 10 })),
+      ).toEqual([]);
+      expect(codes(low, ctx({ suggestedMinPerDay: null }))).toEqual([]);
+    });
+
+    it("the expected maximum, when set, is a whole number no lower than the minimum", () => {
+      const issues = validateCampaignForSubmit(
+        input({ shifts: [shift(0, 0, 10, START, 8)] }),
+        ctx(),
+      );
+      expect(issues).toContainEqual(
+        expect.objectContaining({ field: "schedule[0][0].maxVolunteers", code: "MAX_BELOW_MIN" }),
+      );
+      expect(codes(input({ shifts: [shift(0, 0, 10, START, 10)] }))).toEqual([]);
     });
 
     it("needs an active shift on every day; missing shifts are off", () => {
@@ -240,9 +263,9 @@ describe("validateCampaignForSubmit", () => {
       );
     });
 
-    it("rejects negative or fractional slots", () => {
-      expect(codes(input({ shifts: [shift(0, 0, -1)] }))).toContain("SLOTS_INVALID");
-      expect(codes(input({ shifts: [shift(0, 0, 2.5)] }))).toContain("SLOTS_INVALID");
+    it("rejects a negative or fractional minimum", () => {
+      expect(codes(input({ shifts: [shift(0, 0, -1)] }))).toContain("MIN_VOLUNTEERS_INVALID");
+      expect(codes(input({ shifts: [shift(0, 0, 2.5)] }))).toContain("MIN_VOLUNTEERS_INVALID");
     });
 
     it("an active shift needs an eligible leader; an off one does not", () => {

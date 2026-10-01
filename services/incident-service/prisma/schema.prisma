@@ -111,6 +111,8 @@ model Campaign {
   submittedAt           DateTime? @map("submitted_at")
   /// What was sent for review last time; the admin sees a diff on resubmit.
   lastSubmittedSnapshot Json?     @map("last_submitted_snapshot")
+  /// Why a day's minimum volunteers is below what the difficulty suggests (shown to the admin).
+  minVolunteersReason   String?   @map("min_volunteers_reason")
 
   organizationId String       @map("organization_id") @db.Uuid
   organization   Organization @relation(fields: [organizationId], references: [id])
@@ -1273,14 +1275,17 @@ model CampaignDay {
   @@map("campaign_days")
 }
 
-/// A shift: one meeting point on one day. `slots` 0 turns the shift off.
+/// A shift: one meeting point on one day. `minVolunteers` 0 turns the shift off.
 model CampaignShift {
   id             String    @id @default(uuid()) @db.Uuid
   campaignId     String    @map("campaign_id") @db.Uuid
   dayId          String    @map("day_id") @db.Uuid
   meetingPointId String    @map("meeting_point_id") @db.Uuid
   gatherAt       DateTime? @map("gather_at")
-  slots          Int       @default(0)
+  /// Volunteers needed to get the work done; 0 = the shift is off. A warning level, not a cap.
+  minVolunteers  Int       @default(0) @map("min_volunteers")
+  /// Expected maximum (tools, space, supervision); optional, warning only.
+  maxVolunteers  Int?      @map("max_volunteers")
   /// Campaign manager in charge of this shift.
   leaderUserId   String?   @map("leader_user_id") @db.Uuid
   createdAt      DateTime  @default(now()) @map("created_at")

@@ -132,7 +132,12 @@ export class CampaignService {
   private async resolveTierMaps(levels: number[]): Promise<{
     greenByLevel: Map<number, number>;
     maxByLevel: Map<number, number | null>;
-    difficulties: { level: number; greenPoints: number; maxVolunteers: number | null }[];
+    difficulties: {
+      level: number;
+      greenPoints: number;
+      maxVolunteers: number | null;
+      suggestedMinVolunteers: number | null;
+    }[];
   }> {
     const unique = [...new Set(levels)].filter((l) => Number.isFinite(l));
     const difficulties = await rewardServiceClient.getDifficulties();
@@ -371,6 +376,7 @@ export class CampaignService {
       currentMembers,
       maxMembers,
       locale,
+      tier?.suggestedMinVolunteers ?? null,
     );
   }
 
@@ -542,6 +548,7 @@ export class CampaignService {
             contactName: request.contactName?.trim() || null,
             contactPhone: request.contactPhone?.trim() || null,
             safetyNotes: request.safetyNotes?.trim() || null,
+            minVolunteersReason: request.minVolunteersReason?.trim() || null,
             ...(request.requirements != null
               ? { requirements: request.requirements as Prisma.InputJsonValue }
               : {}),
@@ -1188,6 +1195,7 @@ export class CampaignService {
           "days",
           "meetingPoints",
           "shifts",
+          "minVolunteersReason",
         ] as const
       ).filter((key) => request[key] !== undefined);
       if (restricted.length > 0) {
@@ -1247,6 +1255,7 @@ export class CampaignService {
             contactName: optionalText(request.contactName),
             contactPhone: optionalText(request.contactPhone),
             safetyNotes: optionalText(request.safetyNotes),
+            minVolunteersReason: optionalText(request.minVolunteersReason),
             ...(request.requirements !== undefined
               ? {
                   requirements:

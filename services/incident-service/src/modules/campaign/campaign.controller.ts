@@ -40,7 +40,7 @@ const CAMPAIGN_BATCH_QUERY_MAX_IDS = 100;
 
 /**
  * Shape checks for the fields added with drafts and meeting points. Business rules (lengths,
- * dates, distances, slots) run on submit, so a draft can be saved half-filled.
+ * dates, distances, volunteer numbers) run on submit, so a draft can be saved half-filled.
  */
 const campaignDetailValidators = () => [
   body("contactName")
@@ -109,7 +109,18 @@ const campaignDetailValidators = () => [
     .withMessage("shifts must be an array"),
   body("shifts.*.dayIndex").isInt({ min: 0, max: CAMPAIGN_DAY_MAX - 1 }),
   body("shifts.*.meetingPointIndex").isInt({ min: 0, max: CAMPAIGN_MEETING_POINT_MAX - 1 }),
-  body("shifts.*.slots").isInt({ min: 0 }).withMessage("shift slots must be a whole number ≥ 0"),
+  body("shifts.*.minVolunteers")
+    .isInt({ min: 0 })
+    .withMessage("shift minVolunteers must be a whole number ≥ 0"),
+  body("shifts.*.maxVolunteers")
+    .optional({ nullable: true })
+    .isInt({ min: 1 })
+    .withMessage("shift maxVolunteers must be a whole number ≥ 1"),
+  body("minVolunteersReason")
+    .optional({ nullable: true })
+    .isString()
+    .isLength({ max: 1000 })
+    .withMessage("minVolunteersReason must be at most 1000 characters"),
   body("shifts.*.gatherAt").optional({ nullable: true }).isISO8601(),
   body("shifts.*.leaderUserId").optional({ nullable: true }).isUUID(),
 ];

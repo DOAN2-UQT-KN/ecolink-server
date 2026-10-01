@@ -76,7 +76,8 @@ export const toCampaignShiftResponse = (shift: CampaignShift): CampaignShiftResp
   dayId: shift.dayId,
   meetingPointId: shift.meetingPointId,
   gatherAt: shift.gatherAt,
-  slots: shift.slots,
+  minVolunteers: shift.minVolunteers,
+  maxVolunteers: shift.maxVolunteers,
   leaderUserId: shift.leaderUserId,
 });
 
@@ -100,6 +101,7 @@ export const toCampaignResponse = (
   currentMembers: number,
   maxMembers: number | null,
   locale?: AppLocale | null,
+  suggestedMinVolunteers: number | null = null,
 ): CampaignResponse => {
   const managerIds = entity.campaignManagers.map((manager) => manager.userId);
   const titleLoc = toLocalizedText({
@@ -140,6 +142,8 @@ export const toCampaignResponse = (
     requirements: (entity.requirements as CampaignRequirements | null) ?? null,
     revisionDeadline: entity.revisionDeadline ?? null,
     submittedAt: entity.submittedAt ?? null,
+    minVolunteersReason: entity.minVolunteersReason ?? null,
+    suggestedMinVolunteers,
     days: (entity.days ?? []).map(toCampaignDayResponse),
     meetingPoints: (entity.meetingPoints ?? []).map(toMeetingPointResponse),
     shifts: (entity.shifts ?? []).map(toCampaignShiftResponse),

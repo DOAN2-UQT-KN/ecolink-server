@@ -39,7 +39,10 @@ export interface SubmitShift {
   dayIndex: number;
   meetingPointIndex: number;
   gatherAt?: Date | null;
-  slots: number;
+  /** Volunteers needed; 0 = the shift is off. */
+  minVolunteers: number;
+  /** Expected maximum; optional. */
+  maxVolunteers?: number | null;
   leaderUserId?: string | null;
 }
 
@@ -55,12 +58,14 @@ export interface SubmitCampaignInput {
   requirements: CampaignRequirements | null;
   meetingPoints: SubmitMeetingPoint[];
   shifts: SubmitShift[];
+  /** Why a day's minimum is below the suggestion; required only then. */
+  minVolunteersReason?: string | null;
 }
 
 export interface SubmitValidationContext {
   now: Date;
-  /** Volunteers allowed per day by the difficulty tier; null = no cap. */
-  maxVolunteers: number | null;
+  /** Minimum volunteers per day the difficulty suggests; null = no suggestion. */
+  suggestedMinPerDay: number | null;
   /** Highest difficulty the organization may use (1 when unverified). */
   maxDifficulty: number | null;
   /** Reports that may be locked by this campaign (approved, and free or already its own). */
@@ -312,9 +317,11 @@ function validateDays(days: SubmitDay[], now: Date, add: AddIssue): void {
 }
 
 /**
- * Spec 1.4: each day × meeting point is a shift. An active shift (slots > 0) needs a leader who
- * manages the campaign and a gathering time on its day; each day needs an active shift, and a
- * day's slots may not exceed the per-day volunteer cap.
+ * Spec 1.4 (rev. 4): each day × meeting point is a shift with a minimum number of volunteers
+ * (0 = off) and an optional expected maximum. Neither caps sign-ups; they only drive warnings.
+ * An active shift needs a leader who manages the campaign and a gathering time on its day; each
+ * day needs an active shift. A day whose minimum is below the difficulty's suggestion needs a
+ * reason for the admin.
  */
 function validateShifts(
   input: SubmitCampaignInput,
@@ -327,6 +334,7 @@ function validateShifts(
   for (const shift of input.shifts) {
     byCell.set(`${shift.dayIndex}:${shift.meetingPointIndex}`, shift);
   }
+  let belowSuggestion = false;
 
   days.forEach((day, d) => {
     let total = 0;
@@ -334,14 +342,26 @@ function validateShifts(
     meetingPoints.forEach((_, p) => {
       const shift = byCell.get(`${d}:${p}`);
       const at = `schedule[${d}][${p}]`;
-      const slots = shift?.slots ?? 0;
-      if (!Number.isInteger(slots) || slots < 0) {
-        add(`${at}.slots`, "SLOTS_INVALID", "Slots must be a whole number, 0 to turn the shift off");
+      const min = shift?.minVolunteers ?? 0;
+      if (!Number.isInteger(min) || min < 0) {
+        add(
+          `${at}.minVolunteers`,
+          "MIN_VOLUNTEERS_INVALID",
+          "Minimum volunteers must be a whole number, 0 to turn the shift off",
+        );
         return;
       }
-      if (slots === 0 || !shift) return;
+      if (min === 0 || !shift) return;
       active += 1;
-      total += slots;
+      total += min;
+      const max = shift.maxVolunteers;
+      if (max != null && (!Number.isInteger(max) || max < min)) {
+        add(
+          `${at}.maxVolunteers`,
+          "MAX_BELOW_MIN",
+          "The expected maximum must be a whole number no lower than the minimum",
+        );
+      }
       if (!shift.leaderUserId || !ctx.eligibleLeaderIds.has(shift.leaderUserId)) {
         add(
           `${at}.leaderUserId`,
@@ -362,14 +382,17 @@ function validateShifts(
       }
     });
     if (active === 0) {
-      add(`days[${d}]`, "DAY_NO_ACTIVE_SHIFT", "Each day needs at least one shift with slots");
-    }
-    if (ctx.maxVolunteers != null && total > ctx.maxVolunteers) {
-      add(
-        `days[${d}]`,
-        "DAY_SLOTS_OVER_LIMIT",
-        `Slots on this day (${total}) exceed the ${ctx.maxVolunteers} volunteers allowed per day for this difficulty`,
-      );
+      add(`days[${d}]`, "DAY_NO_ACTIVE_SHIFT", "Each day needs at least one shift that runs");
+    } else if (ctx.suggestedMinPerDay != null && total < ctx.suggestedMinPerDay) {
+      belowSuggestion = true;
     }
   });
+
+  if (belowSuggestion && !input.minVolunteersReason?.trim()) {
+    add(
+      "minVolunteersReason",
+      "MIN_VOLUNTEERS_REASON_REQUIRED",
+      `Explain why a day needs fewer than the ${ctx.suggestedMinPerDay} volunteers suggested for this difficulty`,
+    );
+  }
 }
