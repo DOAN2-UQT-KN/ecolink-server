@@ -290,68 +290,42 @@ router.get("/:id/tasks", authenticate, campaignController.getCampaignTasks);
 // =====================
 
 /**
- * @route   POST /api/v1/campaigns/volunteers/join-requests
- * @desc    Create a join request for a campaign
+ * @route   GET /api/v1/campaigns/:id/registration-options
+ * @desc    Shifts the caller can register for, with counts, overlaps and their absence record
  * @access  Private
- * @body    { campaignId }
- */
-router.post(
-  "/volunteers/join-requests",
-  authenticate,
-  campaignController.createJoinRequest,
-);
-
-/**
- * @route   GET /api/v1/campaigns/volunteers/join-requests
- * @desc    List join requests for a campaign with filters and pagination (managers only)
- * @access  Private
- * @query   campaignId (required), status?, volunteerId?, page, limit, sortBy (createdAt|updatedAt), sortOrder (asc|desc)
  */
 router.get(
-  "/volunteers/join-requests",
+  "/:id/registration-options",
   authenticate,
-  campaignController.getJoinRequests,
+  campaignController.getRegistrationOptions,
 );
 
 /**
- * @route   GET /api/v1/campaigns/volunteers/join-requests/my
- * @desc    My join requests with optional filters and pagination
+ * @route   PUT /api/v1/campaigns/:id/registrations/me
+ * @desc    Replace the caller's shifts (no approval, never capped); [] leaves the campaign
  * @access  Private
- * @query   campaignId?, status?, page, limit, sortBy (createdAt|updatedAt), sortOrder (asc|desc)
- */
-router.get(
-  "/volunteers/join-requests/my",
-  authenticate,
-  campaignController.getMyJoinRequests,
-);
-
-/**
- * @route   PUT /api/v1/campaigns/volunteers/join-requests/process
- * @desc    Approve or reject a join request (campaign managers only)
- * @access  Private
- * @body    { requestId, approved }
+ * @body    { shiftIds: string[], acceptConditions?: boolean }
  */
 router.put(
-  "/volunteers/join-requests/process",
+  "/:id/registrations/me",
   authenticate,
-  campaignController.processJoinRequest,
+  campaignController.updateMyRegistrations,
 );
 
 /**
- * @route   DELETE /api/v1/campaigns/volunteers/join-requests/cancel
- * @desc    Cancel a join request (volunteer only)
+ * @route   GET /api/v1/campaigns/:id/registrations
+ * @desc    Each shift with the people registered for it (campaign managers only)
  * @access  Private
- * @body    { requestId }
  */
-router.delete(
-  "/volunteers/join-requests/cancel",
+router.get(
+  "/:id/registrations",
   authenticate,
-  campaignController.cancelJoinRequest,
+  campaignController.getCampaignRegistrations,
 );
 
 /**
  * @route   GET /api/v1/campaigns/volunteers/approved
- * @desc    List approved volunteers for a campaign (managers only), with filters and pagination
+ * @desc    People registered for at least one shift (managers, volunteers, admins), paginated
  * @access  Private
  * @query   campaignId (required), volunteerId?, page, limit, sortBy (createdAt|updatedAt), sortOrder (asc|desc)
  */

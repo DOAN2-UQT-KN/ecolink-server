@@ -75,6 +75,8 @@ export const toCampaignShiftResponse = (shift: CampaignShift): CampaignShiftResp
   id: shift.id,
   dayId: shift.dayId,
   meetingPointId: shift.meetingPointId,
+  startAt: shift.startAt,
+  endAt: shift.endAt,
   gatherAt: shift.gatherAt,
   minVolunteers: shift.minVolunteers,
   maxVolunteers: shift.maxVolunteers,

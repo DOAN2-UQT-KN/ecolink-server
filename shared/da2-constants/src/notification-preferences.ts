@@ -81,6 +81,7 @@ export function notificationKindToPreferenceKey(
     case "CAMPAIGN_COMPLETION_REJECTED_BY_ADMIN":
       return "campaignCompletionRejected";
     case "VOLUNTEER_REQUEST":
+    case "CAMPAIGN_REGISTRATION_DIGEST":
     case "VOLUNTEER_APPROVED":
     case "VOLUNTEER_REJECTED":
       return "volunteerRequest";

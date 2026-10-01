@@ -54,6 +54,9 @@ export interface CampaignDayInput {
 export interface CampaignShiftInput {
   dayIndex: number;
   meetingPointIndex: number;
+  /** Shift window, ISO; omitted or null = the day's hours. */
+  startAt?: string | null;
+  endAt?: string | null;
   gatherAt?: string | null;
   /** Volunteers needed; 0 turns the shift off. A warning level, not a cap. */
   minVolunteers: number;
@@ -94,10 +97,21 @@ export interface CampaignShiftResponse {
   id: string;
   dayId: string;
   meetingPointId: string;
+  startAt: Date;
+  endAt: Date;
   gatherAt: Date | null;
   minVolunteers: number;
   maxVolunteers: number | null;
   leaderUserId: string | null;
+  /** Live registrations; only on responses that count them (campaign detail). */
+  registeredCount?: number;
+}
+
+/** Body for PUT /api/v1/campaigns/:id/registrations/me: the shifts to hold; [] leaves. */
+export interface UpdateMyRegistrationsBody {
+  shiftIds: string[];
+  /** Required when adding shifts. */
+  acceptConditions?: boolean;
 }
 
 /** Body for PUT /api/v1/campaigns/:id/review (admin). */
@@ -225,11 +239,12 @@ export interface CampaignResponse {
    */
   saved: boolean | null;
   /**
-   * For the current user when their latest non-deleted campaign join request is pending
-   * (`JoinRequestStatus._STATUS_PENDING`) or approved (`JoinRequestStatus._STATUS_APPROVED`).
-   * Present on GET /campaigns and GET /campaigns/:id; omitted if there is no request or the latest is rejected.
+   * `JoinRequestStatus._STATUS_APPROVED` when the viewer holds at least one shift; omitted
+   * otherwise. Kept for older clients; `myShiftIds` (detail) is the precise answer.
    */
   requestStatus?: number;
+  /** Detail only: the shifts the viewer is registered for. */
+  myShiftIds?: string[];
   /** True when the viewer is the campaign creator or an assigned campaign manager. */
   canManageCampaign?: boolean;
   canDeleteCampaign?: boolean;

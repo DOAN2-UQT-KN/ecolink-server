@@ -1,6 +1,7 @@
 import { CampaignStatus } from "@da2/constants";
 import {
   assertTransitionAllowed,
+  findTransition,
   transitionCampaign,
 } from "../campaign-state-machine";
 
@@ -13,12 +14,17 @@ describe("assertTransitionAllowed", () => {
     ["submit", S.DRAFT, "manager"],
     ["resubmit", S.NEEDS_REVISION, "manager"],
     ["approve", S.PENDING_REVIEW, "admin"],
+    ["start", S.UPCOMING, "system"],
+    ["ban", S.UPCOMING, "admin"],
+    ["ban", S.ACTIVE, "admin"],
     ["expire", S.PENDING_REVIEW, "system"],
     ["expire", S.NEEDS_REVISION, "system"],
     ["submit_completion", S.ACTIVE, "manager"],
     ["approve_completion", S.PENDING_COMPLETION, "admin"],
   ] as const)("%s from %i by %s is allowed", (event, fromStatus, actor) => {
-    expect(() => assertTransitionAllowed({ event, fromStatus, actor })).not.toThrow();
+    expect(() =>
+      assertTransitionAllowed({ event, fromStatus, actor, reason: "x" }),
+    ).not.toThrow();
   });
 
   it.each([
@@ -28,10 +34,17 @@ describe("assertTransitionAllowed", () => {
     ["submit", S.PENDING_REVIEW],
     ["request_revision", S.ACTIVE],
     ["expire", S.ACTIVE],
+    ["start", S.PENDING_REVIEW],
+    ["submit_completion", S.UPCOMING],
   ] as const)("%s from %i is an invalid transition", (event, fromStatus) => {
     expect(() =>
       assertTransitionAllowed({ event, fromStatus, actor: "admin", reason: "x" }),
     ).toThrow(code("CAMPAIGN_INVALID_TRANSITION"));
+  });
+
+  it("approval opens the campaign as upcoming", () => {
+    expect(findTransition("approve").to).toBe(S.UPCOMING);
+    expect(findTransition("start").to).toBe(S.ACTIVE);
   });
 
   it("a manager cannot approve their own campaign", () => {

@@ -38,6 +38,9 @@ export interface SubmitDay {
 export interface SubmitShift {
   dayIndex: number;
   meetingPointIndex: number;
+  /** Shift window; null = the day's hours. */
+  startAt?: Date | null;
+  endAt?: Date | null;
   gatherAt?: Date | null;
   /** Volunteers needed; 0 = the shift is off. */
   minVolunteers: number;
@@ -369,15 +372,28 @@ function validateShifts(
           "The person in charge must be an active member who can manage campaigns",
         );
       }
+      const start = shift.startAt ?? day.startAt;
+      const end = shift.endAt ?? day.endAt;
+      const windowOk =
+        start.getTime() < end.getTime() &&
+        start.getTime() >= day.startAt.getTime() &&
+        end.getTime() <= day.endAt.getTime();
+      if (!windowOk) {
+        add(
+          `${at}.startAt`,
+          "SHIFT_TIME_INVALID",
+          "A shift must start before it ends, within the day's hours",
+        );
+      }
       if (
         shift.gatherAt &&
-        (shift.gatherAt.getTime() > day.endAt.getTime() ||
+        (shift.gatherAt.getTime() > start.getTime() ||
           localDayKey(shift.gatherAt) !== localDayKey(day.startAt))
       ) {
         add(
           `${at}.gatherAt`,
           "GATHER_TIME_INVALID",
-          "Gathering time must be on that day, before it ends",
+          "Gathering time must be on that day, no later than the shift starts",
         );
       }
     });

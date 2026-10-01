@@ -1,6 +1,6 @@
 import { GlobalStatus } from "../../../constants/status.enum";
 import { HttpError, HTTP_STATUS } from "../../../constants/http-status";
-import { campaignJoiningRequestRepository } from "../campaign_joining_request/campaign_joining_request.repository";
+import { campaignRegistrationRepository } from "../campaign_registration/campaign_registration.repository";
 import { campaignRepository } from "../campaign.repository";
 import { campaignManagerService } from "../campaign_manager/campaign_manager.service";
 import { campaignAttendanceRepository } from "./campaign_attendance.repository";
@@ -71,15 +71,12 @@ export class CampaignAttendanceService {
       );
     }
 
-    const isApproved =
-      await campaignJoiningRequestRepository.isVolunteerApproved(
-        campaignId,
-        userId,
-      );
-    if (!isApproved) {
+    // Until attendance is per shift (stage 4), only registered volunteers check in.
+    const isRegistered = await campaignRegistrationRepository.isRegistered(campaignId, userId);
+    if (!isRegistered) {
       throw new HttpError(
         HTTP_STATUS.FORBIDDEN.withMessage(
-          "You are not an approved member of this campaign",
+          "You have not registered for a shift of this campaign",
         ),
       );
     }

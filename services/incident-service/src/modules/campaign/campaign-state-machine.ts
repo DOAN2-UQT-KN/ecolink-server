@@ -9,6 +9,7 @@ export type CampaignTransitionEvent =
   | "submit"
   | "resubmit"
   | "approve"
+  | "start"
   | "request_revision"
   | "block"
   | "ban"
@@ -48,8 +49,16 @@ export const CAMPAIGN_TRANSITIONS: readonly TransitionRule[] = [
   {
     event: "approve",
     from: [CampaignStatus.PENDING_REVIEW],
-    to: CampaignStatus.ACTIVE,
+    to: CampaignStatus.UPCOMING,
     actors: ["admin"],
+    reasonRequired: false,
+  },
+  {
+    // The lifecycle job, once the first shift has started.
+    event: "start",
+    from: [CampaignStatus.UPCOMING],
+    to: CampaignStatus.ACTIVE,
+    actors: ["system"],
     reasonRequired: false,
   },
   {
@@ -67,9 +76,9 @@ export const CAMPAIGN_TRANSITIONS: readonly TransitionRule[] = [
     reasonRequired: true,
   },
   {
-    // Ban of a running campaign, kept from the previous flow.
+    // Ban of an approved campaign, before or after it started.
     event: "ban",
-    from: [CampaignStatus.ACTIVE],
+    from: [CampaignStatus.UPCOMING, CampaignStatus.ACTIVE],
     to: CampaignStatus.BLOCKED,
     actors: ["admin"],
     reasonRequired: true,

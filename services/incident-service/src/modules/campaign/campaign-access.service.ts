@@ -3,7 +3,7 @@ import { HTTP_STATUS, HttpError } from "../../constants/http-status";
 import { organizationMemberRepository } from "../organization/organization_member.repository";
 import { campaignRepository } from "./campaign.repository";
 import { campaignManagerRepository } from "./campaign_manager/campaign_manager.repository";
-import { campaignJoiningRequestRepository } from "./campaign_joining_request/campaign_joining_request.repository";
+import { campaignRegistrationRepository } from "./campaign_registration/campaign_registration.repository";
 
 /** What the access rules need to know about a campaign. */
 export interface CampaignAccessTarget {
@@ -128,7 +128,7 @@ export class CampaignAccessService {
     return campaign;
   }
 
-  /** The approved-volunteer list: people managing the campaign, its volunteers, admins. */
+  /** The volunteer list: people managing the campaign, its registered volunteers, admins. */
   async assertCanViewVolunteers(
     campaignId: string,
     userId: string | null | undefined,
@@ -138,7 +138,7 @@ export class CampaignAccessService {
     if (isPlatformAdmin(role)) return;
     if (!userId) throw new HttpError(HTTP_STATUS.CAMPAIGN_PERMISSION_DENIED);
     if ((await this.resolve(campaign, userId)).canManage) return;
-    if (await campaignJoiningRequestRepository.isVolunteerApproved(campaign.id, userId)) {
+    if (await campaignRegistrationRepository.isRegistered(campaign.id, userId)) {
       return;
     }
     throw new HttpError(HTTP_STATUS.CAMPAIGN_PERMISSION_DENIED);

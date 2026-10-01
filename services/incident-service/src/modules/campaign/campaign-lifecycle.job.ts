@@ -1,4 +1,5 @@
 import { campaignLifecycleService } from "./campaign-lifecycle.service";
+import { sendRegistrationDigests } from "./campaign_registration/registration-digest";
 
 const INTERVAL_MS = Number(
   process.env.CAMPAIGN_LIFECYCLE_INTERVAL_MS ?? 15 * 60 * 1000,
@@ -11,6 +12,10 @@ async function tick(): Promise<void> {
   if (running) return;
   running = true;
   try {
+    const started = await campaignLifecycleService.startDueCampaigns();
+    if (started > 0) {
+      console.log(`[CampaignLifecycle] ${started} upcoming campaign(s) started`);
+    }
     const expired = await campaignLifecycleService.expireOverdue();
     if (expired > 0) {
       console.log(`[CampaignLifecycle] ${expired} campaign(s) expired, reports released`);
@@ -18,6 +23,10 @@ async function tick(): Promise<void> {
     const drafts = await campaignLifecycleService.deleteStaleDrafts();
     if (drafts > 0) {
       console.log(`[CampaignLifecycle] ${drafts} untouched draft(s) deleted`);
+    }
+    const digests = await sendRegistrationDigests();
+    if (digests > 0) {
+      console.log(`[CampaignLifecycle] registration digest sent for ${digests} campaign(s)`);
     }
   } catch (error) {
     console.error("[CampaignLifecycle] sweep failed", error);
@@ -27,9 +36,10 @@ async function tick(): Promise<void> {
 }
 
 /**
- * Sweep for campaigns that ran out of time before approval: under review or waiting for
- * changes past their start time, waiting for changes past the 7-day deadline, and drafts left
- * untouched for 30 days. Every 15 minutes by default, so a campaign expires close to its start.
+ * Sweep that starts upcoming campaigns whose first day began, and expires campaigns that ran
+ * out of time before approval: under review or waiting for changes past their start time,
+ * waiting for changes past the 7-day deadline, and drafts left untouched for 30 days. After the
+ * digest hour it also sends managers the day's registration digest. Every 15 minutes by default, so a campaign expires close to its start.
  */
 export function startCampaignLifecycleJob(): void {
   if (process.env.CAMPAIGN_LIFECYCLE_ENABLED === "false") {

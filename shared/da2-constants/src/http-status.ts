@@ -342,6 +342,21 @@ export const HTTP_STATUS = {
     "These fields cannot be changed in the campaign's current status",
     "CAMPAIGN_NOT_EDITABLE",
   ),
+  CAMPAIGN_NOT_REGISTRABLE: createStatus(
+    409,
+    "This campaign has no shift open for registration",
+    "CAMPAIGN_NOT_REGISTRABLE",
+  ),
+  SHIFT_NOT_REGISTRABLE: createStatus(
+    409,
+    "Some shifts are off, already started or not part of this campaign",
+    "SHIFT_NOT_REGISTRABLE",
+  ),
+  CONDITIONS_NOT_ACCEPTED: createStatus(
+    400,
+    "Confirm that you meet the participation conditions",
+    "CONDITIONS_NOT_ACCEPTED",
+  ),
   REWARD_SERVICE_UNAVAILABLE: createStatus(
     503,
     "The reward service is not reachable right now; try again shortly",

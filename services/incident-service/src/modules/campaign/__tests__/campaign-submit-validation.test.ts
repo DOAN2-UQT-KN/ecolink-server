@@ -299,6 +299,29 @@ describe("validateCampaignForSubmit", () => {
         ),
       ).toContain("GATHER_TIME_INVALID");
     });
+
+    it("gathers no later than the shift starts", () => {
+      const startAt = new Date(START.getTime() + HOUR);
+      expect(
+        codes(input({ shifts: [{ ...shift(0, 0), startAt, gatherAt: new Date(START.getTime() + 2 * HOUR) }] })),
+      ).toContain("GATHER_TIME_INVALID");
+      expect(
+        codes(input({ shifts: [{ ...shift(0, 0), startAt, gatherAt: new Date(START.getTime() + 30 * 60 * 1000) }] })),
+      ).toEqual([]);
+    });
+
+    it("keeps a shift's window inside its day, start before end", () => {
+      expect(codes(input({ shifts: [{ ...shift(0, 0), startAt: new Date(START.getTime() + HOUR) }] }))).toEqual([]);
+      expect(
+        codes(input({ shifts: [{ ...shift(0, 0), startAt: new Date(START.getTime() - HOUR) }] })),
+      ).toContain("SHIFT_TIME_INVALID");
+      expect(
+        codes(input({ shifts: [{ ...shift(0, 0), endAt: new Date(END.getTime() + HOUR) }] })),
+      ).toContain("SHIFT_TIME_INVALID");
+      expect(
+        codes(input({ shifts: [{ ...shift(0, 0), startAt: new Date(START.getTime() + HOUR), endAt: new Date(START.getTime() + HOUR) }] })),
+      ).toContain("SHIFT_TIME_INVALID");
+    });
   });
 });
 

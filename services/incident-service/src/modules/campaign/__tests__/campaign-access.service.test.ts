@@ -13,9 +13,9 @@ jest.mock("../../organization/organization_member.repository", () => ({
 jest.mock("../campaign_manager/campaign_manager.repository", () => ({
   campaignManagerRepository: { isManager: (...a: unknown[]) => isManagerMock(...a) },
 }));
-jest.mock("../campaign_joining_request/campaign_joining_request.repository", () => ({
-  campaignJoiningRequestRepository: {
-    isVolunteerApproved: (...a: unknown[]) => isVolunteerApprovedMock(...a),
+jest.mock("../campaign_registration/campaign_registration.repository", () => ({
+  campaignRegistrationRepository: {
+    isRegistered: (...a: unknown[]) => isVolunteerApprovedMock(...a),
   },
 }));
 jest.mock("../campaign.repository", () => ({

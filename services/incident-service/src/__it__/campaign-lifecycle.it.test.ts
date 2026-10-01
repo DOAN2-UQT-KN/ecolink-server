@@ -4,7 +4,8 @@
  *   - a draft locks nothing; submitting locks its reports and goes to PENDING_REVIEW
  *   - two campaigns racing for one report: one wins, the other gets 409 with the report id
  *   - submit re-checks every rule and returns all problems at once
- *   - admin approve / request changes / block, with audit log and notifications
+ *   - admin approve (→ UPCOMING) / request changes / block, with audit log and notifications
+ *   - the sweep starts upcoming campaigns once their first day begins
  *   - an admin who belongs to the organization cannot review it
  *   - status cannot be written through PUT /campaigns/:id
  *   - the sweep expires overdue reviews and deletes stale drafts
@@ -380,10 +381,10 @@ describe("admin review", () => {
     return { campaignId: draft.id, reportId: report.id };
   }
 
-  it("approve → ACTIVE, reports stay locked, members told", async () => {
+  it("approve → UPCOMING, reports stay locked, members told", async () => {
     const { campaignId, reportId } = await pending();
     const approved = await campaignService.reviewCampaign(campaignId, ADMIN, "approve", null);
-    expect(approved.status).toBe(S.ACTIVE);
+    expect(approved.status).toBe(S.UPCOMING);
     expect((await reportState(reportId))?.campaignId).toBe(campaignId);
     await eventually(() =>
       expect(notify).toHaveBeenCalledWith(
@@ -564,6 +565,33 @@ describe("lifecycle sweep", () => {
     );
   });
 
+  it("starts an upcoming campaign once its first day begins; a banned one stays put", async () => {
+    const start = async () => {
+      const draft = await campaignService.createCampaign(CM, draftRequest([]) as never);
+      await campaignService.submitCampaign(draft.id, CM);
+      await campaignService.reviewCampaign(draft.id, ADMIN, "approve", null);
+      return draft.id;
+    };
+    const due = await start();
+    const later = await start();
+    const banned = await start();
+    await campaignService.reviewCampaign(banned, ADMIN, "block", "Vi phạm");
+    await prisma.campaignDay.updateMany({
+      where: { campaignId: { in: [due, banned] } },
+      data: { startAt: new Date(Date.now() - HOUR) },
+    });
+
+    expect(await campaignLifecycleService.startDueCampaigns()).toBe(1);
+    const status = async (id: string) =>
+      (await prisma.campaign.findUnique({ where: { id } }))?.status;
+    expect(await status(due)).toBe(S.ACTIVE);
+    expect(await status(later)).toBe(S.UPCOMING);
+    expect(await status(banned)).toBe(S.BLOCKED);
+    expect(
+      await prisma.campaignStatusLog.count({ where: { campaignId: due, event: "start" } }),
+    ).toBe(1);
+  });
+
   it("a campaign waiting for changes expires after 7 days", async () => {
     const report = await seedReport();
     const draft = await campaignService.createCampaign(CM, draftRequest([report.id]) as never);
@@ -614,7 +642,7 @@ describe("organization state", () => {
       (await prisma.campaign.findUnique({ where: { id } }))?.status;
     expect(await status(draft.id)).toBe(S.CANCELLED);
     expect(await status(pending.id)).toBe(S.CANCELLED);
-    expect(await status(running.id)).toBe(S.ACTIVE);
+    expect(await status(running.id)).toBe(S.UPCOMING);
     expect((await reportState(r2.id))?.campaignId).toBeNull();
     expect((await reportState(r3.id))?.campaignId).toBe(running.id);
     expect(

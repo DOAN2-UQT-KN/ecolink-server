@@ -127,6 +127,7 @@ model Campaign {
   reports                         Report[]
   campaignManagers                CampaignManager[]
   campaignJoiningRequests         CampaignJoiningRequest[]
+  shiftRegistrations              CampaignShiftRegistration[]
   campaignAttendanceCheckIns      CampaignAttendanceCheckIn[]
   campaignTasks                   CampaignTask[]
   campaignSubmissions             CampaignSubmission[]
@@ -1281,6 +1282,9 @@ model CampaignShift {
   campaignId     String    @map("campaign_id") @db.Uuid
   dayId          String    @map("day_id") @db.Uuid
   meetingPointId String    @map("meeting_point_id") @db.Uuid
+  /// Working window of the shift; defaults to the day's hours.
+  startAt        DateTime  @map("start_at")
+  endAt          DateTime  @map("end_at")
   gatherAt       DateTime? @map("gather_at")
   /// Volunteers needed to get the work done; 0 = the shift is off. A warning level, not a cap.
   minVolunteers  Int       @default(0) @map("min_volunteers")
@@ -1293,10 +1297,35 @@ model CampaignShift {
   campaign     Campaign             @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   day          CampaignDay          @relation(fields: [dayId], references: [id], onDelete: Cascade)
   meetingPoint CampaignMeetingPoint @relation(fields: [meetingPointId], references: [id], onDelete: Cascade)
+  registrations CampaignShiftRegistration[]
 
   @@unique([dayId, meetingPointId])
   @@index([campaignId])
+  @@index([startAt])
   @@map("campaign_shifts")
+}
+
+/// A volunteer's registration for one shift (spec 3.1): effective immediately, never capped.
+/// Leaving keeps the row (`leftAt`); at most one live row per shift and user (partial unique index in SQL).
+model CampaignShiftRegistration {
+  id                String    @id @default(uuid()) @db.Uuid
+  campaignId        String    @map("campaign_id") @db.Uuid
+  shiftId           String    @map("shift_id") @db.Uuid
+  userId            String    @map("user_id") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at")
+  leftAt            DateTime? @map("left_at")
+  /// Left within `CAMPAIGN_FREE_LEAVE_HOURS` of the shift start.
+  lateLeave         Boolean   @default(false) @map("late_leave")
+  /// Counted in a managers' daily registration digest.
+  managerNotifiedAt DateTime? @map("manager_notified_at")
+
+  campaign Campaign      @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  shift    CampaignShift @relation(fields: [shiftId], references: [id], onDelete: Restrict)
+
+  @@index([campaignId, leftAt])
+  @@index([userId, leftAt])
+  @@index([shiftId])
+  @@map("campaign_shift_registrations")
 }
 
 /// Which report a meeting point covers. Also holds a draft's selection, which locks nothing:

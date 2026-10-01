@@ -50,10 +50,10 @@ jest.mock("../modules/organization_application/owner-change-notify.client", () =
 
 import { campaignService } from "../modules/campaign/campaign.service";
 import { campaignManagerService } from "../modules/campaign/campaign_manager/campaign_manager.service";
-import { campaignJoiningRequestService } from "../modules/campaign/campaign_joining_request/campaign_joining_request.service";
+import { campaignRegistrationService } from "../modules/campaign/campaign_registration/campaign_registration.service";
 import { organizationService } from "../modules/organization/organization.service";
 import { sosService } from "../modules/sos/sos.service";
-import { GlobalStatus, JoinRequestStatus } from "../constants/status.enum";
+import { GlobalStatus } from "../constants/status.enum";
 
 const LR = randomUUID();
 const OWNER = randomUUID();
@@ -233,22 +233,32 @@ describe("SOS and volunteers", () => {
     );
   });
 
-  it("the approved-volunteer list is for managers, the volunteers and admins", async () => {
+  it("the volunteer list is for managers, registered volunteers and admins", async () => {
     const campaign = await seedCampaign(CM);
     const VOLUNTEER = randomUUID();
-    await prisma.campaignJoiningRequest.create({
+    const start = new Date(Date.now() + 3 * 24 * 3600 * 1000);
+    const end = new Date(start.getTime() + 4 * 3600 * 1000);
+    const day = await prisma.campaignDay.create({
+      data: { campaignId: campaign.id, startAt: start, endAt: end },
+    });
+    const point = await prisma.campaignMeetingPoint.create({
+      data: { campaignId: campaign.id, latitude: 10.77, longitude: 106.7, radiusKm: 1 },
+    });
+    const shift = await prisma.campaignShift.create({
       data: {
         campaignId: campaign.id,
-        volunteerId: VOLUNTEER,
-        status: JoinRequestStatus._STATUS_APPROVED,
+        dayId: day.id,
+        meetingPointId: point.id,
+        startAt: start,
+        endAt: end,
+        minVolunteers: 5,
       },
     });
+    await prisma.campaignShiftRegistration.create({
+      data: { campaignId: campaign.id, shiftId: shift.id, userId: VOLUNTEER },
+    });
     const list = (userId: string, role?: string) =>
-      campaignJoiningRequestService.getApprovedVolunteersForManager(
-        campaign.id,
-        { userId, role },
-        { campaignId: campaign.id },
-      );
+      campaignRegistrationService.listVolunteers(campaign.id, { userId, role }, {});
 
     await expect(list(OUTSIDER)).rejects.toMatchObject(code("CAMPAIGN_PERMISSION_DENIED"));
     await expect(list(MEMBER)).rejects.toMatchObject(code("CAMPAIGN_PERMISSION_DENIED"));

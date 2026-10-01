@@ -2,7 +2,7 @@ import { campaignTaskRepository } from "./campaign_task.repository";
 import type { CampaignTaskWithResult } from "./campaign_task.repository";
 import { campaignRepository } from "../campaign.repository";
 import { campaignManagerService } from "../campaign_manager/campaign_manager.service";
-import { campaignJoiningRequestService } from "../campaign_joining_request/campaign_joining_request.service";
+import { campaignRegistrationRepository } from "../campaign_registration/campaign_registration.repository";
 import { GlobalStatus, TaskStatus } from "../../../constants/status.enum";
 import { HttpError, HTTP_STATUS } from "../../../constants/http-status";
 import prisma from "../../../config/prisma.client";
@@ -275,15 +275,14 @@ export class CampaignTaskService {
       );
     }
 
-    const isApproved =
-      await campaignJoiningRequestService.isApprovedVolunteer(
-        task.campaignId,
-        volunteerId,
-      );
-    if (!isApproved) {
+    const isRegistered = await campaignRegistrationRepository.isRegistered(
+      task.campaignId,
+      volunteerId,
+    );
+    if (!isRegistered) {
       throw new HttpError(
         HTTP_STATUS.FORBIDDEN.withMessage(
-          "Volunteer must be approved for this campaign before being assigned tasks",
+          "Volunteer must be registered for a shift of this campaign before being assigned tasks",
         ),
       );
     }

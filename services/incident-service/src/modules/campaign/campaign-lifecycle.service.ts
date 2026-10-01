@@ -58,6 +58,9 @@ export interface NormalizedDay {
 export interface NormalizedShift {
   dayIndex: number;
   meetingPointIndex: number;
+  /** Working window; null = the day's hours. */
+  startAt: Date | null;
+  endAt: Date | null;
   gatherAt: Date | null;
   /** 0 = the shift is off. */
   minVolunteers: number;
@@ -84,7 +87,13 @@ export interface CampaignSnapshot {
   requirements: CampaignRequirements | null;
   days: Array<{ startAt: string; endAt: string }>;
   meetingPoints: NormalizedMeetingPoint[];
-  shifts: Array<Omit<NormalizedShift, "gatherAt"> & { gatherAt: string | null }>;
+  shifts: Array<
+    Omit<NormalizedShift, "gatherAt" | "startAt" | "endAt"> & {
+      startAt: string | null;
+      endAt: string | null;
+      gatherAt: string | null;
+    }
+  >;
   minVolunteersReason: string | null;
 }
 
@@ -110,6 +119,8 @@ export function normalizeMeetingPoints(input: MeetingPointInput[]): NormalizedMe
   }));
 }
 
+const sameTime = (a: Date | null | undefined, b: Date) => a != null && a.getTime() === b.getTime();
+
 /** The stored schedule of a campaign, in the same shape a request normalizes to. */
 export function scheduleOf(campaign: CampaignWithReports): NormalizedSchedule {
   const days = [...(campaign.days ?? [])].sort(
@@ -123,9 +134,12 @@ export function scheduleOf(campaign: CampaignWithReports): NormalizedSchedule {
     const d = dayIndex.get(shift.dayId);
     const p = pointIndex.get(shift.meetingPointId);
     if (d === undefined || p === undefined) continue;
+    const day = days[d];
     shifts.push({
       dayIndex: d,
       meetingPointIndex: p,
+      startAt: sameTime(shift.startAt, day.startAt) ? null : shift.startAt,
+      endAt: sameTime(shift.endAt, day.endAt) ? null : shift.endAt,
       gatherAt: shift.gatherAt,
       minVolunteers: shift.minVolunteers,
       maxVolunteers: shift.maxVolunteers,
@@ -198,6 +212,8 @@ export function scheduleFromRequest(
     request.shifts?.map((sh) => ({
       dayIndex: Number(sh.dayIndex),
       meetingPointIndex: Number(sh.meetingPointIndex),
+      startAt: sh.startAt ? new Date(sh.startAt) : null,
+      endAt: sh.endAt ? new Date(sh.endAt) : null,
       gatherAt: sh.gatherAt ? new Date(sh.gatherAt) : null,
       minVolunteers: Number(sh.minVolunteers ?? 0),
       maxVolunteers: sh.maxVolunteers == null ? null : Number(sh.maxVolunteers),
@@ -226,7 +242,20 @@ export function scheduleFromRequest(
     if (sh.gatherAt && Number.isNaN(sh.gatherAt.getTime())) {
       throw invalid("Gathering time must be a valid date");
     }
-    cells.set(key, { ...sh, dayIndex: d });
+    if (
+      (sh.startAt && Number.isNaN(sh.startAt.getTime())) ||
+      (sh.endAt && Number.isNaN(sh.endAt.getTime()))
+    ) {
+      throw invalid("Shift start and end must be valid dates");
+    }
+    const day = days[d];
+    cells.set(key, {
+      ...sh,
+      dayIndex: d,
+      // The day's own hours are stored as "default", so moving the day moves the shift too.
+      startAt: day && sameTime(sh.startAt, day.startAt) ? null : sh.startAt,
+      endAt: day && sameTime(sh.endAt, day.endAt) ? null : sh.endAt,
+    });
   }
 
   const shifts: NormalizedShift[] = [];
@@ -236,6 +265,8 @@ export function scheduleFromRequest(
       shifts.push({
         dayIndex: d,
         meetingPointIndex: p,
+        startAt: cell?.startAt ?? null,
+        endAt: cell?.endAt ?? null,
         gatherAt: cell?.gatherAt ?? null,
         minVolunteers: cell?.minVolunteers ?? 0,
         maxVolunteers: cell?.maxVolunteers ?? null,
@@ -264,6 +295,8 @@ function toSnapshot(campaign: CampaignWithReports): CampaignSnapshot {
     meetingPoints: schedule.meetingPoints,
     shifts: schedule.shifts.map((sh) => ({
       ...sh,
+      startAt: sh.startAt?.toISOString() ?? null,
+      endAt: sh.endAt?.toISOString() ?? null,
       gatherAt: sh.gatherAt?.toISOString() ?? null,
     })),
     minVolunteersReason: campaign.minVolunteersReason ?? null,
@@ -404,6 +437,8 @@ export class CampaignLifecycleService {
           campaignId,
           dayId: dayIds[sh.dayIndex],
           meetingPointId: pointIds[sh.meetingPointIndex],
+          startAt: sh.startAt ?? schedule.days[sh.dayIndex].startAt,
+          endAt: sh.endAt ?? schedule.days[sh.dayIndex].endAt,
           gatherAt: sh.gatherAt,
           minVolunteers: sh.minVolunteers,
           maxVolunteers: sh.maxVolunteers,
@@ -682,7 +717,9 @@ export class CampaignLifecycleService {
       async (tx) => {
         const current = await this.loadInTx(tx, id);
         const event: CampaignTransitionEvent =
-          decision === "block" && current.status === CampaignStatus.ACTIVE
+          decision === "block" &&
+          (current.status === CampaignStatus.UPCOMING ||
+            current.status === CampaignStatus.ACTIVE)
             ? "ban"
             : decision;
         const data: Omit<Prisma.CampaignUpdateManyMutationInput, "status"> =
@@ -814,6 +851,40 @@ export class CampaignLifecycleService {
       }
     }
     return expired;
+  }
+
+  /** Moves upcoming campaigns to active once their first day has started. */
+  async startDueCampaigns(now = new Date()): Promise<number> {
+    const candidates = await prisma.campaign.findMany({
+      where: {
+        deletedAt: null,
+        status: CampaignStatus.UPCOMING,
+        days: { some: { startAt: { lte: now } } },
+      },
+      select: { id: true },
+      take: 200,
+    });
+
+    let started = 0;
+    for (const c of candidates) {
+      try {
+        await prisma.$transaction((tx) =>
+          transitionCampaign(tx, {
+            campaignId: c.id,
+            event: "start",
+            fromStatus: CampaignStatus.UPCOMING,
+            actor: "system",
+            actorId: null,
+            reason: null,
+          }),
+        );
+        started += 1;
+      } catch (error) {
+        // Banned meanwhile; the next sweep re-evaluates.
+        console.warn("[campaign] start skipped", { campaignId: c.id, error });
+      }
+    }
+    return started;
   }
 
   /** Deletes drafts nobody touched for `CAMPAIGN_DRAFT_TTL_DAYS`. Drafts lock nothing. */

@@ -3,12 +3,14 @@ import { GlobalStatus } from "./global-status";
 /**
  * Campaign lifecycle (docs: Ecolink – Đặc tả luồng chiến dịch, giai đoạn 1–2).
  * The column stays a `GlobalStatus` int; these names map the spec's states onto it.
- * UPCOMING is not split from ACTIVE yet: an approved campaign goes straight to ACTIVE.
+ * Approval leads to UPCOMING; the lifecycle job moves it to ACTIVE when the first shift starts.
  */
 export const CampaignStatus = {
   DRAFT: GlobalStatus._STATUS_DRAFT,
   PENDING_REVIEW: GlobalStatus._STATUS_PENDING,
   NEEDS_REVISION: GlobalStatus._STATUS_RETURNED,
+  /** Approved, recruiting; nothing has started yet. */
+  UPCOMING: GlobalStatus._STATUS_UPCOMING,
   ACTIVE: GlobalStatus._STATUS_ACTIVE,
   PENDING_COMPLETION: GlobalStatus._STATUS_WAITING_CONFIRMED,
   /** Legacy completion state, still accepted by mark-done. */
@@ -27,6 +29,7 @@ export type CampaignStatusValue =
 export const CAMPAIGN_REPORT_LOCKING_STATUSES: readonly number[] = [
   CampaignStatus.PENDING_REVIEW,
   CampaignStatus.NEEDS_REVISION,
+  CampaignStatus.UPCOMING,
   CampaignStatus.ACTIVE,
   CampaignStatus.PENDING_COMPLETION,
   CampaignStatus.LEGACY_IN_REVIEW,
@@ -41,6 +44,7 @@ export const CAMPAIGN_PRE_APPROVAL_STATUSES: readonly number[] = [
 
 /** Statuses anyone can see; the others are visible to the campaign's managers and admins only. */
 export const CAMPAIGN_PUBLIC_STATUSES: readonly number[] = [
+  CampaignStatus.UPCOMING,
   CampaignStatus.ACTIVE,
   CampaignStatus.PENDING_COMPLETION,
   CampaignStatus.LEGACY_IN_REVIEW,
@@ -58,9 +62,16 @@ export const CAMPAIGN_DELETABLE_STATUSES: readonly number[] = [
 
 /** Statuses that count as "open" for the unverified-organization limit. */
 export const CAMPAIGN_OPEN_STATUSES: readonly number[] = [
+  CampaignStatus.UPCOMING,
   CampaignStatus.ACTIVE,
   CampaignStatus.PENDING_COMPLETION,
   CampaignStatus.LEGACY_IN_REVIEW,
+];
+
+/** Statuses volunteers may register for shifts in (spec 3.1). */
+export const CAMPAIGN_REGISTRABLE_STATUSES: readonly number[] = [
+  CampaignStatus.UPCOMING,
+  CampaignStatus.ACTIVE,
 ];
 
 /** Statuses that count toward the per-organization review queue limit. */
@@ -97,6 +108,23 @@ export const CAMPAIGN_DIFFICULTY_MAX = 4;
 export const CAMPAIGN_HIGH_DIFFICULTY_LEVEL = 3;
 export const CAMPAIGN_HIGH_DIFFICULTY_MIN_AGE = 18;
 export const CAMPAIGN_REVIEW_REASON_MAX_LENGTH = 5000;
+/** Leaving a shift later than this many hours before it starts is recorded as a late leave. */
+export const CAMPAIGN_FREE_LEAVE_HOURS = 24;
+/** Absences in this window, from this count on, raise a warning when registering. */
+export const CAMPAIGN_ABSENCE_WINDOW_DAYS = 90;
+export const CAMPAIGN_ABSENCE_WARN_COUNT = 3;
+/** Local hour (Asia/Ho_Chi_Minh) after which managers get the daily registration digest. */
+export const CAMPAIGN_REGISTRATION_DIGEST_HOUR = 20;
+
+/** Warnings returned with a shift registration; none of them blocks it (spec 3.1). */
+export const CampaignRegistrationWarning = {
+  OVERLAP: "OVERLAP",
+  MANY_ABSENCES: "MANY_ABSENCES",
+  OVER_MAX: "OVER_MAX",
+} as const;
+
+export type CampaignRegistrationWarningValue =
+  (typeof CampaignRegistrationWarning)[keyof typeof CampaignRegistrationWarning];
 
 /** Optional participation conditions stored on `campaigns.requirements`. */
 export interface CampaignRequirements {

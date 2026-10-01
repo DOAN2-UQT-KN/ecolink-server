@@ -24,7 +24,7 @@ import {
 import { getCampaignAdminNotifyUserIds } from "./campaign-completion-admin-notify.config";
 import { campaignManagerRepository } from "./campaign_manager/campaign_manager.repository";
 import { rewardServiceClient } from "../reward/reward-service.client";
-import { campaignJoiningRequestRepository } from "./campaign_joining_request/campaign_joining_request.repository";
+import { campaignRegistrationRepository } from "./campaign_registration/campaign_registration.repository";
 import { campaignAttendanceRepository } from "./campaign_attendance/campaign_attendance.repository";
 import { campaignRepository } from "./campaign.repository";
 import { campaignAccessService } from "./campaign-access.service";
@@ -131,7 +131,6 @@ export class CampaignService {
 
   private async resolveTierMaps(levels: number[]): Promise<{
     greenByLevel: Map<number, number>;
-    maxByLevel: Map<number, number | null>;
     difficulties: {
       level: number;
       greenPoints: number;
@@ -144,9 +143,6 @@ export class CampaignService {
     if (difficulties.length > 0) {
       return {
         greenByLevel: new Map(difficulties.map((d) => [d.level, d.greenPoints])),
-        maxByLevel: new Map(
-          difficulties.map((d) => [d.level, d.maxVolunteers]),
-        ),
         difficulties,
       };
     }
@@ -163,7 +159,6 @@ export class CampaignService {
     const resolved = tiers.filter((t): t is NonNullable<typeof t> => t != null);
     return {
       greenByLevel: new Map(resolved.map((d) => [d.level, d.greenPoints])),
-      maxByLevel: new Map(resolved.map((d) => [d.level, d.maxVolunteers])),
       difficulties: resolved,
     };
   }
@@ -360,7 +355,9 @@ export class CampaignService {
   ): Promise<CampaignResponse> {
     const [tier, currentMembers] = await Promise.all([
       rewardServiceClient.getDifficultyByLevel(entity.difficulty),
-      campaignJoiningRequestRepository.countApprovedByCampaignId(entity.id),
+      campaignRegistrationRepository
+        .countVolunteersByCampaignIds([entity.id])
+        .then((m) => m.get(entity.id) ?? 0),
     ]);
     if (!tier) {
       this.debugWarn("missing reward tier for campaign difficulty", {
@@ -369,12 +366,12 @@ export class CampaignService {
       });
     }
     const greenPoints = tier?.greenPoints ?? 0;
-    const maxMembers = tier?.maxVolunteers ?? null;
+    // Registration is never capped (spec 3.1); shifts carry their own min / expected max.
     return toCampaignResponse(
       entity,
       greenPoints,
       currentMembers,
-      maxMembers,
+      null,
       locale,
       tier?.suggestedMinVolunteers ?? null,
     );
@@ -426,22 +423,7 @@ export class CampaignService {
     return one;
   }
 
-  private joinRequestStatusForCampaignDetail(
-    joinRequestStatus: number | undefined,
-  ): number | undefined {
-    if (joinRequestStatus === undefined) return undefined;
-    if (joinRequestStatus === JoinRequestStatus._STATUS_REJECTED) {
-      return undefined;
-    }
-    if (
-      joinRequestStatus === JoinRequestStatus._STATUS_PENDING ||
-      joinRequestStatus === JoinRequestStatus._STATUS_APPROVED
-    ) {
-      return joinRequestStatus;
-    }
-    return undefined;
-  }
-
+  /** `requestStatus` APPROVED on the campaigns the viewer holds a shift in (kept for older clients). */
   private async withCampaignListRequestStatus(
     campaigns: CampaignResponse[],
     viewerUserId: string,
@@ -449,19 +431,15 @@ export class CampaignService {
     if (campaigns.length === 0) {
       return campaigns;
     }
-    const statusByCampaignId =
-      await campaignJoiningRequestRepository.findLatestStatusByCampaignForVolunteer(
-        viewerUserId,
-        campaigns.map((c) => c.id),
-      );
-    return campaigns.map((campaign) => {
-      const requestStatus = this.joinRequestStatusForCampaignDetail(
-        statusByCampaignId.get(campaign.id),
-      );
-      return requestStatus !== undefined
-        ? { ...campaign, requestStatus }
-        : campaign;
-    });
+    const registered = await campaignRegistrationRepository.findRegisteredCampaignIds(
+      viewerUserId,
+      campaigns.map((c) => c.id),
+    );
+    return campaigns.map((campaign) =>
+      registered.has(campaign.id)
+        ? { ...campaign, requestStatus: JoinRequestStatus._STATUS_APPROVED }
+        : campaign,
+    );
   }
 
   /**
@@ -757,25 +735,30 @@ export class CampaignService {
       locale,
     );
     const [enriched] = await this.enrichCampaignsForGet([baseRaw], viewerUserId);
+    const [byShift, myShiftIds] = await Promise.all([
+      campaignRegistrationRepository.countByShift(id),
+      viewerUserId
+        ? campaignRegistrationRepository.findMyShiftIds(id, viewerUserId)
+        : Promise.resolve([] as string[]),
+    ]);
+    const counted = {
+      ...enriched,
+      shifts: enriched.shifts?.map((sh) => ({
+        ...sh,
+        registeredCount: byShift.get(sh.id) ?? 0,
+      })),
+    };
     if (!viewerUserId) {
-      return enriched;
+      return counted;
     }
-    const latestJoin =
-      await campaignJoiningRequestRepository.findLatestByCampaignAndVolunteer(
-        id,
-        viewerUserId,
-      );
-    const isAcceptedVolunteer =
-      latestJoin?.status === JoinRequestStatus._STATUS_APPROVED;
+    const isRegistered = myShiftIds.length > 0;
     const base =
-      isAdmin || canManage || isAcceptedVolunteer
-        ? { ...enriched, contactPhone: campaign.contactPhone ?? null }
-        : enriched;
-
-    const requestStatus = this.joinRequestStatusForCampaignDetail(
-      latestJoin?.status,
-    );
-    return requestStatus !== undefined ? { ...base, requestStatus } : base;
+      isAdmin || canManage || isRegistered
+        ? { ...counted, contactPhone: campaign.contactPhone ?? null }
+        : counted;
+    return isRegistered
+      ? { ...base, myShiftIds, requestStatus: JoinRequestStatus._STATUS_APPROVED }
+      : { ...base, myShiftIds };
   }
 
   /**
@@ -813,7 +796,7 @@ export class CampaignService {
       .map((id) => byId.get(id))
       .filter((row): row is CampaignWithReports => row !== undefined);
 
-    const { greenByLevel, maxByLevel } = await this.resolveTierMaps(
+    const { greenByLevel } = await this.resolveTierMaps(
       resolved.map((c) => c.difficulty),
     );
 
@@ -829,7 +812,7 @@ export class CampaignService {
     }
 
     const approvedByCampaignId =
-      await campaignJoiningRequestRepository.countApprovedByCampaignIds(
+      await campaignRegistrationRepository.countVolunteersByCampaignIds(
         resolved.map((c) => c.id),
       );
     const loc = locale ?? "en";
@@ -838,7 +821,7 @@ export class CampaignService {
         campaign,
         greenByLevel.get(campaign.difficulty) ?? 0,
         approvedByCampaignId.get(campaign.id) ?? 0,
-        maxByLevel.get(campaign.difficulty) ?? null,
+        null,
         loc,
       ),
     );
@@ -891,7 +874,7 @@ export class CampaignService {
     const sortOrder = query.sortOrder ?? "desc";
     const skip = (page - 1) * limit;
 
-    const { difficulties, greenByLevel, maxByLevel } =
+    const { difficulties, greenByLevel } =
       await this.resolveTierMaps([]);
 
     let difficultyLevels: number[] | undefined;
@@ -946,14 +929,14 @@ export class CampaignService {
     });
 
     const approvedByCampaignId =
-      await campaignJoiningRequestRepository.countApprovedByCampaignIds(
+      await campaignRegistrationRepository.countVolunteersByCampaignIds(
         rows.map((c) => c.id),
       );
 
     // If the global list wasn't available, resolve only the levels we need for this page.
     const tierMaps =
       difficulties.length > 0
-        ? { greenByLevel, maxByLevel }
+        ? { greenByLevel }
         : await this.resolveTierMaps(rows.map((r) => r.difficulty));
 
     if (rows.length > 0) {
@@ -973,7 +956,7 @@ export class CampaignService {
         campaign,
         tierMaps.greenByLevel.get(campaign.difficulty) ?? 0,
         approvedByCampaignId.get(campaign.id) ?? 0,
-        tierMaps.maxByLevel.get(campaign.difficulty) ?? null,
+        null,
         locale,
       ),
     );
@@ -1013,7 +996,7 @@ export class CampaignService {
     }
 
     const approvedByCampaignId =
-      await campaignJoiningRequestRepository.countApprovedByCampaignIds(
+      await campaignRegistrationRepository.countVolunteersByCampaignIds(
         rows.map((c) => c.id),
       );
 
@@ -1024,7 +1007,7 @@ export class CampaignService {
         campaign,
         tierMaps.greenByLevel.get(campaign.difficulty) ?? 0,
         approvedByCampaignId.get(campaign.id) ?? 0,
-        tierMaps.maxByLevel.get(campaign.difficulty) ?? null,
+        null,
       ),
     );
     const campaignsWithVotes = await this.withCampaignVotes(
@@ -1117,14 +1100,11 @@ export class CampaignService {
     const greenByLevel = new Map(
       difficulties?.map((d) => [d.level, d.greenPoints]),
     );
-    const maxByLevel = new Map(
-      difficulties?.map((d) => [d.level, d.maxVolunteers]),
-    );
     const pageEntities = pageIds
       .map((id) => byId.get(id))
       .filter((row): row is NonNullable<typeof row> => row !== undefined);
     const approvedByCampaignId =
-      await campaignJoiningRequestRepository.countApprovedByCampaignIds(
+      await campaignRegistrationRepository.countVolunteersByCampaignIds(
         pageEntities.map((e) => e.id),
       );
 
@@ -1134,7 +1114,7 @@ export class CampaignService {
           entity,
           greenByLevel.get(entity.difficulty) ?? 0,
           approvedByCampaignId.get(entity.id) ?? 0,
-          maxByLevel.get(entity.difficulty) ?? null,
+          null,
           "en",
         );
         return {
@@ -1481,7 +1461,7 @@ export class CampaignService {
   }): Promise<void> {
     const [managerRows, volunteerIds] = await Promise.all([
       campaignManagerRepository.findManagersByCampaignId(args.campaign.id),
-      campaignJoiningRequestRepository.findApprovedVolunteerIdsByCampaignId(
+      campaignRegistrationRepository.findRegisteredUserIds(
         args.campaign.id,
       ),
     ]);
@@ -1542,7 +1522,7 @@ export class CampaignService {
     }
 
     const approvedVolunteerIds =
-      await campaignJoiningRequestRepository.findApprovedVolunteerIdsByCampaignId(
+      await campaignRegistrationRepository.findRegisteredUserIds(
         id,
       );
     const checkedInUserIds =

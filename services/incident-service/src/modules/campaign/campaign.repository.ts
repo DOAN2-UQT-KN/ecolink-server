@@ -10,7 +10,6 @@ const SUBMISSION_STATUSES_AWAITING_REVIEW: number[] = [
   GlobalStatus._STATUS_PENDING,
 ];
 
-import { JoinRequestStatus } from "../../constants/status.enum";
 
 export class CampaignRepository {
   private prisma: PrismaClient;
@@ -169,16 +168,16 @@ export class CampaignRepository {
                         },
                       ],
                     },
-                    { status: GlobalStatus._STATUS_ACTIVE },
+                    {
+                      status: {
+                        in: [CampaignStatus.UPCOMING, CampaignStatus.ACTIVE],
+                      },
+                    },
                   ],
                 },
                 {
-                  campaignJoiningRequests: {
-                    some: {
-                      volunteerId: filters.myCampaignsUserId,
-                      status: JoinRequestStatus._STATUS_APPROVED,
-                      deletedAt: null,
-                    },
+                  shiftRegistrations: {
+                    some: { userId: filters.myCampaignsUserId, leftAt: null },
                   },
                 },
               ],
@@ -198,12 +197,8 @@ export class CampaignRepository {
                   },
                 },
                 {
-                  campaignJoiningRequests: {
-                    some: {
-                      volunteerId: filters.excludeMyCampaignsUserId,
-                      status: JoinRequestStatus._STATUS_APPROVED,
-                      deletedAt: null,
-                    },
+                  shiftRegistrations: {
+                    some: { userId: filters.excludeMyCampaignsUserId, leftAt: null },
                   },
                 },
               ],
@@ -235,7 +230,7 @@ export class CampaignRepository {
     return { rows, total };
   }
 
-  /** All non-deleted campaigns with status ACTIVE (no pagination). */
+  /** All non-deleted approved campaigns, upcoming or running (no pagination). */
   async findAllActive(params: {
     sortBy: "createdAt" | "updatedAt" | "title";
     sortOrder: "asc" | "desc";
@@ -251,7 +246,7 @@ export class CampaignRepository {
     return this.prisma.campaign.findMany({
       where: {
         deletedAt: null,
-        status: GlobalStatus._STATUS_ACTIVE,
+        status: { in: [CampaignStatus.UPCOMING, CampaignStatus.ACTIVE] },
       },
       include: CampaignRepository.listInclude,
       orderBy,

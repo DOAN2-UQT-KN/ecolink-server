@@ -9,9 +9,9 @@ import {
 import { campaignService } from "./campaign.service";
 import { campaignManagerService } from "./campaign_manager/campaign_manager.service";
 import { campaignTaskService } from "./campaign_task/campaign_task.service";
-import { campaignJoiningRequestService } from "./campaign_joining_request/campaign_joining_request.service";
+import { campaignRegistrationService } from "./campaign_registration/campaign_registration.service";
 import { campaignAttendanceService } from "./campaign_attendance/campaign_attendance.service";
-import { GlobalStatus, JoinRequestStatus } from "../../constants/status.enum";
+import { GlobalStatus } from "../../constants/status.enum";
 import {
   CAMPAIGN_DIFFICULTY_MAX,
   CAMPAIGN_DIFFICULTY_MIN,
@@ -29,9 +29,6 @@ import type {
   CampaignListQuery,
   CampaignManagersListQuery,
   CampaignMultiSubmissionReviewListQuery,
-  GetApprovedVolunteersQuery,
-  GetJoinRequestsQuery,
-  MyJoinRequestsQuery,
 } from "./campaign.dto";
 import { normalizeQueryUuidList } from "../../utils/query-uuid-list";
 import { resolveRequestLocale } from "../../utils/resolve-request-locale";
@@ -121,6 +118,8 @@ const campaignDetailValidators = () => [
     .isString()
     .isLength({ max: 1000 })
     .withMessage("minVolunteersReason must be at most 1000 characters"),
+  body("shifts.*.startAt").optional({ nullable: true }).isISO8601(),
+  body("shifts.*.endAt").optional({ nullable: true }).isISO8601(),
   body("shifts.*.gatherAt").optional({ nullable: true }).isISO8601(),
   body("shifts.*.leaderUserId").optional({ nullable: true }).isUUID(),
 ];
@@ -1101,179 +1100,78 @@ export class CampaignController {
   ];
 
   // =====================
-  // Joining Request Operations
+  // Shift registrations (spec 3.1)
   // =====================
 
-  /**
-   * Create a join request for a campaign
-   */
-  createJoinRequest = [
-    body("campaignId").notEmpty().withMessage("Campaign ID is required").trim(),
+  /** GET /campaigns/:id/registration-options — what the "pick shifts" popup shows. */
+  getRegistrationOptions = [
+    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
-        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
-          errors: errors.array(),
-        });
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
       }
-
       try {
-        const volunteerId = req.user?.userId;
-        if (!volunteerId) {
-          return sendError(res, HTTP_STATUS.UNAUTHORIZED);
-        }
-
-        const joinRequest =
-          await campaignJoiningRequestService.createJoinRequest(
-            req.body.campaignId,
-            volunteerId,
-          );
-        sendSuccess(res, HTTP_STATUS.CREATED, { joinRequest });
+        const userId = req.user?.userId;
+        if (!userId) return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+        const options = await campaignRegistrationService.getOptions(req.params.id, userId);
+        sendSuccess(res, HTTP_STATUS.OK, options);
       } catch (error) {
-        console.error("Create campaign join request error:", error);
+        console.error("Get registration options error:", error);
         if (sendHttpErrorResponse(res, error)) return;
-        if (error instanceof Error) {
-          if (error.message.includes("Campaign not found")) {
-            return sendError(
-              res,
-              HTTP_STATUS.NOT_FOUND.withMessage("Campaign not found"),
-            );
-          }
-          if (error.message.includes("already exists")) {
-            return sendError(
-              res,
-              HTTP_STATUS.CONFLICT.withMessage("Join request already exists"),
-            );
-          }
-        }
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     },
   ];
 
   /**
-   * GET /campaigns/volunteers/join-requests — list join requests for a campaign (managers only).
-   * Query: campaignId (required), status?, volunteerId?, page, limit, sortBy, sortOrder.
+   * PUT /campaigns/:id/registrations/me — replaces the caller's shifts; [] leaves the campaign.
+   * Body: { shiftIds: string[], acceptConditions?: boolean }.
    */
-  getJoinRequests = [
-    query("campaignId")
-      .notEmpty()
-      .withMessage("Campaign ID is required")
-      .trim(),
-    query("status").optional().isInt().withMessage("status must be an integer"),
-    query("volunteerId")
-      .optional()
-      .isUUID()
-      .withMessage("volunteerId must be a valid UUID"),
-    query("page").optional().isInt({ min: 1 }),
-    query("limit").optional().isInt({ min: 1, max: 100 }),
-    query("sortBy").optional().isIn(["createdAt", "updatedAt"]),
-    query("sortOrder").optional().isIn(["asc", "desc"]),
+  updateMyRegistrations = [
+    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+    body("shiftIds").isArray({ max: 100 }).withMessage("shiftIds must be an array"),
+    body("shiftIds.*").isUUID().withMessage("Each shift ID must be a valid UUID"),
+    body("acceptConditions").optional().isBoolean().toBoolean(),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
-        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
-          errors: errors.array(),
-        });
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
       }
-
       try {
-        const managerId = req.user?.userId;
-        if (!managerId) {
-          return sendError(res, HTTP_STATUS.UNAUTHORIZED);
-        }
-
-        const q: GetJoinRequestsQuery = {
-          campaignId: String(req.query.campaignId).trim(),
-          page: req.query.page
-            ? parseInt(String(req.query.page), 10)
-            : undefined,
-          limit: req.query.limit
-            ? parseInt(String(req.query.limit), 10)
-            : undefined,
-          status:
-            req.query.status !== undefined && req.query.status !== ""
-              ? parseInt(String(req.query.status), 10)
-              : undefined,
-          volunteerId: req.query.volunteerId
-            ? String(req.query.volunteerId).trim()
-            : undefined,
-          sortBy: req.query.sortBy as GetJoinRequestsQuery["sortBy"],
-          sortOrder: req.query.sortOrder as GetJoinRequestsQuery["sortOrder"],
-        };
-
-        const result =
-          await campaignJoiningRequestService.getJoinRequestsByCampaignForManager(
-            q.campaignId,
-            managerId,
-            q,
-          );
+        const userId = req.user?.userId;
+        if (!userId) return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+        const result = await campaignRegistrationService.setMyShifts(req.params.id, userId, {
+          shiftIds: req.body.shiftIds,
+          acceptConditions: req.body.acceptConditions,
+        });
         sendSuccess(res, HTTP_STATUS.OK, result);
       } catch (error) {
-        console.error("Get campaign join requests error:", error);
+        console.error("Update my registrations error:", error);
         if (sendHttpErrorResponse(res, error)) return;
-        if (error instanceof Error) {
-          if (error.message.includes("Only campaign managers")) {
-            return sendError(res, HTTP_STATUS.FORBIDDEN);
-          }
-        }
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     },
   ];
 
-  /**
-   * GET /campaigns/volunteers/join-requests/my — my join requests with optional filters and pagination.
-   */
-  getMyJoinRequests = [
-    query("campaignId").optional().isUUID(),
-    query("status").optional().isInt(),
-    query("page").optional().isInt({ min: 1 }),
-    query("limit").optional().isInt({ min: 1, max: 100 }),
-    query("sortBy").optional().isIn(["createdAt", "updatedAt"]),
-    query("sortOrder").optional().isIn(["asc", "desc"]),
+  /** GET /campaigns/:id/registrations — managers: each shift with who registered. */
+  getCampaignRegistrations = [
+    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
-        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
-          errors: errors.array(),
-        });
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
       }
-
       try {
-        const volunteerId = req.user?.userId;
-        if (!volunteerId) {
-          return sendError(res, HTTP_STATUS.UNAUTHORIZED);
-        }
-
-        const q: MyJoinRequestsQuery = {
-          campaignId: req.query.campaignId
-            ? String(req.query.campaignId).trim()
-            : undefined,
-          page: req.query.page
-            ? parseInt(String(req.query.page), 10)
-            : undefined,
-          limit: req.query.limit
-            ? parseInt(String(req.query.limit), 10)
-            : undefined,
-          status:
-            req.query.status !== undefined && req.query.status !== ""
-              ? parseInt(String(req.query.status), 10)
-              : undefined,
-          sortBy: req.query.sortBy as MyJoinRequestsQuery["sortBy"],
-          sortOrder: req.query.sortOrder as MyJoinRequestsQuery["sortOrder"],
-        };
-
-        const result = await campaignJoiningRequestService.getMyJoinRequests(
-          volunteerId,
-          q,
-        );
-        sendSuccess(res, HTTP_STATUS.OK, result);
+        const userId = req.user?.userId;
+        if (!userId) return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+        const shifts = await campaignRegistrationService.listForManager(req.params.id, userId);
+        sendSuccess(res, HTTP_STATUS.OK, { shifts });
       } catch (error) {
-        console.error("Get my join requests error:", error);
+        console.error("Get campaign registrations error:", error);
         if (sendHttpErrorResponse(res, error)) return;
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
@@ -1281,137 +1179,8 @@ export class CampaignController {
   ];
 
   /**
-   * Approve or reject a join request (campaign managers only)
-   */
-  processJoinRequest = [
-    body("requestId").notEmpty().withMessage("Request ID is required").trim(),
-    body("approved").isBoolean().withMessage("Approved must be boolean"),
-
-    async (req: Request, res: Response): Promise<void> => {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
-          errors: errors.array(),
-        });
-      }
-
-      try {
-        const managerId = req.user?.userId;
-        if (!managerId) {
-          return sendError(res, HTTP_STATUS.UNAUTHORIZED);
-        }
-
-        const status = req.body.approved
-          ? JoinRequestStatus._STATUS_APPROVED
-          : JoinRequestStatus._STATUS_REJECTED;
-
-        const result = await campaignJoiningRequestService.processJoinRequest(
-          req.body.requestId,
-          managerId,
-          status,
-        );
-        if (result.type === "approved") {
-          sendSuccess(res, HTTP_STATUS.OK, { joinRequest: result.joinRequest });
-        } else {
-          sendSuccess(res, HTTP_STATUS.OK, {
-            deleted: true,
-            requestId: result.requestId,
-          });
-        }
-      } catch (error) {
-        console.error("Process join request error:", error);
-        if (sendHttpErrorResponse(res, error)) return;
-        if (error instanceof Error) {
-          if (error.message.includes("not found")) {
-            return sendError(res, HTTP_STATUS.NOT_FOUND);
-          }
-          if (error.message.includes("Only campaign managers")) {
-            return sendError(res, HTTP_STATUS.FORBIDDEN);
-          }
-          if (error.message.includes("already processed")) {
-            return sendError(
-              res,
-              HTTP_STATUS.CONFLICT.withMessage(
-                "Join request already processed",
-              ),
-            );
-          }
-          if (error.message.includes("capacity exceeded")) {
-            return sendError(
-              res,
-              HTTP_STATUS.BAD_REQUEST.withMessage(error.message),
-            );
-          }
-          if (
-            error.message.includes("REWARD_SERVICE_URL") ||
-            error.message.includes("INTERNAL_REWARD_API_KEY") ||
-            error.message.includes("Invalid reward service")
-          ) {
-            return sendError(
-              res,
-              HTTP_STATUS.INTERNAL_SERVER_ERROR.withMessage(error.message),
-            );
-          }
-        }
-        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
-      }
-    },
-  ];
-
-  /**
-   * Cancel a join request (volunteer only)
-   */
-  cancelJoinRequest = [
-    body("requestId").notEmpty().withMessage("Request ID is required").trim(),
-
-    async (req: Request, res: Response): Promise<void> => {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
-          errors: errors.array(),
-        });
-      }
-
-      try {
-        const volunteerId = req.user?.userId;
-        if (!volunteerId) {
-          return sendError(res, HTTP_STATUS.UNAUTHORIZED);
-        }
-
-        await campaignJoiningRequestService.cancelJoinRequest(
-          req.body.requestId,
-          volunteerId,
-        );
-        sendSuccess(
-          res,
-          HTTP_STATUS.OK.withMessage("Join request cancelled successfully"),
-        );
-      } catch (error) {
-        console.error("Cancel join request error:", error);
-        if (sendHttpErrorResponse(res, error)) return;
-        if (error instanceof Error) {
-          if (error.message.includes("not found")) {
-            return sendError(res, HTTP_STATUS.NOT_FOUND);
-          }
-          if (error.message.includes("Cannot cancel")) {
-            return sendError(res, HTTP_STATUS.FORBIDDEN);
-          }
-          if (error.message.includes("only cancel pending")) {
-            return sendError(
-              res,
-              HTTP_STATUS.CONFLICT.withMessage(
-                "Can only cancel pending requests",
-              ),
-            );
-          }
-        }
-        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
-      }
-    },
-  ];
-
-  /**
-   * GET /campaigns/volunteers/approved — approved volunteers for a campaign (managers only).
+   * GET /campaigns/volunteers/approved — people registered for at least one shift.
+   * Query: campaignId (required), volunteerId?, page, limit, sortOrder.
    */
   getApprovedVolunteers = [
     query("campaignId")
@@ -1428,48 +1197,25 @@ export class CampaignController {
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
-        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
-          errors: errors.array(),
-        });
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
       }
-
       try {
-        const managerId = req.user?.userId;
-        if (!managerId) {
-          return sendError(res, HTTP_STATUS.UNAUTHORIZED);
-        }
-
-        const q: GetApprovedVolunteersQuery = {
-          campaignId: String(req.query.campaignId).trim(),
-          volunteerId: req.query.volunteerId
-            ? String(req.query.volunteerId).trim()
-            : undefined,
-          page: req.query.page
-            ? parseInt(String(req.query.page), 10)
-            : undefined,
-          limit: req.query.limit
-            ? parseInt(String(req.query.limit), 10)
-            : undefined,
-          sortBy: req.query.sortBy as GetApprovedVolunteersQuery["sortBy"],
-          sortOrder: req.query
-            .sortOrder as GetApprovedVolunteersQuery["sortOrder"],
-        };
-
-        const result =
-          await campaignJoiningRequestService.getApprovedVolunteersForManager(
-            q.campaignId,
-            { userId: managerId, role: req.user?.role },
-            q,
-          );
+        const userId = req.user?.userId;
+        if (!userId) return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+        const result = await campaignRegistrationService.listVolunteers(
+          String(req.query.campaignId).trim(),
+          { userId, role: req.user?.role },
+          {
+            volunteerId: req.query.volunteerId ? String(req.query.volunteerId).trim() : undefined,
+            page: req.query.page ? parseInt(String(req.query.page), 10) : undefined,
+            limit: req.query.limit ? parseInt(String(req.query.limit), 10) : undefined,
+            sortOrder: req.query.sortOrder as "asc" | "desc" | undefined,
+          },
+        );
         sendSuccess(res, HTTP_STATUS.OK, result);
       } catch (error) {
-        console.error("Get approved volunteers error:", error);
+        console.error("Get registered volunteers error:", error);
         if (sendHttpErrorResponse(res, error)) return;
-        if (error instanceof Error) {
-          if (error.message.includes("Only campaign managers")) {
-            return sendError(res, HTTP_STATUS.FORBIDDEN);
-          }
-        }
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     },

@@ -185,7 +185,7 @@ export class RewardServiceClient {
     }
   }
 
-  /** Same lookup for display (points, volunteer cap): `null` on any failure, never throws. */
+  /** Same lookup for display (points, suggested minimum): `null` on any failure, never throws. */
   async getDifficultyByLevel(
     level: number,
   ): Promise<RewardDifficulty | null> {
@@ -193,24 +193,6 @@ export class RewardServiceClient {
       return await this.getDifficultyByLevelStrict(level);
     } catch {
       return null;
-    }
-  }
-
-  async assertCampaignHasCapacityForJoinApproval(
-    currentApprovedCount: number,
-    difficultyLevel: number,
-  ): Promise<void> {
-    const d = await this.getDifficultyByLevel(difficultyLevel);
-    if (!d) {
-      throw new Error("Campaign difficulty missing");
-    }
-    if (d.maxVolunteers === null) {
-      return;
-    }
-    if (currentApprovedCount >= d.maxVolunteers) {
-      throw new Error(
-        `Campaign volunteer capacity exceeded for this difficulty (max ${d.maxVolunteers})`,
-      );
     }
   }
 }
