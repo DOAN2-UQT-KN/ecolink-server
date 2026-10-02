@@ -2,6 +2,7 @@ import { CAMPAIGN_REGISTRATION_DIGEST_HOUR } from "@da2/constants";
 import prisma from "../../../config/prisma.client";
 import { campaignTitleNotificationPayload } from "../campaign-i18n";
 import { enqueueWebsiteNotificationsToUsers } from "../notification-jobs.client";
+import { STAFFING_CAMPAIGN_SELECT, localDayMonth, managerRecipients } from "./staffing-shared";
 
 /** Asia/Ho_Chi_Minh, no daylight saving. */
 const LOCAL_UTC_OFFSET_MS = 7 * 60 * 60 * 1000;
@@ -21,10 +22,6 @@ export function digestCutoff(now: Date, hour = digestHour()): Date {
   return new Date(localMidnight + hour * 60 * 60 * 1000 - LOCAL_UTC_OFFSET_MS);
 }
 
-const localDate = (d: Date) => {
-  const iso = new Date(d.getTime() + LOCAL_UTC_OFFSET_MS).toISOString();
-  return `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
-};
 
 /**
  * Managers hear about registrations once a day, not per registration (spec 3.1): after the
@@ -63,23 +60,11 @@ export async function sendRegistrationDigests(now = new Date()): Promise<number>
     try {
       const campaign = await prisma.campaign.findUnique({
         where: { id: campaignId },
-        select: {
-          id: true,
-          title: true,
-          titleVi: true,
-          titleEn: true,
-          createdBy: true,
-          campaignManagers: { where: { deletedAt: null }, select: { userId: true } },
-        },
+        select: STAFFING_CAMPAIGN_SELECT,
       });
       const ids = regs.map((r) => r.id);
       if (!campaign) continue;
-      const recipients = [
-        ...new Set([
-          ...(campaign.createdBy ? [campaign.createdBy] : []),
-          ...campaign.campaignManagers.map((m) => m.userId),
-        ]),
-      ];
+      const recipients = managerRecipients(campaign);
 
       const perDay = new Map<number, number>();
       for (const r of regs) {
@@ -88,7 +73,7 @@ export async function sendRegistrationDigests(now = new Date()): Promise<number>
       }
       const breakdown = [...perDay.entries()]
         .sort(([a], [b]) => a - b)
-        .map(([t, n]) => `${localDate(new Date(t))}: +${n}`)
+        .map(([t, n]) => `${localDayMonth(new Date(t))}: +${n}`)
         .join(" · ");
 
       if (recipients.length > 0) {

@@ -314,7 +314,7 @@ router.put(
 
 /**
  * @route   GET /api/v1/campaigns/:id/registrations
- * @desc    Each shift with the people registered for it (campaign managers only)
+ * @desc    Each shift with the people registered for it, read only (managers, registered volunteers, admins), and when nearby residents may be invited again
  * @access  Private
  */
 router.get(
@@ -322,6 +322,28 @@ router.get(
   authenticate,
   campaignController.getCampaignRegistrations,
 );
+
+/**
+ * @route   POST /api/v1/campaigns/:id/invite-nearby
+ * @desc    Invite residents within 5 km of the meeting points to fill short shifts (managers, once per 24 h)
+ * @access  Private
+ */
+router.post("/:id/invite-nearby", authenticate, campaignController.inviteNearby);
+
+/**
+ * @route   POST /api/v1/campaigns/:id/shifts/:shiftId/close
+ * @desc    Turn a shift off before it starts; its volunteers are told to pick another shift (managers)
+ * @access  Private
+ */
+router.post("/:id/shifts/:shiftId/close", authenticate, campaignController.closeShift);
+
+/**
+ * @route   PUT /api/v1/campaigns/:id/shifts/:shiftId/leader
+ * @desc    Choose who leads a shift that has not ended; must be on the campaign's team (managers)
+ * @access  Private
+ * @body    { leaderUserId }
+ */
+router.put("/:id/shifts/:shiftId/leader", authenticate, campaignController.setShiftLeader);
 
 /**
  * @route   GET /api/v1/campaigns/volunteers/approved

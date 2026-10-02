@@ -28,6 +28,8 @@ import { campaignRegistrationRepository } from "./campaign_registration/campaign
 import { campaignAttendanceRepository } from "./campaign_attendance/campaign_attendance.repository";
 import { campaignRepository } from "./campaign.repository";
 import { campaignAccessService } from "./campaign-access.service";
+import { TeamCampaign, assertLeadersInTeam } from "./campaign_manager/campaign-team";
+import { applyPostApprovalEdit, isPostApprovalEdit } from "./campaign-post-approval-edit";
 import { campaignManagerService } from "./campaign_manager/campaign_manager.service";
 import {
   CAMPAIGN_DELETABLE_STATUSES,
@@ -69,14 +71,13 @@ import {
 import { campaignCompletionVerificationService } from "./campaign_completion_verification/campaign_completion_verification.service";
 import {
   fetchOrganizationOwnersByUserIds,
-  fetchUserIdsNearPoint,
   getUserProfile,
 } from "../organization/identity-user.client";
 import type { OrganizationOwnerResponse } from "../organization/organization.dto";
 import { toReportResponse } from "../report/report.entity";
 import type { ReportResponse } from "../report/report.dto";
 import { reportService } from "../report/report.service";
-import { reportRepository } from "../report/report.repository";
+import { findNearbyUserIds } from "./nearby-users";
 import { emitOutbox } from "../../outbox/outbox.writer";
 import { OutboxEventType } from "../../outbox/outbox.types";
 
@@ -93,9 +94,6 @@ function assertDifficultyInRange(level: number): void {
     );
   }
 }
-
-/** Hardcoded radius for community verify invites (meters). */
-const NOTIFY_NEARBY_VERIFY_RADIUS_METERS = 5_000;
 
 function enqueueCampaignTranslationJob(
   resourceId: string,
@@ -447,14 +445,14 @@ export class CampaignService {
    * on the meeting points, and the full rules run when the draft is sent for review.
    */
   /**
-   * Waste points of a schedule must be selectable, and shift leaders must be members of the
-   * organization. Leaders of off shifts count too: they come back when the shift is turned on.
+   * Waste points of a schedule must be selectable, and shift leaders must be on the campaign's
+   * team (spec 3.4). Leaders of off shifts count too: they come back when the shift is turned on.
    */
   private async assertScheduleUsable(
     schedule: NormalizedSchedule,
-    campaignId: string | null,
-    organizationId: string,
+    team: TeamCampaign,
   ): Promise<void> {
+    const campaignId = team.id ?? null;
     await campaignLifecycleService.assertReportsSelectable(
       prisma,
       campaignId,
@@ -465,9 +463,7 @@ export class CampaignService {
         schedule.shifts.map((sh) => sh.leaderUserId).filter((x): x is string => !!x),
       ),
     ];
-    if (leaderIds.length > 0) {
-      await campaignManagerService.assertAllMembers(organizationId, leaderIds);
-    }
+    await assertLeadersInTeam(prisma, team, leaderIds);
   }
 
   async createCampaign(
@@ -492,7 +488,7 @@ export class CampaignService {
       meetingPoints: [],
       shifts: [],
     };
-    await this.assertScheduleUsable(schedule, null, org.id);
+    await this.assertScheduleUsable(schedule, { organizationId: org.id, createdBy: userId });
 
     const sourceTitle = request.title.trim();
     const titleVi =
@@ -584,13 +580,18 @@ export class CampaignService {
     decision: "approve" | "request_revision" | "block",
     reason: string | null | undefined,
   ): Promise<CampaignResponse> {
+    const approvedBefore = (await prisma.campaign.findUnique({
+      where: { id },
+      select: { approvedAt: true },
+    }))?.approvedAt;
     const campaign = await campaignLifecycleService.review(
       id,
       adminUserId,
       decision,
       reason,
     );
-    if (decision === "approve") {
+    // Residents nearby were invited the first time; approving an edit does not invite again.
+    if (decision === "approve" && !approvedBefore) {
       void this.notifyNearbyCitizensToJoinApprovedCampaign({
         campaign,
         adminUserId,
@@ -606,7 +607,7 @@ export class CampaignService {
 
   /**
    * Notifies citizens near the campaign point: users with a saved location (identity-service)
-   * and/or users who filed geolocated reports in the area (`reportRepository`).
+   * and/or users who filed geolocated reports in the area (`findNearbyUserIds`).
    */
   private async notifyNearbyCitizensForCampaignVerify(args: {
     kind: "CAMPAIGN_VERIFY_INVITE" | "CAMPAIGN_COMPLETION_VERIFY_INVITE";
@@ -628,31 +629,10 @@ export class CampaignService {
       return;
     }
 
-    const exclude = new Set(
-      args.excludeUserIds.map((id) => id?.toLowerCase().trim()).filter(Boolean),
+    const recipientIds = await findNearbyUserIds(
+      [{ latitude: args.latitude, longitude: args.longitude }],
+      args.excludeUserIds,
     );
-
-    const [fromSavedLocation, fromReports] = await Promise.all([
-      fetchUserIdsNearPoint({
-        latitude: args.latitude,
-        longitude: args.longitude,
-        radiusMeters: NOTIFY_NEARBY_VERIFY_RADIUS_METERS,
-        excludeUserIds: [...exclude],
-      }),
-      reportRepository.findDistinctReporterUserIdsNearPoint(
-        args.longitude,
-        args.latitude,
-        NOTIFY_NEARBY_VERIFY_RADIUS_METERS,
-      ),
-    ]);
-
-    const recipientIds = [
-      ...new Set(
-        [...fromSavedLocation, ...fromReports].filter(
-          (id) => id && !exclude.has(id.toLowerCase().trim()),
-        ),
-      ),
-    ];
 
     if (recipientIds.length === 0) {
       return;
@@ -721,9 +701,18 @@ export class CampaignService {
     if (campaign.status === CampaignStatus.DRAFT && !canManage) {
       return null;
     }
+    // Back under review after an edit (spec 3.5): the volunteers who kept their place still see it.
+    const keptVolunteer =
+      !isAdmin &&
+      !canManage &&
+      !!viewerUserId &&
+      campaign.approvedAt != null &&
+      !CAMPAIGN_PUBLIC_STATUSES.includes(campaign.status) &&
+      (await campaignRegistrationRepository.isRegistered(campaign.id, viewerUserId));
     if (
       !isAdmin &&
       !canManage &&
+      !keptVolunteer &&
       !CAMPAIGN_PUBLIC_STATUSES.includes(campaign.status)
     ) {
       return null;
@@ -830,9 +819,10 @@ export class CampaignService {
   }
 
   /**
-   * GET /campaigns. The public list leaves out the viewer's own campaigns (those live under
-   * /campaigns/my); but owners and legal representatives listing their own organization see
-   * all of its campaigns in every status, the scope of /campaigns/my?is_owner=true.
+   * GET /campaigns. The public list leaves out the viewer's own campaigns (created, managed or
+   * registered for; those live under /campaigns/my). Platform admins (`publicOnly: false`) see
+   * every campaign, theirs included. Owners and legal representatives listing their own
+   * organization see all of its campaigns in every status, the scope of /campaigns/my?is_owner=true.
    */
   async listCampaigns(query: CampaignListQuery, userId?: string) {
     const ownerView =
@@ -840,7 +830,7 @@ export class CampaignService {
       !!query.organizationId &&
       (await this.isOrganizationOwner(query.organizationId, userId));
     if (!ownerView) {
-      return this.getCampaigns(query, userId, undefined, userId);
+      return this.getCampaigns(query, userId, undefined, query.publicOnly ? userId : undefined);
     }
     return this.getCampaigns(
       { ...query, publicOnly: false, excludeDrafts: false, isOwner: true },
@@ -1163,26 +1153,22 @@ export class CampaignService {
 
     await campaignAccessService.assertCanManage(existing, userId);
 
-    const preApproval = isPreApproval(existing.status);
-    if (!preApproval) {
-      const restricted = (
-        [
-          "title",
-          "titleVi",
-          "titleEn",
-          "difficulty",
-          "requirements",
-          "days",
-          "meetingPoints",
-          "shifts",
-          "minVolunteersReason",
-        ] as const
-      ).filter((key) => request[key] !== undefined);
-      if (restricted.length > 0) {
-        throw new HttpError(HTTP_STATUS.CAMPAIGN_NOT_EDITABLE, {
-          fields: restricted,
-        });
+    // Spec 3.5: an approved campaign is edited in place, by id, until it starts.
+    if (isPostApprovalEdit(existing)) {
+      if (request.difficulty !== undefined) {
+        assertDifficultyInRange(request.difficulty);
       }
+      if (request.managerIds !== undefined) {
+        throw new HttpError(HTTP_STATUS.CAMPAIGN_NOT_EDITABLE, { fields: ["managerIds"] });
+      }
+      const { reReview } = await applyPostApprovalEdit(existing, userId, request);
+      const fresh = await campaignRepository.findById(id);
+      if (!fresh) throw new HttpError(HTTP_STATUS.NOT_FOUND.withMessage("Campaign not found"));
+      return { ...(await this.toResponseWithVotes(fresh, viewerUserId ?? userId)), reReview };
+    }
+    // Running or over: nothing changes through editing any more.
+    if (!isPreApproval(existing.status)) {
+      throw new HttpError(HTTP_STATUS.CAMPAIGN_NOT_EDITABLE);
     }
 
     if (request.difficulty !== undefined) {
@@ -1194,10 +1180,6 @@ export class CampaignService {
       scheduleOf(existing),
       existing.createdBy ?? userId,
     );
-    if (schedule) {
-      await this.assertScheduleUsable(schedule, id, existing.organizationId);
-    }
-
     const shouldUpdateManagers = request.managerIds !== undefined;
     const managerIds = shouldUpdateManagers
       ? this.normalizeManagerIds(
@@ -1207,6 +1189,21 @@ export class CampaignService {
       : [];
     if (shouldUpdateManagers) {
       await campaignManagerService.assertAllMembers(existing.organizationId, managerIds);
+    }
+    const team: TeamCampaign = {
+      id,
+      organizationId: existing.organizationId,
+      createdBy: existing.createdBy,
+      ...(shouldUpdateManagers ? { managerIds } : {}),
+    };
+    if (schedule) {
+      await this.assertScheduleUsable(schedule, team);
+    } else if (shouldUpdateManagers) {
+      // Managers dropped from the list must not be leading shifts still to come.
+      const dropped = existing.campaignManagers
+        .map((m) => m.userId)
+        .filter((uid) => !managerIds.includes(uid));
+      await campaignManagerService.assertLeadsNoShifts(existing, dropped);
     }
 
     const optionalText = (value: string | null | undefined) =>

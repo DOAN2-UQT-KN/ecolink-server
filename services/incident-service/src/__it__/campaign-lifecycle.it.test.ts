@@ -126,7 +126,12 @@ function schedule() {
   return { start: day, end: new Date(day.getTime() + 4 * HOUR) };
 }
 
-function draftRequest(reportIds: string[], overrides: Record<string, unknown> = {}) {
+/** `leaderUserId` must be on the creator's team (spec 3.4): the creator themself by default. */
+function draftRequest(
+  reportIds: string[],
+  overrides: Record<string, unknown> = {},
+  leaderUserId: string = CM,
+) {
   const { start, end } = schedule();
   return {
     organizationId: orgId,
@@ -150,7 +155,7 @@ function draftRequest(reportIds: string[], overrides: Record<string, unknown> = 
         meetingPointIndex: 0,
         gatherAt: new Date(start.getTime() - HOUR / 2).toISOString(),
         minVolunteers: 10,
-        leaderUserId: CM,
+        leaderUserId,
       },
     ],
     ...overrides,
@@ -283,7 +288,7 @@ describe("draft and submit", () => {
   it("two drafts racing for one report: one wins, the other gets 409 naming it", async () => {
     const report = await seedReport();
     const a = await campaignService.createCampaign(CM, draftRequest([report.id]) as never);
-    const b = await campaignService.createCampaign(OWNER, draftRequest([report.id]) as never);
+    const b = await campaignService.createCampaign(OWNER, draftRequest([report.id], {}, OWNER) as never);
     await campaignService.submitCampaign(a.id, CM);
     await expect(campaignService.submitCampaign(b.id, OWNER)).rejects.toMatchObject({
       statusResponse: expect.objectContaining({ code: "CAMPAIGN_INVALID" }),
@@ -500,7 +505,7 @@ describe("organization campaign list", () => {
     const draft = await campaignService.createCampaign(CM, draftRequest([]) as never);
     const pending = await campaignService.createCampaign(CM, draftRequest([]) as never);
     await campaignService.submitCampaign(pending.id, CM);
-    const running = await campaignService.createCampaign(OWNER, draftRequest([]) as never);
+    const running = await campaignService.createCampaign(OWNER, draftRequest([], {}, OWNER) as never);
     await prisma.campaign.update({ where: { id: running.id }, data: { status: S.ACTIVE } });
     return { draft: draft.id, pending: pending.id, running: running.id };
   }
@@ -515,6 +520,14 @@ describe("organization campaign list", () => {
       OWNER,
     );
     expect(ids(filtered)).toEqual([c.pending]);
+  });
+
+  it("a platform admin sees every campaign, even the ones they manage or registered for", async () => {
+    const c = await seedList();
+    // CM created the pending one: the public list hides it from CM, the admin list does not.
+    const adminQuery = { organizationId: orgId, publicOnly: false, excludeDrafts: true };
+    expect(ids(await campaignService.listCampaigns(adminQuery, CM))).toEqual([c.pending, c.running].sort());
+    expect(ids(await campaignService.listCampaigns({ ...adminQuery, publicOnly: true }, CM))).toEqual([c.running]);
   });
 
   it("other members and outsiders keep the public list", async () => {
@@ -609,16 +622,17 @@ describe("lifecycle sweep", () => {
 });
 
 describe("after approval", () => {
-  it("only free fields may change, and the campaign can no longer be deleted", async () => {
+  it("free fields (title too) save in place; it can no longer be deleted (spec 3.5, campaign-edit IT)", async () => {
     const report = await seedReport();
     const draft = await campaignService.createCampaign(CM, draftRequest([report.id]) as never);
     await campaignService.submitCampaign(draft.id, CM);
     await campaignService.reviewCampaign(draft.id, ADMIN, "approve", null);
 
     await campaignService.updateCampaign(draft.id, CM, { safetyNotes: "Mang ủng" } as never);
-    await expect(
-      campaignService.updateCampaign(draft.id, CM, { title: "Tên mới cho chiến dịch" } as never),
-    ).rejects.toMatchObject(code("CAMPAIGN_NOT_EDITABLE"));
+    await campaignService.updateCampaign(draft.id, CM, { title: "Tên mới cho chiến dịch" } as never);
+    const saved = await prisma.campaign.findUniqueOrThrow({ where: { id: draft.id } });
+    expect(saved).toMatchObject({ title: "Tên mới cho chiến dịch", status: S.UPCOMING });
+    expect(saved.approvedAt).not.toBeNull();
     await expect(campaignService.deleteCampaign(draft.id, OWNER)).rejects.toMatchObject(
       code("CAMPAIGN_NOT_DELETABLE"),
     );

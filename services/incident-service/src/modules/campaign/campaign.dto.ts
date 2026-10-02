@@ -43,6 +43,8 @@ export interface CreateCampaignRequest {
 
 /** One campaign day in a create/update body. */
 export interface CampaignDayInput {
+  /** An existing day of the campaign; edits of an approved campaign match days by id. */
+  id?: string;
   startAt: string;
   endAt: string;
 }
@@ -67,6 +69,8 @@ export interface CampaignShiftInput {
 
 /** One gathering point in a create/update body. */
 export interface MeetingPointInput {
+  /** An existing meeting point; edits of an approved campaign match points by id. */
+  id?: string;
   name?: string | null;
   latitude: number;
   longitude: number;
@@ -210,6 +214,10 @@ export interface CampaignResponse {
   /** Resubmit before this while NEEDS_REVISION. */
   revisionDeadline: Date | null;
   submittedAt: Date | null;
+  /** First admin approval; set while back under review after an edit (spec 3.5). */
+  approvedAt: Date | null;
+  /** Only on an update: the edit sent the campaign back for review (spec 3.5). */
+  reReview?: boolean;
   /** Why a day's minimum volunteers is below the difficulty's suggestion. */
   minVolunteersReason: string | null;
   /** Suggested minimum volunteers per day for this difficulty (detail responses only). */

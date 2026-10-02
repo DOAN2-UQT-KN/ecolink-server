@@ -62,7 +62,7 @@ import {
   TranslationFieldTarget,
   TranslationResourceType,
 } from "../../constants/job-type.enum";
-import { campaignManagerRepository } from "../campaign/campaign_manager/campaign_manager.repository";
+import { onMemberGone, onRightsReduced } from "../campaign/campaign_manager/campaign-team-cleanup";
 
 /**
  * Best-effort enqueue of a TRANSLATE_TEXT job for an organization. Failure is
@@ -1427,14 +1427,17 @@ export class OrganizationService {
     }
 
     const org = await organizationRepository.findById(organizationId);
-    const row = await prisma.$transaction((tx) =>
-      organizationMembershipService.changeRole(tx, {
+    const row = await prisma.$transaction(async (tx) => {
+      const changed = await organizationMembershipService.changeRole(tx, {
         organizationId,
         userId: targetUserId,
         role: newRole as OrgMemberRole,
         actorId,
-      }),
-    );
+      });
+      // An owner made a lesser role may no longer lead shifts of campaigns outside their team.
+      await onRightsReduced(tx, organizationId, targetUserId, actorId);
+      return changed;
+    });
 
     if (org && targetRole !== newRole) {
       void enqueueOrgMembershipChangedWebsiteNotification({
@@ -1596,13 +1599,10 @@ export class OrganizationService {
             ? { role: newRole, updatedBy: userId }
             : { deletedAt: new Date(), updatedBy: userId },
         });
-        if (!newRole) {
-          await campaignManagerRepository.removeFromOrganizationCampaigns(
-            tx,
-            org.id,
-            userId,
-            userId,
-          );
+        if (newRole) {
+          await onRightsReduced(tx, org.id, userId, userId);
+        } else {
+          await onMemberGone(tx, org.id, userId, userId);
         }
         remaining = owners.map((o) => o.user_id).filter((id) => id !== userId);
       });

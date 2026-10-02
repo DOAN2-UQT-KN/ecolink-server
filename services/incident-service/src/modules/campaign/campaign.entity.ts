@@ -144,6 +144,7 @@ export const toCampaignResponse = (
     requirements: (entity.requirements as CampaignRequirements | null) ?? null,
     revisionDeadline: entity.revisionDeadline ?? null,
     submittedAt: entity.submittedAt ?? null,
+    approvedAt: entity.approvedAt ?? null,
     minVolunteersReason: entity.minVolunteersReason ?? null,
     suggestedMinVolunteers,
     days: (entity.days ?? []).map(toCampaignDayResponse),

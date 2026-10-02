@@ -109,23 +109,6 @@ export class CampaignManagerRepository {
     });
   }
 
-  /**
-   * Someone left (or was removed from) an organization: they stop managing its campaigns.
-   * Runs inside the membership change's transaction.
-   */
-  async removeFromOrganizationCampaigns(
-    tx: Prisma.TransactionClient,
-    organizationId: string,
-    userId: string,
-    removedBy: string,
-  ): Promise<number> {
-    const result = await tx.campaignManager.updateMany({
-      where: { userId, deletedAt: null, campaign: { organizationId } },
-      data: { deletedAt: new Date(), updatedBy: removedBy },
-    });
-    return result.count;
-  }
-
   async isManager(campaignId: string, userId: string): Promise<boolean> {
     const manager = await this.findByCampaignIdAndUserId(campaignId, userId);
     return !!manager;

@@ -369,7 +369,7 @@ function validateShifts(
         add(
           `${at}.leaderUserId`,
           "LEADER_INVALID",
-          "The person in charge must be an active member who can manage campaigns",
+          "The person in charge must be a manager of the campaign or an owner of its organization",
         );
       }
       const start = shift.startAt ?? day.startAt;
@@ -387,13 +387,14 @@ function validateShifts(
       }
       if (
         shift.gatherAt &&
-        (shift.gatherAt.getTime() > start.getTime() ||
+        // Volunteers may gather after the shift starts, but not once it is over.
+        (shift.gatherAt.getTime() >= end.getTime() ||
           localDayKey(shift.gatherAt) !== localDayKey(day.startAt))
       ) {
         add(
           `${at}.gatherAt`,
           "GATHER_TIME_INVALID",
-          "Gathering time must be on that day, no later than the shift starts",
+          "Gathering time must be on that day, before the shift ends",
         );
       }
     });

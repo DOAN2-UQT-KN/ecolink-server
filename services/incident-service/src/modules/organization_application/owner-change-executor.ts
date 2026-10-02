@@ -33,7 +33,7 @@ import {
   OwnerChangeOutcome,
   notifyDecided,
 } from "./owner-change-notify.client";
-import { campaignManagerRepository } from "../campaign/campaign_manager/campaign_manager.repository";
+import { onMemberGone, onRightsReduced } from "../campaign/campaign_manager/campaign-team-cleanup";
 
 const OPEN = ApplicationStatus.AWAITING_OWNER_CONFIRMATION;
 const OWNER_ROLE_VALUES: string[] = [...OWNER_ROLES];
@@ -123,17 +123,13 @@ async function demoteOrRemove(
   const where = { organizationId_userId: { organizationId, userId } };
   if (role) {
     await tx.organizationMember.update({ where, data: { role, updatedBy: actorId } });
+    await onRightsReduced(tx, organizationId, userId, actorId ?? userId);
   } else {
     await tx.organizationMember.update({
       where,
       data: { deletedAt: new Date(), updatedBy: actorId },
     });
-    await campaignManagerRepository.removeFromOrganizationCampaigns(
-      tx,
-      organizationId,
-      userId,
-      actorId ?? userId,
-    );
+    await onMemberGone(tx, organizationId, userId, actorId ?? userId);
   }
 }
 

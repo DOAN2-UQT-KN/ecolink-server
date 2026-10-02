@@ -74,6 +74,13 @@ export const CAMPAIGN_REGISTRABLE_STATUSES: readonly number[] = [
   CampaignStatus.ACTIVE,
 ];
 
+/** Campaigns that are over: their team and shift leaders are no longer maintained. */
+export const CAMPAIGN_ENDED_STATUSES: readonly number[] = [
+  CampaignStatus.COMPLETED,
+  CampaignStatus.EXPIRED,
+  CampaignStatus.CANCELLED,
+];
+
 /** Statuses that count toward the per-organization review queue limit. */
 export const CAMPAIGN_IN_REVIEW_QUEUE_STATUSES: readonly number[] = [
   CampaignStatus.PENDING_REVIEW,
@@ -108,18 +115,16 @@ export const CAMPAIGN_DIFFICULTY_MAX = 4;
 export const CAMPAIGN_HIGH_DIFFICULTY_LEVEL = 3;
 export const CAMPAIGN_HIGH_DIFFICULTY_MIN_AGE = 18;
 export const CAMPAIGN_REVIEW_REASON_MAX_LENGTH = 5000;
-/** Leaving a shift later than this many hours before it starts is recorded as a late leave. */
-export const CAMPAIGN_FREE_LEAVE_HOURS = 24;
-/** Absences in this window, from this count on, raise a warning when registering. */
-export const CAMPAIGN_ABSENCE_WINDOW_DAYS = 90;
-export const CAMPAIGN_ABSENCE_WARN_COUNT = 3;
+/** Managers hear about shifts below their minimum this many hours before each day starts. */
+export const CAMPAIGN_UNDERSTAFFED_NOTICE_HOURS = 72;
+/** Managers may invite nearby residents again after this many hours. */
+export const CAMPAIGN_NEARBY_REINVITE_COOLDOWN_HOURS = 24;
 /** Local hour (Asia/Ho_Chi_Minh) after which managers get the daily registration digest. */
 export const CAMPAIGN_REGISTRATION_DIGEST_HOUR = 20;
 
 /** Warnings returned with a shift registration; none of them blocks it (spec 3.1). */
 export const CampaignRegistrationWarning = {
   OVERLAP: "OVERLAP",
-  MANY_ABSENCES: "MANY_ABSENCES",
   OVER_MAX: "OVER_MAX",
 } as const;
 

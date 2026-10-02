@@ -300,14 +300,17 @@ describe("validateCampaignForSubmit", () => {
       ).toContain("GATHER_TIME_INVALID");
     });
 
-    it("gathers no later than the shift starts", () => {
+    it("gathers before the shift ends, even after it starts", () => {
       const startAt = new Date(START.getTime() + HOUR);
       expect(
         codes(input({ shifts: [{ ...shift(0, 0), startAt, gatherAt: new Date(START.getTime() + 2 * HOUR) }] })),
-      ).toContain("GATHER_TIME_INVALID");
+      ).toEqual([]);
       expect(
         codes(input({ shifts: [{ ...shift(0, 0), startAt, gatherAt: new Date(START.getTime() + 30 * 60 * 1000) }] })),
       ).toEqual([]);
+      expect(
+        codes(input({ shifts: [{ ...shift(0, 0), startAt, gatherAt: new Date(END.getTime()) }] })),
+      ).toContain("GATHER_TIME_INVALID");
     });
 
     it("keeps a shift's window inside its day, start before end", () => {

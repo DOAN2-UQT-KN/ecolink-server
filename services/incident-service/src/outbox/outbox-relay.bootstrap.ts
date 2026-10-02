@@ -1,4 +1,5 @@
 import prisma from "../config/prisma.client";
+import { websiteNotificationPublisher } from "../modules/campaign/website-notification.publisher";
 import { organizationOwnerOnboardPublisher } from "../modules/organization_application/organization-owner-onboard.publisher";
 import { OutboxRelay } from "./outbox-relay";
 import {
@@ -23,6 +24,7 @@ function buildPublisher(): OutboxPublisher {
   return new RoutingOutboxPublisher(
     {
       [OutboxEventType.ORG_OWNER_ONBOARD]: organizationOwnerOnboardPublisher,
+      [OutboxEventType.WEBSITE_NOTIFICATION]: websiteNotificationPublisher,
     },
     lazySqs,
   );

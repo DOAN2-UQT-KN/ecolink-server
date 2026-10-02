@@ -1,3 +1,4 @@
+import { findTeamIds } from "./campaign_manager/campaign-team";
 import { Prisma } from "@prisma/client";
 import {
   CAMPAIGN_DAY_MAX,
@@ -561,12 +562,20 @@ export class CampaignLifecycleService {
         const campaign = await this.loadInTx(tx, id);
         const event: CampaignTransitionEvent =
           campaign.status === CampaignStatus.NEEDS_REVISION ? "resubmit" : "submit";
-        const eligibility = await campaignEligibilityService.assertCanSubmit(
-          tx,
-          userId,
-          campaign.organizationId,
-          campaign.id,
-        );
+        // A campaign approved before and sent back by an edit (spec 3.5) is not a new one:
+        // the organization's queue limits do not apply, and its days may be close by now.
+        const approvedBefore = campaign.approvedAt != null;
+        const eligibility = approvedBefore
+          ? await campaignEligibilityService.get(userId, campaign.organizationId, {
+              db: tx,
+              excludeCampaignId: campaign.id,
+            })
+          : await campaignEligibilityService.assertCanSubmit(
+              tx,
+              userId,
+              campaign.organizationId,
+              campaign.id,
+            );
 
         const schedule = scheduleOf(campaign);
         const reportIds = schedule.meetingPoints.flatMap((p) => p.reportIds);
@@ -591,10 +600,7 @@ export class CampaignLifecycleService {
             },
             select: { id: true, latitude: true, longitude: true },
           }),
-          organizationMemberRepository.findActiveMemberUserIds(
-            campaign.organizationId,
-            leaderIds,
-          ),
+          findTeamIds(tx, campaign, leaderIds),
         ]);
 
         const requirements = withDefaultRequirements(
@@ -622,7 +628,7 @@ export class CampaignLifecycleService {
             reports: new Map(reports.map((r) => [r.id, r])),
             eligibleLeaderIds: leaderMembers,
           },
-        );
+        ).filter((issue) => !(approvedBefore && issue.code === "START_TOO_SOON"));
         if (issues.length > 0) {
           throw new HttpError(HTTP_STATUS.CAMPAIGN_INVALID, { details: issues });
         }
@@ -697,7 +703,7 @@ export class CampaignLifecycleService {
   ): Promise<CampaignWithReports> {
     const existing = await prisma.campaign.findFirst({
       where: { id, deletedAt: null },
-      select: { id: true, organizationId: true, status: true },
+      select: { id: true, organizationId: true, status: true, approvedAt: true },
     });
     if (!existing) {
       throw new HttpError(HTTP_STATUS.NOT_FOUND.withMessage("Campaign not found"));
@@ -724,7 +730,7 @@ export class CampaignLifecycleService {
             : decision;
         const data: Omit<Prisma.CampaignUpdateManyMutationInput, "status"> =
           decision === "approve"
-            ? { rejectReason: null, revisionDeadline: null }
+            ? { rejectReason: null, revisionDeadline: null, approvedAt: current.approvedAt ?? new Date() }
             : decision === "request_revision"
               ? {
                   rejectReason: trimmed,
@@ -751,7 +757,7 @@ export class CampaignLifecycleService {
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     );
 
-    void this.notifyReviewed(campaign, decision, trimmed).catch((err) =>
+    void this.notifyReviewed(campaign, decision, trimmed, existing.approvedAt != null).catch((err) =>
       console.warn("[campaign] failed to send review notifications", err),
     );
     return campaign;
@@ -980,6 +986,33 @@ export class CampaignLifecycleService {
     return org?.name ?? "";
   }
 
+  /** Admins hear that an approved campaign is back for review after an edit (spec 3.5). */
+  async notifyReReview(campaign: CampaignWithReports): Promise<void> {
+    const adminIds = getCampaignAdminNotifyUserIds();
+    if (adminIds.length === 0) return;
+    const organizationName = await this.orgName(campaign.organizationId);
+    await enqueueWebsiteNotificationsToUsers({
+      kind: "CAMPAIGN_PENDING_REVIEW",
+      userIds: adminIds,
+      payload: {
+        campaignId: campaign.id,
+        organizationId: campaign.organizationId,
+        organizationName,
+        isResubmission: "true",
+        ...campaignTitleNotificationPayload(campaign),
+      },
+    });
+  }
+
+  private async registeredUserIds(campaignId: string): Promise<string[]> {
+    const rows = await prisma.campaignShiftRegistration.findMany({
+      where: { campaignId, leftAt: null },
+      distinct: ["userId"],
+      select: { userId: true },
+    });
+    return rows.map((r) => r.userId);
+  }
+
   private async managerIds(campaignId: string): Promise<string[]> {
     const rows = await prisma.campaignManager.findMany({
       where: { campaignId, deletedAt: null },
@@ -1039,6 +1072,7 @@ export class CampaignLifecycleService {
     campaign: CampaignWithReports,
     decision: ReviewDecision,
     reason: string | null,
+    reReview = false,
   ): Promise<void> {
     const organizationName = await this.orgName(campaign.organizationId);
     const base = {
@@ -1050,6 +1084,24 @@ export class CampaignLifecycleService {
     const owners = await organizationMemberRepository.findOwnerUserIds(
       campaign.organizationId,
     );
+
+    if (decision === "approve" && reReview) {
+      // Approved again after an edit (spec 3.5): the team and the volunteers who kept their
+      // place hear it; the organization's members already did the first time.
+      const [managers, volunteers] = await Promise.all([
+        this.managerIds(campaign.id),
+        this.registeredUserIds(campaign.id),
+      ]);
+      const recipients = [...new Set([...owners, ...managers, ...volunteers])];
+      if (recipients.length > 0) {
+        await enqueueWebsiteNotificationsToUsers({
+          kind: "CAMPAIGN_APPROVED",
+          userIds: recipients,
+          payload: base,
+        });
+      }
+      return;
+    }
 
     if (decision === "approve") {
       const [managers, members] = await Promise.all([
@@ -1093,6 +1145,17 @@ export class CampaignLifecycleService {
     campaign: CampaignWithReports,
     revisionOverdue: boolean,
   ): Promise<void> {
+    // Under review again after an edit (spec 3.5): its volunteers lose the campaign too.
+    if (campaign.approvedAt) {
+      const volunteers = await this.registeredUserIds(campaign.id);
+      if (volunteers.length > 0) {
+        await enqueueWebsiteNotificationsToUsers({
+          kind: "CAMPAIGN_REREVIEW_EXPIRED",
+          userIds: volunteers,
+          payload: { campaignId: campaign.id, ...campaignTitleNotificationPayload(campaign) },
+        });
+      }
+    }
     if (!campaign.createdBy) return;
     await enqueueWebsiteNotificationsToUsers({
       kind: "CAMPAIGN_EXPIRED",

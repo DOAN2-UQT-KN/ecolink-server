@@ -352,6 +352,21 @@ export const HTTP_STATUS = {
     "Some shifts are off, already started or not part of this campaign",
     "SHIFT_NOT_REGISTRABLE",
   ),
+  SHIFT_ALREADY_STARTED: createStatus(
+    409,
+    "This shift has already started",
+    "SHIFT_ALREADY_STARTED",
+  ),
+  DAY_NEEDS_ACTIVE_SHIFT: createStatus(
+    422,
+    "Each day needs at least one shift that runs; cancel the day instead",
+    "DAY_NEEDS_ACTIVE_SHIFT",
+  ),
+  NEARBY_INVITE_TOO_SOON: createStatus(
+    429,
+    "Nearby residents were invited recently; try again later",
+    "NEARBY_INVITE_TOO_SOON",
+  ),
   CONDITIONS_NOT_ACCEPTED: createStatus(
     400,
     "Confirm that you meet the participation conditions",
@@ -376,6 +391,26 @@ export const HTTP_STATUS = {
     422,
     "Campaign managers must be active members of the campaign's organization",
     "CAMPAIGN_MANAGER_NOT_MEMBER",
+  ),
+  CAMPAIGN_USE_RESCHEDULE: createStatus(
+    409,
+    "Times of existing days and shifts change through rescheduling, not editing",
+    "CAMPAIGN_USE_RESCHEDULE",
+  ),
+  SHIFT_MIN_REQUIRED: createStatus(
+    422,
+    "A running shift needs at least one volunteer; turn the shift off instead",
+    "SHIFT_MIN_REQUIRED",
+  ),
+  CAMPAIGN_LEADER_NOT_MANAGER: createStatus(
+    422,
+    "A shift leader must be one of the campaign's managers or an owner of its organization",
+    "CAMPAIGN_LEADER_NOT_MANAGER",
+  ),
+  CAMPAIGN_MANAGER_LEADS_SHIFTS: createStatus(
+    409,
+    "This manager still leads upcoming shifts; assign another leader first",
+    "CAMPAIGN_MANAGER_LEADS_SHIFTS",
   ),
   CANNOT_REMOVE_CAMPAIGN_CREATOR: createStatus(
     422,

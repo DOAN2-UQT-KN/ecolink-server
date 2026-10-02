@@ -105,11 +105,16 @@ export class CampaignEligibilityService {
       : {};
     const [role, openCount, reviewQueueCount] = await Promise.all([
       organizationMemberRepository.findActiveRole(organizationId, userId),
+      // A campaign back under review after an edit (spec 3.5) stays one of the open ones,
+      // and does not take a place in the review queue.
       db.campaign.count({
         where: {
           organizationId,
           deletedAt: null,
-          status: { in: [...CAMPAIGN_OPEN_STATUSES] },
+          OR: [
+            { status: { in: [...CAMPAIGN_OPEN_STATUSES] } },
+            { status: { in: [...CAMPAIGN_IN_REVIEW_QUEUE_STATUSES] }, approvedAt: { not: null } },
+          ],
           ...notThis,
         },
       }),
@@ -118,6 +123,7 @@ export class CampaignEligibilityService {
           organizationId,
           deletedAt: null,
           status: { in: [...CAMPAIGN_IN_REVIEW_QUEUE_STATUSES] },
+          approvedAt: null,
           ...notThis,
         },
       }),

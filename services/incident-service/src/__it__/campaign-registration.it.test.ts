@@ -2,10 +2,11 @@
  * Per-shift registration (Đặc tả luồng chiến dịch 3.1), against a real Postgres.
  *
  *   - registering is immediate, never capped, several shifts a day allowed
- *   - overlaps, absences and full shifts only warn
+ *   - overlaps and full shifts only warn
  *   - only open shifts of an upcoming / running campaign, with the conditions accepted
- *   - unticking a shift leaves it; within 24 h of its start that is a late leave
- *   - managers get one digest a day, not one notification per registration
+ *   - unticking a shift leaves it, freely and with nothing recorded, until it starts
+ *   - managers read the list, get one digest a day, hear about short and over-full shifts,
+ *     re-invite nearby residents at most once a day and can turn a shift off (spec 3.2)
  *
  * identity and notification clients are mocked; the DB is real.
  */
@@ -20,6 +21,10 @@ jest.mock("../queue/register", () => ({
     dispatch: jest.fn().mockResolvedValue(undefined),
     enqueue: jest.fn().mockResolvedValue(undefined),
   },
+}));
+const nearby = jest.fn(async () => [] as string[]);
+jest.mock("../modules/campaign/nearby-users", () => ({
+  findNearbyUserIds: (...a: unknown[]) => nearby(...(a as [])),
 }));
 const notify = jest.fn().mockResolvedValue(undefined);
 jest.mock("../modules/campaign/notification-jobs.client", () => ({
@@ -36,6 +41,10 @@ import {
   digestCutoff,
   sendRegistrationDigests,
 } from "../modules/campaign/campaign_registration/registration-digest";
+import {
+  sendOverMaxAlerts,
+  sendUnderstaffedAlerts,
+} from "../modules/campaign/campaign_registration/staffing-alerts";
 
 const S = CampaignStatus;
 const HOUR = 60 * 60 * 1000;
@@ -189,28 +198,21 @@ describe("registering", () => {
 });
 
 describe("leaving", () => {
-  it("unticking leaves; within 24 h it is a late leave; [] leaves the campaign", async () => {
-    const soon = await seedCampaign({ startInHours: 10 });
+  it("unticking leaves freely before the shift starts; [] leaves the campaign", async () => {
+    const soon = await seedCampaign({ startInHours: 1 });
     await register(soon.id, VOL, [soon.shiftA, soon.shiftB]);
     const result = await register(soon.id, VOL, [soon.shiftB]);
-    expect(result).toMatchObject({ shiftIds: [soon.shiftB], left: [soon.shiftA], lateLeft: [soon.shiftA] });
-
-    const later = await seedCampaign({ startInHours: 72 });
-    await register(later.id, VOL, [later.shiftA]);
-    expect(await register(later.id, VOL, [])).toMatchObject({ shiftIds: [], lateLeft: [] });
+    expect(result).toMatchObject({ shiftIds: [soon.shiftB], left: [soon.shiftA] });
+    expect(await register(soon.id, VOL, [])).toMatchObject({ shiftIds: [] });
 
     const rows = await prisma.campaignShiftRegistration.findMany({
       where: { userId: VOL, leftAt: { not: null } },
-      select: { shiftId: true, lateLeave: true },
+      select: { shiftId: true, closedByShift: true },
     });
-    expect(rows).toEqual(
-      expect.arrayContaining([
-        { shiftId: soon.shiftA, lateLeave: true },
-        { shiftId: later.shiftA, lateLeave: false },
-      ]),
-    );
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r) => !r.closedByShift)).toBe(true);
     // A left shift can be taken again.
-    expect((await register(later.id, VOL, [later.shiftA])).added).toEqual([later.shiftA]);
+    expect((await register(soon.id, VOL, [soon.shiftA])).added).toEqual([soon.shiftA]);
   });
 
   it("a shift that has started is kept", async () => {
@@ -225,29 +227,117 @@ describe("leaving", () => {
 });
 
 describe("managers", () => {
-  it("see each shift with its volunteers and their absences", async () => {
-    // Three ended shifts in campaigns the volunteer never checked in to.
-    for (let i = 0; i < 3; i += 1) {
-      const past = await seedCampaign({ status: S.ACTIVE, startInHours: 10 });
-      await register(past.id, VOL, [past.shiftA]);
-      await prisma.campaignShift.update({
-        where: { id: past.shiftA },
-        data: { startAt: new Date(Date.now() - 5 * HOUR), endAt: new Date(Date.now() - HOUR) },
-      });
-    }
+  it("read who registered for each shift; registered volunteers too, others not", async () => {
     const c = await seedCampaign();
-    expect((await campaignRegistrationService.getOptions(c.id, VOL)).manyAbsences).toBe(true);
-    const result = await register(c.id, VOL, [c.shiftA]);
-    expect(result.warnings).toContain("MANY_ABSENCES");
+    await register(c.id, VOL, [c.shiftA]);
 
-    const shifts = await campaignRegistrationService.listForManager(c.id, CM);
+    const shifts = await campaignRegistrationService.listByShift(c.id, { userId: CM });
     expect(shifts.find((s) => s.shiftId === c.shiftA)).toMatchObject({
       registeredCount: 1,
-      volunteers: [expect.objectContaining({ userId: VOL, absenceCount: 3, lateLeaveCount: 0 })],
+      volunteers: [expect.objectContaining({ userId: VOL, checkedInAt: null })],
     });
-    await expect(campaignRegistrationService.listForManager(c.id, VOL)).rejects.toMatchObject(
+    const seen = await campaignRegistrationService.listByShift(c.id, { userId: VOL });
+    expect(seen.find((s) => s.shiftId === c.shiftA)?.registeredCount).toBe(1);
+    await expect(
+      campaignRegistrationService.listByShift(c.id, { userId: randomUUID() }),
+    ).rejects.toMatchObject(code("CAMPAIGN_PERMISSION_DENIED"));
+  });
+
+  it("hear once about a day with short shifts, 72 h before it", async () => {
+    const soon = await seedCampaign({ startInHours: 48 });
+    await register(soon.id, VOL, [soon.shiftB]); // B is full (min 1), A is short (0/2)
+    const far = await seedCampaign({ startInHours: 100 });
+
+    expect(await sendUnderstaffedAlerts()).toBe(1);
+    expect(notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "CAMPAIGN_SHIFT_UNDERSTAFFED",
+        userIds: [CM],
+        payload: expect.objectContaining({ campaignId: soon.id, shifts: expect.stringContaining("0/2") }),
+      }),
+    );
+    expect(notify.mock.calls.some(([arg]) => (arg as { payload: { campaignId: string } }).payload.campaignId === far.id)).toBe(false);
+    notify.mockClear();
+    expect(await sendUnderstaffedAlerts()).toBe(0);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("hear when a shift goes over its expected maximum, again after it drops back", async () => {
+    const c = await seedCampaign();
+    const people = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+    for (const p of people) await register(c.id, p, [c.shiftA]); // max 3
+    expect(await sendOverMaxAlerts()).toBe(1);
+    expect(notify).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "CAMPAIGN_SHIFT_OVER_MAX", payload: expect.objectContaining({ registered: "4", max: "3" }) }),
+    );
+    expect(await sendOverMaxAlerts()).toBe(0);
+
+    await register(c.id, people[0], []);
+    expect(await sendOverMaxAlerts()).toBe(0); // back to 3: mark cleared
+    await register(c.id, people[0], [c.shiftA]);
+    expect(await sendOverMaxAlerts()).toBe(1);
+  });
+
+  it("re-invite nearby residents at most once a day, leaving out managers and volunteers", async () => {
+    const c = await seedCampaign();
+    await register(c.id, VOL, [c.shiftA]);
+    const resident = randomUUID();
+    nearby.mockResolvedValueOnce([resident]);
+
+    expect(await campaignRegistrationService.inviteNearby(c.id, CM)).toEqual({ invited: 1 });
+    const [, exclude] = nearby.mock.calls[0] as unknown as [unknown, string[]];
+    expect(exclude).toEqual(expect.arrayContaining([CM, VOL]));
+    expect(notify).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "CAMPAIGN_JOIN_INVITE", userIds: [resident], payload: expect.objectContaining({ shortBy: "2" }) }),
+    );
+    await expect(campaignRegistrationService.inviteNearby(c.id, CM)).rejects.toMatchObject(
+      code("NEARBY_INVITE_TOO_SOON"),
+    );
+    await expect(campaignRegistrationService.inviteNearby(c.id, VOL)).rejects.toMatchObject(
       code("CAMPAIGN_PERMISSION_DENIED"),
     );
+  });
+
+  it("a re-invite that could not be sent can be retried at once", async () => {
+    const c = await seedCampaign();
+    nearby.mockResolvedValueOnce([randomUUID()]);
+    notify.mockRejectedValueOnce(new Error("notification-service down"));
+    await expect(campaignRegistrationService.inviteNearby(c.id, CM)).rejects.toThrow("down");
+    expect((await prisma.campaign.findUnique({ where: { id: c.id } }))?.lastNearbyInviteAt).toBeNull();
+
+    nearby.mockResolvedValueOnce([randomUUID()]);
+    expect(await campaignRegistrationService.inviteNearby(c.id, CM)).toEqual({ invited: 1 });
+  });
+
+  it("turn a shift off: its volunteers are let go and told; the last shift of a day stays", async () => {
+    const c = await seedCampaign();
+    await register(c.id, VOL, [c.shiftA]);
+
+    await expect(campaignRegistrationService.closeShift(c.id, c.shiftA, VOL)).rejects.toMatchObject(
+      code("CAMPAIGN_PERMISSION_DENIED"),
+    );
+    expect(await campaignRegistrationService.closeShift(c.id, c.shiftA, CM)).toEqual({ notified: 1 });
+    expect(await prisma.campaignShift.findUnique({ where: { id: c.shiftA } })).toMatchObject({
+      minVolunteers: 0,
+      maxVolunteers: null,
+    });
+    expect(
+      await prisma.campaignShiftRegistration.findFirst({ where: { shiftId: c.shiftA, userId: VOL } }),
+    ).toMatchObject({ closedByShift: true, leftAt: expect.any(Date) });
+    // The notice rides the outbox, so it survives notification-service being down.
+    const outbox = await prisma.outboxEvent.findMany({ where: { eventType: "WEBSITE_NOTIFICATION" } });
+    expect(outbox).toHaveLength(1);
+    expect(outbox[0].payload).toMatchObject({ kind: "CAMPAIGN_SHIFT_CLOSED", userIds: [VOL] });
+    expect(await prisma.campaignStatusLog.count({ where: { campaignId: c.id, event: "close_shift" } })).toBe(1);
+
+    await expect(campaignRegistrationService.closeShift(c.id, c.shiftB, CM)).rejects.toMatchObject(
+      code("DAY_NEEDS_ACTIVE_SHIFT"),
+    );
+
+    const started = await seedCampaign({ status: S.ACTIVE, startInHours: -0.5 });
+    await expect(
+      campaignRegistrationService.closeShift(started.id, started.shiftA, CM),
+    ).rejects.toMatchObject(code("SHIFT_ALREADY_STARTED"));
   });
 
   it("get one digest a day with the count per campaign day", async () => {

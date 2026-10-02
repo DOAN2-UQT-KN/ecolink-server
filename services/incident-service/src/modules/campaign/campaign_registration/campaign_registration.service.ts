@@ -1,6 +1,5 @@
 import {
-  CAMPAIGN_ABSENCE_WARN_COUNT,
-  CAMPAIGN_FREE_LEAVE_HOURS,
+  CAMPAIGN_NEARBY_REINVITE_COOLDOWN_HOURS,
   CAMPAIGN_REGISTRABLE_STATUSES,
   CampaignRegistrationWarning,
   type CampaignRegistrationWarningValue,
@@ -16,9 +15,15 @@ import {
 import type { OrganizationOwnerResponse } from "../../organization/organization.dto";
 import { campaignAccessService } from "../campaign-access.service";
 import { campaignAttendanceRepository } from "../campaign_attendance/campaign_attendance.repository";
-import { campaignRegistrationRepository } from "./campaign_registration.repository";
+import { campaignTitleNotificationPayload } from "../campaign-i18n";
+import { findNearbyUserIds } from "../nearby-users";
+import { enqueueWebsiteNotificationsToUsers } from "../notification-jobs.client";
+import { emitOutbox } from "../../../outbox/outbox.writer";
+import { OutboxEventType } from "../../../outbox/outbox.types";
+import { localDayMonth, localHourMinute } from "./staffing-shared";
 
 const HOUR_MS = 60 * 60 * 1000;
+import { campaignRegistrationRepository } from "./campaign_registration.repository";
 
 export interface ShiftConflict {
   campaignId: string;
@@ -57,16 +62,12 @@ export interface RegistrationOptions {
   days: Array<{ id: string; startAt: Date; endAt: Date }>;
   /** Open shifts, plus the ones the viewer holds (they may have started). */
   shifts: RegistrationOptionShift[];
-  absenceCount: number;
-  manyAbsences: boolean;
 }
 
 export interface MyRegistrationResult {
   shiftIds: string[];
   added: string[];
   left: string[];
-  /** Left shifts that started within the free-leave window. */
-  lateLeft: string[];
   warnings: CampaignRegistrationWarningValue[];
 }
 
@@ -74,8 +75,7 @@ export interface RegisteredShiftVolunteer {
   userId: string;
   volunteer: OrganizationOwnerResponse;
   registeredAt: Date;
-  absenceCount: number;
-  lateLeaveCount: number;
+  checkedInAt: Date | null;
 }
 
 export interface ShiftRegistrations {
@@ -98,9 +98,9 @@ const isOpen = (shift: { minVolunteers: number; startAt: Date }, now: Date) =>
   shift.minVolunteers > 0 && shift.startAt.getTime() > now.getTime();
 
 /**
- * Per-shift registration (spec 3.1): effective at once, no approval and no cap. Overlaps, a
- * record of absences and full shifts only warn. Unticking a shift is leaving it (3.3): it is
- * recorded as a late leave inside the free-leave window.
+ * Per-shift registration (spec 3.1): effective at once, no approval and no cap. Overlaps and
+ * full shifts only warn. Registering is only for news and headcount, so leaving a shift before
+ * it starts (3.3) is free and recorded nowhere.
  */
 export class CampaignRegistrationService {
   private async loadCampaign(campaignId: string) {
@@ -109,14 +109,27 @@ export class CampaignRegistrationService {
       select: {
         id: true,
         title: true,
+        titleVi: true,
+        titleEn: true,
         status: true,
+        lastNearbyInviteAt: true,
+        campaignManagers: { where: { deletedAt: null }, select: { userId: true } },
+        createdBy: true,
         requirements: true,
         safetyNotes: true,
         days: { orderBy: { startAt: "asc" }, select: { id: true, startAt: true, endAt: true } },
         shifts: {
           orderBy: { startAt: "asc" },
           include: {
-            meetingPoint: { select: { name: true, detailAddress: true, sortOrder: true } },
+            meetingPoint: {
+              select: {
+                name: true,
+                detailAddress: true,
+                sortOrder: true,
+                latitude: true,
+                longitude: true,
+              },
+            },
           },
         },
       },
@@ -129,10 +142,9 @@ export class CampaignRegistrationService {
 
   async getOptions(campaignId: string, userId: string, now = new Date()): Promise<RegistrationOptions> {
     const campaign = await this.loadCampaign(campaignId);
-    const [counts, mine, absences] = await Promise.all([
+    const [counts, mine] = await Promise.all([
       campaignRegistrationRepository.countByShift(campaignId),
       campaignRegistrationRepository.findMyShiftIds(campaignId, userId),
-      campaignRegistrationRepository.countRecentAbsences([userId], now),
     ]);
     const mineSet = new Set(mine);
     const statusOpen = CAMPAIGN_REGISTRABLE_STATUSES.includes(campaign.status);
@@ -186,7 +198,6 @@ export class CampaignRegistrationService {
       });
 
     const openCount = shifts.filter((s) => isOpen(s, now)).length;
-    const absenceCount = absences.get(userId) ?? 0;
     return {
       registrable: statusOpen && openCount > 0,
       reason: !statusOpen ? "STATUS" : openCount === 0 ? "NO_SHIFT" : null,
@@ -194,8 +205,6 @@ export class CampaignRegistrationService {
       safetyNotes: campaign.safetyNotes,
       days: campaign.days,
       shifts,
-      absenceCount,
-      manyAbsences: absenceCount >= CAMPAIGN_ABSENCE_WARN_COUNT,
     };
   }
 
@@ -260,24 +269,19 @@ export class CampaignRegistrationService {
       }
 
       const left: string[] = [];
-      const lateLeft: string[] = [];
       for (const r of dropped) {
         const shift = shiftById.get(r.shiftId);
         // A shift that has started is kept: attendance decides what happened there.
         if (shift && shift.startAt.getTime() <= now.getTime()) continue;
-        const late =
-          shift != null &&
-          shift.startAt.getTime() - now.getTime() < CAMPAIGN_FREE_LEAVE_HOURS * HOUR_MS;
         await tx.campaignShiftRegistration.update({
           where: { id: r.id },
-          data: { leftAt: now, lateLeave: late },
+          data: { leftAt: now },
         });
         left.push(r.shiftId);
-        if (late) lateLeft.push(r.shiftId);
       }
 
       const kept = current.map((r) => r.shiftId).filter((id) => !left.includes(id));
-      return { shiftIds: [...kept, ...added], added, left, lateLeft };
+      return { shiftIds: [...kept, ...added], added, left };
     });
 
     return { ...result, warnings: await this.warningsFor(campaignId, userId, result, now) };
@@ -298,14 +302,19 @@ export class CampaignRegistrationService {
       added.some((s) => s.conflicts.length > 0) ||
       added.some((a) => mine.some((m) => m.id !== a.id && overlaps(a, m)));
     if (overlap) warnings.push(CampaignRegistrationWarning.OVERLAP);
-    if (options.manyAbsences) warnings.push(CampaignRegistrationWarning.MANY_ABSENCES);
     if (added.some((s) => s.overMax)) warnings.push(CampaignRegistrationWarning.OVER_MAX);
     return warnings;
   }
 
-  /** Managers: every shift with the people registered for it and their record. */
-  async listForManager(campaignId: string, userId: string, now = new Date()): Promise<ShiftRegistrations[]> {
-    await campaignAccessService.assertCanManage(campaignId, userId);
+  /**
+   * Every shift with the people registered for it, to read only (spec 3.1, 4.6). Visible to the
+   * people managing the campaign, its registered volunteers and platform admins.
+   */
+  async listByShift(
+    campaignId: string,
+    viewer: { userId: string; role?: string | null },
+  ): Promise<ShiftRegistrations[]> {
+    await campaignAccessService.assertCanViewVolunteers(campaignId, viewer.userId, viewer.role);
     const campaign = await this.loadCampaign(campaignId);
     const rows = await prisma.campaignShiftRegistration.findMany({
       where: { campaignId, leftAt: null },
@@ -313,10 +322,9 @@ export class CampaignRegistrationService {
       select: { shiftId: true, userId: true, createdAt: true },
     });
     const userIds = [...new Set(rows.map((r) => r.userId))];
-    const [profiles, absences, lateLeaves] = await Promise.all([
+    const [profiles, checkedIn] = await Promise.all([
       fetchOrganizationOwnersByUserIds(userIds),
-      campaignRegistrationRepository.countRecentAbsences(userIds, now),
-      campaignRegistrationRepository.countRecentLateLeaves(userIds, now),
+      campaignAttendanceRepository.findCheckedInAtByCampaignAndUserIds(campaignId, userIds),
     ]);
 
     return campaign.shifts
@@ -338,8 +346,7 @@ export class CampaignRegistrationService {
               bio: null,
             },
             registeredAt: r.createdAt,
-            absenceCount: absences.get(r.userId) ?? 0,
-            lateLeaveCount: lateLeaves.get(r.userId) ?? 0,
+            checkedInAt: checkedIn.get(r.userId) ?? null,
           }));
         return {
           shiftId: s.id,
@@ -354,6 +361,184 @@ export class CampaignRegistrationService {
           volunteers,
         };
       });
+  }
+
+  /** When managers may invite nearby residents again; null when they may now. */
+  nextInviteAt(lastNearbyInviteAt: Date | null, now = new Date()): Date | null {
+    if (!lastNearbyInviteAt) return null;
+    const next = new Date(
+      lastNearbyInviteAt.getTime() + CAMPAIGN_NEARBY_REINVITE_COOLDOWN_HOURS * HOUR_MS,
+    );
+    return next.getTime() > now.getTime() ? next : null;
+  }
+
+  async getNextInviteAt(campaignId: string, now = new Date()): Promise<Date | null> {
+    const row = await prisma.campaign.findUnique({
+      where: { id: campaignId },
+      select: { lastNearbyInviteAt: true },
+    });
+    return this.nextInviteAt(row?.lastNearbyInviteAt ?? null, now);
+  }
+
+  /**
+   * Spec 3.2: managers invite residents within 5 km of every meeting point to fill short shifts,
+   * at most once per `CAMPAIGN_NEARBY_REINVITE_COOLDOWN_HOURS`. Managers and people already
+   * registered are left out. Returns how many were invited.
+   */
+  async inviteNearby(campaignId: string, userId: string, now = new Date()): Promise<{ invited: number }> {
+    await campaignAccessService.assertCanManage(campaignId, userId);
+    const campaign = await this.loadCampaign(campaignId);
+    const open = campaign.shifts.filter((s) => isOpen(s, now));
+    if (!CAMPAIGN_REGISTRABLE_STATUSES.includes(campaign.status) || open.length === 0) {
+      throw new HttpError(HTTP_STATUS.CAMPAIGN_NOT_REGISTRABLE);
+    }
+    const retryAt = this.nextInviteAt(campaign.lastNearbyInviteAt, now);
+    if (retryAt) {
+      throw new HttpError(HTTP_STATUS.NEARBY_INVITE_TOO_SOON, { retryAt: retryAt.toISOString() });
+    }
+
+    // Claim the slot first, so two managers clicking together send one round.
+    const claimed = await prisma.campaign.updateMany({
+      where: {
+        id: campaignId,
+        OR: [
+          { lastNearbyInviteAt: null },
+          {
+            lastNearbyInviteAt: {
+              lte: new Date(now.getTime() - CAMPAIGN_NEARBY_REINVITE_COOLDOWN_HOURS * HOUR_MS),
+            },
+          },
+        ],
+      },
+      data: { lastNearbyInviteAt: now },
+    });
+    if (claimed.count === 0) {
+      throw new HttpError(HTTP_STATUS.NEARBY_INVITE_TOO_SOON);
+    }
+
+    const counts = await campaignRegistrationRepository.countByShift(campaignId);
+    const shortBy = open.reduce(
+      (sum, s) => sum + Math.max(0, s.minVolunteers - (counts.get(s.id) ?? 0)),
+      0,
+    );
+    const points = new Map<string, { latitude: number; longitude: number }>();
+    for (const s of open) {
+      points.set(s.meetingPointId, {
+        latitude: s.meetingPoint.latitude,
+        longitude: s.meetingPoint.longitude,
+      });
+    }
+    const registered = await campaignRegistrationRepository.findRegisteredUserIds(campaignId);
+    const recipients = await findNearbyUserIds(
+      [...points.values()],
+      [
+        ...(campaign.createdBy ? [campaign.createdBy] : []),
+        ...campaign.campaignManagers.map((m) => m.userId),
+        ...registered,
+      ],
+    );
+    if (recipients.length > 0) {
+      try {
+        await enqueueWebsiteNotificationsToUsers({
+          kind: "CAMPAIGN_JOIN_INVITE",
+          userIds: recipients,
+          payload: {
+            campaignId,
+            shortBy: String(shortBy),
+            ...campaignTitleNotificationPayload(campaign),
+          },
+        });
+      } catch (error) {
+        // Nothing went out: give the slot back so the manager can try again right away.
+        await prisma.campaign.updateMany({
+          where: { id: campaignId, lastNearbyInviteAt: now },
+          data: { lastNearbyInviteAt: campaign.lastNearbyInviteAt },
+        });
+        throw error;
+      }
+    }
+    return { invited: recipients.length };
+  }
+
+  /**
+   * Spec 3.2: a manager turns a shift off before it starts. Its registrations end (marked as
+   * closed by the shift, not left by the volunteer) and those volunteers are told to pick another
+   * shift. A day keeps at least one shift that runs; dropping the whole day is cancelling it.
+   */
+  async closeShift(
+    campaignId: string,
+    shiftId: string,
+    userId: string,
+    now = new Date(),
+  ): Promise<{ notified: number }> {
+    await campaignAccessService.assertCanManage(campaignId, userId);
+    const campaign = await this.loadCampaign(campaignId);
+    if (!CAMPAIGN_REGISTRABLE_STATUSES.includes(campaign.status)) {
+      throw new HttpError(HTTP_STATUS.CAMPAIGN_NOT_EDITABLE);
+    }
+    const shift = campaign.shifts.find((s) => s.id === shiftId && s.minVolunteers > 0);
+    if (!shift) {
+      throw new HttpError(HTTP_STATUS.NOT_FOUND.withMessage("Shift not found"));
+    }
+    if (shift.startAt.getTime() <= now.getTime()) {
+      throw new HttpError(HTTP_STATUS.SHIFT_ALREADY_STARTED);
+    }
+    const othersOnDay = campaign.shifts.filter(
+      (s) => s.dayId === shift.dayId && s.id !== shift.id && s.minVolunteers > 0,
+    );
+    if (othersOnDay.length === 0) {
+      throw new HttpError(HTTP_STATUS.DAY_NEEDS_ACTIVE_SHIFT);
+    }
+
+    const shiftLabel = `${shift.meetingPoint.name || `#${shift.meetingPoint.sortOrder + 1}`} ${localHourMinute(shift.startAt)}`;
+    const volunteerIds = await prisma.$transaction(async (tx) => {
+      const live = await tx.campaignShiftRegistration.findMany({
+        where: { shiftId, leftAt: null },
+        select: { userId: true },
+      });
+      await tx.campaignShift.update({
+        where: { id: shiftId },
+        data: { minVolunteers: 0, maxVolunteers: null, overMaxNotifiedAt: null },
+      });
+      await tx.campaignShiftRegistration.updateMany({
+        where: { shiftId, leftAt: null },
+        data: { leftAt: now, closedByShift: true },
+      });
+      await tx.campaignStatusLog.create({
+        data: {
+          campaignId,
+          type: "EDIT",
+          event: "close_shift",
+          actorId: userId,
+          actorRole: "manager",
+          reason: null,
+          changes: { shiftId, volunteers: live.length },
+        },
+      });
+      const userIds = [...new Set(live.map((r) => r.userId))];
+      if (userIds.length > 0) {
+        // Through the outbox, so the notice survives notification-service being down.
+        await emitOutbox(tx, {
+          aggregateType: "campaign",
+          aggregateId: campaignId,
+          eventType: OutboxEventType.WEBSITE_NOTIFICATION,
+          dedupKey: `CAMPAIGN_SHIFT_CLOSED:${shiftId}`,
+          payload: {
+            kind: "CAMPAIGN_SHIFT_CLOSED",
+            userIds,
+            payload: {
+              campaignId,
+              day: localDayMonth(shift.startAt),
+              shift: shiftLabel,
+              ...campaignTitleNotificationPayload(campaign),
+            },
+          },
+        });
+      }
+      return userIds;
+    });
+
+    return { notified: volunteerIds.length };
   }
 
   /**

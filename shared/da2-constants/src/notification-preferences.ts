@@ -32,6 +32,11 @@ const ADMIN_ONLY_NOTIFICATION_KINDS = new Set([
   "CAMPAIGN_BLOCKED",
   "CAMPAIGN_EXPIRED",
   "CAMPAIGN_CANCELLED",
+  "CAMPAIGN_SHIFT_CLOSED",
+  "CAMPAIGN_CREATOR_TRANSFERRED",
+  "CAMPAIGN_SHIFT_LEADER_REMOVED",
+  "CAMPAIGN_UPDATED_NEEDS_REVIEW",
+  "CAMPAIGN_REREVIEW_EXPIRED",
   "ORGANIZATION_CONTACT_VERIFY",
   "ORGANIZATION_APPROVED",
   "ORGANIZATION_REJECTED",
@@ -73,6 +78,7 @@ export function notificationKindToPreferenceKey(
       return "campaignNew";
     case "CAMPAIGN_VERIFY_INVITE":
     case "CAMPAIGN_COMPLETION_VERIFY_INVITE":
+    case "CAMPAIGN_JOIN_INVITE":
       return "campaignNearbyVerify";
     case "CAMPAIGN_DONE":
       return "campaignDone";
@@ -82,6 +88,8 @@ export function notificationKindToPreferenceKey(
       return "campaignCompletionRejected";
     case "VOLUNTEER_REQUEST":
     case "CAMPAIGN_REGISTRATION_DIGEST":
+    case "CAMPAIGN_SHIFT_UNDERSTAFFED":
+    case "CAMPAIGN_SHIFT_OVER_MAX":
     case "VOLUNTEER_APPROVED":
     case "VOLUNTEER_REJECTED":
       return "volunteerRequest";

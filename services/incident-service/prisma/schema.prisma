@@ -109,10 +109,15 @@ model Campaign {
   revisionDeadline      DateTime? @map("revision_deadline")
   /// Last time the campaign was sent for review.
   submittedAt           DateTime? @map("submitted_at")
+  /// First admin approval. Set means a later edit of an important field sends it back for review
+  /// while volunteers keep their place (spec 3.5).
+  approvedAt            DateTime? @map("approved_at")
   /// What was sent for review last time; the admin sees a diff on resubmit.
   lastSubmittedSnapshot Json?     @map("last_submitted_snapshot")
   /// Why a day's minimum volunteers is below what the difficulty suggests (shown to the admin).
   minVolunteersReason   String?   @map("min_volunteers_reason")
+  /// Last time managers invited nearby residents to fill short shifts (spec 3.2).
+  lastNearbyInviteAt    DateTime? @map("last_nearby_invite_at")
 
   organizationId String       @map("organization_id") @db.Uuid
   organization   Organization @relation(fields: [organizationId], references: [id])
@@ -1266,6 +1271,8 @@ model CampaignDay {
   startAt    DateTime @map("start_at")
   endAt      DateTime @map("end_at")
   sortOrder  Int      @default(0) @map("sort_order")
+  /// Managers were told about understaffed shifts of this day (once, 72 h before).
+  understaffedNotifiedAt DateTime? @map("understaffed_notified_at")
   createdAt  DateTime @default(now()) @map("created_at")
 
   campaign Campaign        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
@@ -1292,6 +1299,8 @@ model CampaignShift {
   maxVolunteers  Int?      @map("max_volunteers")
   /// Campaign manager in charge of this shift.
   leaderUserId   String?   @map("leader_user_id") @db.Uuid
+  /// Managers were told the shift is over its expected maximum; cleared once it is back under.
+  overMaxNotifiedAt DateTime? @map("over_max_notified_at")
   createdAt      DateTime  @default(now()) @map("created_at")
 
   campaign     Campaign             @relation(fields: [campaignId], references: [id], onDelete: Cascade)
@@ -1314,8 +1323,8 @@ model CampaignShiftRegistration {
   userId            String    @map("user_id") @db.Uuid
   createdAt         DateTime  @default(now()) @map("created_at")
   leftAt            DateTime? @map("left_at")
-  /// Left within `CAMPAIGN_FREE_LEAVE_HOURS` of the shift start.
-  lateLeave         Boolean   @default(false) @map("late_leave")
+  /// Left because a manager turned the shift off, not by the volunteer.
+  closedByShift     Boolean   @default(false) @map("closed_by_shift")
   /// Counted in a managers' daily registration digest.
   managerNotifiedAt DateTime? @map("manager_notified_at")
 

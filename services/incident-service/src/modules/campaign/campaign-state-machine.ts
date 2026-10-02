@@ -9,6 +9,7 @@ export type CampaignTransitionEvent =
   | "submit"
   | "resubmit"
   | "approve"
+  | "edit_major"
   | "start"
   | "request_revision"
   | "block"
@@ -51,6 +52,14 @@ export const CAMPAIGN_TRANSITIONS: readonly TransitionRule[] = [
     from: [CampaignStatus.PENDING_REVIEW],
     to: CampaignStatus.UPCOMING,
     actors: ["admin"],
+    reasonRequired: false,
+  },
+  {
+    // Spec 3.5: an important field of an approved campaign changed; volunteers keep their place.
+    event: "edit_major",
+    from: [CampaignStatus.UPCOMING],
+    to: CampaignStatus.PENDING_REVIEW,
+    actors: ["manager"],
     reasonRequired: false,
   },
   {

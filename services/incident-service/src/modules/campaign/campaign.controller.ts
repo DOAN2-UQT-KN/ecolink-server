@@ -71,6 +71,7 @@ const campaignDetailValidators = () => [
     .optional()
     .isArray({ max: CAMPAIGN_MEETING_POINT_MAX })
     .withMessage(`meetingPoints must be an array of at most ${CAMPAIGN_MEETING_POINT_MAX}`),
+  body("meetingPoints.*.id").optional().isUUID(),
   body("meetingPoints.*.name")
     .optional({ nullable: true })
     .isString()
@@ -98,6 +99,7 @@ const campaignDetailValidators = () => [
     .optional()
     .isArray({ max: CAMPAIGN_DAY_MAX })
     .withMessage(`days must be an array of at most ${CAMPAIGN_DAY_MAX}`),
+  body("days.*.id").optional().isUUID(),
   body("days.*.startAt").isISO8601().withMessage("day startAt must be an ISO 8601 datetime"),
   body("days.*.endAt").isISO8601().withMessage("day endAt must be an ISO 8601 datetime"),
   body("shifts")
@@ -1156,7 +1158,7 @@ export class CampaignController {
     },
   ];
 
-  /** GET /campaigns/:id/registrations — managers: each shift with who registered. */
+  /** GET /campaigns/:id/registrations — each shift with who registered (managers, registered volunteers, admins). */
   getCampaignRegistrations = [
     param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
 
@@ -1168,10 +1170,94 @@ export class CampaignController {
       try {
         const userId = req.user?.userId;
         if (!userId) return sendError(res, HTTP_STATUS.UNAUTHORIZED);
-        const shifts = await campaignRegistrationService.listForManager(req.params.id, userId);
-        sendSuccess(res, HTTP_STATUS.OK, { shifts });
+        const [shifts, nextInviteAt] = await Promise.all([
+          campaignRegistrationService.listByShift(req.params.id, {
+            userId,
+            role: req.user?.role,
+          }),
+          campaignRegistrationService.getNextInviteAt(req.params.id),
+        ]);
+        sendSuccess(res, HTTP_STATUS.OK, { shifts, nextInviteAt });
       } catch (error) {
         console.error("Get campaign registrations error:", error);
+        if (sendHttpErrorResponse(res, error)) return;
+        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+      }
+    },
+  ];
+
+  /** POST /campaigns/:id/invite-nearby — managers invite residents around the meeting points. */
+  inviteNearby = [
+    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
+      }
+      try {
+        const userId = req.user?.userId;
+        if (!userId) return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+        const result = await campaignRegistrationService.inviteNearby(req.params.id, userId);
+        sendSuccess(res, HTTP_STATUS.OK, result);
+      } catch (error) {
+        console.error("Invite nearby residents error:", error);
+        if (sendHttpErrorResponse(res, error)) return;
+        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+      }
+    },
+  ];
+
+  /** POST /campaigns/:id/shifts/:shiftId/close — managers turn a shift off before it starts. */
+  closeShift = [
+    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+    param("shiftId").isUUID().withMessage("Shift ID must be a valid UUID"),
+
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
+      }
+      try {
+        const userId = req.user?.userId;
+        if (!userId) return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+        const result = await campaignRegistrationService.closeShift(
+          req.params.id,
+          req.params.shiftId,
+          userId,
+        );
+        sendSuccess(res, HTTP_STATUS.OK, result);
+      } catch (error) {
+        console.error("Close shift error:", error);
+        if (sendHttpErrorResponse(res, error)) return;
+        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+      }
+    },
+  ];
+
+  /** PUT /campaigns/:id/shifts/:shiftId/leader — choose who leads a shift (team only). */
+  setShiftLeader = [
+    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+    param("shiftId").isUUID().withMessage("Shift ID must be a valid UUID"),
+    body("leaderUserId").isUUID().withMessage("leaderUserId must be a valid UUID"),
+
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
+      }
+      try {
+        const userId = req.user?.userId;
+        if (!userId) return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+        const result = await campaignManagerService.setShiftLeader(
+          req.params.id,
+          req.params.shiftId,
+          req.body.leaderUserId,
+          userId,
+        );
+        sendSuccess(res, HTTP_STATUS.OK, result);
+      } catch (error) {
+        console.error("Set shift leader error:", error);
         if (sendHttpErrorResponse(res, error)) return;
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }

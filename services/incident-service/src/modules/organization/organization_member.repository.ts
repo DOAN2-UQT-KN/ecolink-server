@@ -1,7 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 import { OWNER_ROLES, OrgMemberRole } from "@da2/constants";
 import prisma from "../../config/prisma.client";
-import { campaignManagerRepository } from "../campaign/campaign_manager/campaign_manager.repository";
+import { onMemberGone } from "../campaign/campaign_manager/campaign-team-cleanup";
 
 const OWNER_ROLE_VALUES: string[] = [...OWNER_ROLES];
 
@@ -227,8 +227,8 @@ export class OrganizationMemberRepository {
   }
 
   /**
-   * Soft-delete active membership; returns whether a row was updated. The person also stops
-   * managing the organization's campaigns, in the same transaction.
+   * Soft-delete active membership; returns whether a row was updated. The person also leaves the
+   * organization's campaign teams (`onMemberGone`), in the same transaction.
    */
   async softDeleteMembership(
     organizationId: string,
@@ -249,12 +249,7 @@ export class OrganizationMemberRepository {
         },
       });
       if (result.count === 0) return false;
-      await campaignManagerRepository.removeFromOrganizationCampaigns(
-        tx,
-        organizationId,
-        userId,
-        actorId,
-      );
+      await onMemberGone(tx, organizationId, userId, actorId);
       return true;
     });
   }
