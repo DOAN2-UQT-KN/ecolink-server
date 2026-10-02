@@ -16,7 +16,7 @@ export enum OrgPermission {
   MEMBER_MANAGE = "MEMBER_MANAGE",
   /** Propose owner changes: add owners, remove another owner. */
   OWNER_PROPOSE = "OWNER_PROPOSE",
-  /** Declared now, enforced in phase 4 (campaign permissions). */
+  /** Create a campaign for the organization; manage any of its campaigns (LR/OWNER). */
   CAMPAIGN_CREATE = "CAMPAIGN_CREATE",
   CAMPAIGN_MANAGE_ANY = "CAMPAIGN_MANAGE_ANY",
 }

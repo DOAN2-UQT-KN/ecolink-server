@@ -83,13 +83,18 @@ export interface OrganizationResponse {
   orgType: OrgType | null;
   /** Verdict on the legal paperwork. Independent of `trustTier`. */
   kycStatus: KycStatus;
-  /** Blue Tick level; the client shows the tick only for `VERIFIED` and not `tickSuspended`. */
+  /** Blue Tick level. Whether the tick applies is `isVerified`, not this field alone. */
   trustTier: TrustTier;
   /** True while a violation is being handled: the tick is hidden. */
   tickSuspended: boolean;
   verifiedAt: Date | null;
   /** Lane B ticks expire and must be re-assessed; `null` for lane A. */
   verificationExpiresAt: Date | null;
+  /**
+   * Blue Tick in effect (`isOrganizationVerified` in @da2/constants): verified tier, tick not
+   * suspended, KYC approved, not expired. Shown as the badge; lifts unverified campaign limits.
+   */
+  isVerified: boolean;
   /**
    * People with an owner role (`LEGAL_REPRESENTATIVE` or `OWNER`). An organization never logs
    * in; these are the users who act for it. Never empty for an active organization.

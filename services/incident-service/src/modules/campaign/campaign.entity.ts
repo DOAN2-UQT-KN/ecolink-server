@@ -1,15 +1,100 @@
-import { Campaign, CampaignManager, Report } from "@prisma/client";
-import type { AppLocale } from "@da2/constants";
+import {
+  Campaign,
+  CampaignDay,
+  CampaignManager,
+  CampaignMeetingPoint,
+  CampaignMeetingPointReport,
+  CampaignShift,
+  Report,
+} from "@prisma/client";
+import type { AppLocale, CampaignRequirements } from "@da2/constants";
 import { pickLocalizedText, toLocalizedText } from "@da2/constants";
 import { defaultCampaignCompletionVerificationSummary } from "./campaign_completion_verification/campaign_completion_verification.dto";
 import { defaultResourceVoteSummary } from "../vote/vote.dto";
-import { CampaignResponse } from "./campaign.dto";
+import {
+  CampaignDayResponse,
+  CampaignResponse,
+  CampaignShiftResponse,
+  MeetingPointResponse,
+} from "./campaign.dto";
 
 export type CampaignEntity = Campaign;
+
+export type MeetingPointWithReports = CampaignMeetingPoint & {
+  reports: Pick<CampaignMeetingPointReport, "reportId">[];
+};
 
 export type CampaignWithReports = Campaign & {
   reports: Pick<Report, "id">[];
   campaignManagers: Pick<CampaignManager, "userId">[];
+  meetingPoints?: MeetingPointWithReports[];
+  days?: CampaignDay[];
+  shifts?: CampaignShift[];
+};
+
+/** The relations every campaign read loads (managers, locked reports, meeting points). */
+export const CAMPAIGN_INCLUDE = {
+  campaignManagers: {
+    where: { deletedAt: null },
+    select: { userId: true },
+  },
+  reports: {
+    where: { deletedAt: null },
+    select: { id: true },
+  },
+  meetingPoints: {
+    where: { deletedAt: null },
+    orderBy: { sortOrder: "asc" },
+    include: { reports: { select: { reportId: true } } },
+  },
+  days: { orderBy: { startAt: "asc" } },
+  shifts: true,
+} as const;
+
+export const toMeetingPointResponse = (
+  point: MeetingPointWithReports,
+): MeetingPointResponse => ({
+  id: point.id,
+  name: point.name,
+  latitude: point.latitude,
+  longitude: point.longitude,
+  detailAddress: point.detailAddress,
+  radiusKm: point.radiusKm,
+  sortOrder: point.sortOrder,
+  reportIds: point.reports.map((r) => r.reportId),
+});
+
+export const toCampaignDayResponse = (day: CampaignDay): CampaignDayResponse => ({
+  id: day.id,
+  startAt: day.startAt,
+  endAt: day.endAt,
+  sortOrder: day.sortOrder,
+});
+
+export const toCampaignShiftResponse = (shift: CampaignShift): CampaignShiftResponse => ({
+  id: shift.id,
+  dayId: shift.dayId,
+  meetingPointId: shift.meetingPointId,
+  startAt: shift.startAt,
+  endAt: shift.endAt,
+  gatherAt: shift.gatherAt,
+  minVolunteers: shift.minVolunteers,
+  maxVolunteers: shift.maxVolunteers,
+  leaderUserId: shift.leaderUserId,
+});
+
+/** First start and last end of a campaign's days; null when it has none yet. */
+export const campaignSpan = (
+  days: Pick<CampaignDay, "startAt" | "endAt">[] | undefined,
+): { startAt: Date; endAt: Date } | null => {
+  if (!days || days.length === 0) return null;
+  let startAt = days[0].startAt;
+  let endAt = days[0].endAt;
+  for (const d of days) {
+    if (d.startAt < startAt) startAt = d.startAt;
+    if (d.endAt > endAt) endAt = d.endAt;
+  }
+  return { startAt, endAt };
 };
 
 export const toCampaignResponse = (
@@ -18,6 +103,7 @@ export const toCampaignResponse = (
   currentMembers: number,
   maxMembers: number | null,
   locale?: AppLocale | null,
+  suggestedMinVolunteers: number | null = null,
 ): CampaignResponse => {
   const managerIds = entity.campaignManagers.map((manager) => manager.userId);
   const titleLoc = toLocalizedText({
@@ -46,13 +132,24 @@ export const toCampaignResponse = (
     descriptionEn: entity.descriptionEn ?? null,
     status: entity.status,
     rejectReason: entity.rejectReason ?? null,
-    startDate: entity.startDate,
-    endDate: entity.endDate,
     detailAddress: entity.detailAddress,
     latitude: entity.latitude,
     longitude: entity.longitude,
     radiusKm: entity.radiusKm,
     difficulty: entity.difficulty,
+    contactName: entity.contactName ?? null,
+    // Hidden by default; the service reveals it to managers, admins and accepted volunteers.
+    contactPhone: null,
+    safetyNotes: entity.safetyNotes ?? null,
+    requirements: (entity.requirements as CampaignRequirements | null) ?? null,
+    revisionDeadline: entity.revisionDeadline ?? null,
+    submittedAt: entity.submittedAt ?? null,
+    approvedAt: entity.approvedAt ?? null,
+    minVolunteersReason: entity.minVolunteersReason ?? null,
+    suggestedMinVolunteers,
+    days: (entity.days ?? []).map(toCampaignDayResponse),
+    meetingPoints: (entity.meetingPoints ?? []).map(toMeetingPointResponse),
+    shifts: (entity.shifts ?? []).map(toCampaignShiftResponse),
     greenPoints,
     currentMembers,
     maxMembers,

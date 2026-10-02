@@ -17,6 +17,11 @@ const mockNotifyDecided = jest.fn();
 const mockMembershipChanged = jest.fn();
 const mockEmitOutbox = jest.fn();
 
+// Campaign team cleanup has its own tests; here only the owner change matters.
+jest.mock("../../campaign/campaign_manager/campaign-team-cleanup", () => ({
+  onMemberGone: jest.fn(async () => undefined),
+  onRightsReduced: jest.fn(async () => undefined),
+}));
 jest.mock("../../../config/prisma.client", () => ({
   __esModule: true,
   default: jest.requireActual("./helpers/owner-change-fake-db").fakePrisma,

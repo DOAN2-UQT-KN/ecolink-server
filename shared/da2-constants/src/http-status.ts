@@ -307,6 +307,116 @@ export const HTTP_STATUS = {
     "Use step down or leave to change your own role",
     "CANNOT_TARGET_SELF",
   ),
+  CAMPAIGN_PERMISSION_DENIED: createStatus(
+    403,
+    "Only the campaign's creator, its managers or the organization's owners can do this",
+    "CAMPAIGN_PERMISSION_DENIED",
+  ),
+  CAMPAIGN_INVALID: createStatus(
+    400,
+    "The campaign is missing information or breaks a rule",
+    "CAMPAIGN_INVALID",
+  ),
+  CAMPAIGN_REPORTS_TAKEN: createStatus(
+    409,
+    "Some waste points were just taken by another campaign; remove them and try again",
+    "CAMPAIGN_REPORTS_TAKEN",
+  ),
+  CAMPAIGN_CREATE_NOT_ALLOWED: createStatus(
+    403,
+    "This organization cannot create or submit a campaign right now",
+    "CAMPAIGN_CREATE_NOT_ALLOWED",
+  ),
+  CAMPAIGN_INVALID_TRANSITION: createStatus(
+    409,
+    "The campaign cannot move to that status from its current status",
+    "CAMPAIGN_INVALID_TRANSITION",
+  ),
+  CAMPAIGN_REVIEW_CONFLICT_OF_INTEREST: createStatus(
+    403,
+    "Admins cannot review campaigns of an organization they belong to",
+    "CAMPAIGN_REVIEW_CONFLICT_OF_INTEREST",
+  ),
+  CAMPAIGN_NOT_EDITABLE: createStatus(
+    409,
+    "These fields cannot be changed in the campaign's current status",
+    "CAMPAIGN_NOT_EDITABLE",
+  ),
+  CAMPAIGN_NOT_REGISTRABLE: createStatus(
+    409,
+    "This campaign has no shift open for registration",
+    "CAMPAIGN_NOT_REGISTRABLE",
+  ),
+  SHIFT_NOT_REGISTRABLE: createStatus(
+    409,
+    "Some shifts are off, already started or not part of this campaign",
+    "SHIFT_NOT_REGISTRABLE",
+  ),
+  SHIFT_ALREADY_STARTED: createStatus(
+    409,
+    "This shift has already started",
+    "SHIFT_ALREADY_STARTED",
+  ),
+  DAY_NEEDS_ACTIVE_SHIFT: createStatus(
+    422,
+    "Each day needs at least one shift that runs; cancel the day instead",
+    "DAY_NEEDS_ACTIVE_SHIFT",
+  ),
+  NEARBY_INVITE_TOO_SOON: createStatus(
+    429,
+    "Nearby residents were invited recently; try again later",
+    "NEARBY_INVITE_TOO_SOON",
+  ),
+  CONDITIONS_NOT_ACCEPTED: createStatus(
+    400,
+    "Confirm that you meet the participation conditions",
+    "CONDITIONS_NOT_ACCEPTED",
+  ),
+  REWARD_SERVICE_UNAVAILABLE: createStatus(
+    503,
+    "The reward service is not reachable right now; try again shortly",
+    "REWARD_SERVICE_UNAVAILABLE",
+  ),
+  CAMPAIGN_NOT_DELETABLE: createStatus(
+    409,
+    "The campaign cannot be deleted in its current status",
+    "CAMPAIGN_NOT_DELETABLE",
+  ),
+  SOS_PERMISSION_DENIED: createStatus(
+    403,
+    "Only the campaign's managers or a platform admin can resolve this SOS",
+    "SOS_PERMISSION_DENIED",
+  ),
+  CAMPAIGN_MANAGER_NOT_MEMBER: createStatus(
+    422,
+    "Campaign managers must be active members of the campaign's organization",
+    "CAMPAIGN_MANAGER_NOT_MEMBER",
+  ),
+  CAMPAIGN_USE_RESCHEDULE: createStatus(
+    409,
+    "Times of existing days and shifts change through rescheduling, not editing",
+    "CAMPAIGN_USE_RESCHEDULE",
+  ),
+  SHIFT_MIN_REQUIRED: createStatus(
+    422,
+    "A running shift needs at least one volunteer; turn the shift off instead",
+    "SHIFT_MIN_REQUIRED",
+  ),
+  CAMPAIGN_LEADER_NOT_MANAGER: createStatus(
+    422,
+    "A shift leader must be one of the campaign's managers or an owner of its organization",
+    "CAMPAIGN_LEADER_NOT_MANAGER",
+  ),
+  CAMPAIGN_MANAGER_LEADS_SHIFTS: createStatus(
+    409,
+    "This manager still leads upcoming shifts; assign another leader first",
+    "CAMPAIGN_MANAGER_LEADS_SHIFTS",
+  ),
+  CANNOT_REMOVE_CAMPAIGN_CREATOR: createStatus(
+    422,
+    "The campaign's creator cannot be removed as a manager",
+    "CANNOT_REMOVE_CAMPAIGN_CREATOR",
+  ),
   ORG_MUST_HAVE_OWNER: createStatus(
     409,
     "An organization must keep at least one owner",
@@ -414,11 +524,14 @@ export const createHttpStatus = (
 
 export class HttpError extends Error {
   readonly statusResponse: HttpStatusResponse;
+  /** Extra fields merged into the error body (e.g. per-field `details`). */
+  readonly data?: Record<string, any>;
 
-  constructor(statusResponse: HttpStatusResponse) {
+  constructor(statusResponse: HttpStatusResponse, data?: Record<string, any>) {
     super(statusResponse.message);
     this.name = "HttpError";
     this.statusResponse = statusResponse;
+    this.data = data;
     Object.setPrototypeOf(this, new.target.prototype);
   }
 
@@ -429,7 +542,7 @@ export class HttpError extends Error {
 
 export const sendHttpErrorResponse = (res: any, error: unknown): boolean => {
   if (HttpError.isHttpError(error)) {
-    sendError(res, error.statusResponse);
+    sendError(res, error.statusResponse, error.data);
     return true;
   }
   return false;

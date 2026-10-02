@@ -6,10 +6,10 @@ const prisma = new PrismaClient();
 
 async function main() {
   const rows = [
-    { level: 1, name: "easy", maxVolunteers: 10, greenPoints: 10 },
-    { level: 2, name: "medium", maxVolunteers: 25, greenPoints: 20 },
-    { level: 3, name: "hard", maxVolunteers: 40, greenPoints: 30 },
-    { level: 4, name: "very_hard", maxVolunteers: null, greenPoints: 40 },
+    { level: 1, name: "easy", maxVolunteers: 10, suggestedMinVolunteers: 5, greenPoints: 10 },
+    { level: 2, name: "medium", maxVolunteers: 25, suggestedMinVolunteers: 10, greenPoints: 20 },
+    { level: 3, name: "hard", maxVolunteers: 40, suggestedMinVolunteers: 20, greenPoints: 30 },
+    { level: 4, name: "very_hard", maxVolunteers: null, suggestedMinVolunteers: 30, greenPoints: 40 },
   ];
 
   for (const r of rows) {
@@ -20,11 +20,13 @@ async function main() {
         level: r.level,
         name: r.name,
         maxVolunteers: r.maxVolunteers,
+        suggestedMinVolunteers: r.suggestedMinVolunteers,
         greenPoints: r.greenPoints,
       },
       update: {
         name: r.name,
         maxVolunteers: r.maxVolunteers,
+        suggestedMinVolunteers: r.suggestedMinVolunteers,
         greenPoints: r.greenPoints,
         deletedAt: null,
       },

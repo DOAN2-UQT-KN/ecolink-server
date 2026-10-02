@@ -17,6 +17,11 @@ export const OutboxEventType = {
    * it is written atomically with the memberships and retried with backoff.
    */
   ORG_OWNER_ONBOARD: "ORG_OWNER_ONBOARD",
+  /**
+   * Not a reward event: an in-app notification that must not be lost (e.g. a shift was turned
+   * off), written with the change and retried by the relay.
+   */
+  WEBSITE_NOTIFICATION: "WEBSITE_NOTIFICATION",
 } as const;
 
 export type OutboxEventType =

@@ -1,6 +1,7 @@
 import { GlobalStatus, JoinRequestStatus } from "../../constants/status.enum";
 import { HttpError, HTTP_STATUS } from "../../constants/http-status";
 import prisma from "../../config/prisma.client";
+import { campaignLifecycleService } from "../campaign/campaign-lifecycle.service";
 import { Prisma, type Organization } from "@prisma/client";
 import {
   type KycStatus,
@@ -10,6 +11,7 @@ import {
   OrgMemberRole,
   OrgPermission,
   canActOnMember,
+  isOrganizationVerified,
   isOwnerRole,
   nextUniqueOrganizationSlug,
   slugifyOrganizationName,
@@ -60,6 +62,7 @@ import {
   TranslationFieldTarget,
   TranslationResourceType,
 } from "../../constants/job-type.enum";
+import { onMemberGone, onRightsReduced } from "../campaign/campaign_manager/campaign-team-cleanup";
 
 /**
  * Best-effort enqueue of a TRANSLATE_TEXT job for an organization. Failure is
@@ -113,6 +116,7 @@ export class OrganizationService {
       tickSuspended: row.tickSuspended,
       verifiedAt: row.verifiedAt,
       verificationExpiresAt: row.verificationExpiresAt,
+      isVerified: isOrganizationVerified(row),
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
@@ -469,12 +473,34 @@ export class OrganizationService {
         ),
       );
     }
-    const updated = await organizationRepository.update(organizationId, {
-      status: GlobalStatus._STATUS_INACTIVE,
-      rejectReason: trimmedReason,
-      updatedBy: adminUserId,
-    });
+    // Locking also cancels the campaigns that were not approved yet (spec, exceptions), in the
+    // same transaction so no campaign is left under review for a locked organization.
+    const { updated, cancelled } = await prisma.$transaction(
+      async (tx) => {
+        const row = await tx.organization.update({
+          where: { id: organizationId },
+          data: {
+            status: GlobalStatus._STATUS_INACTIVE,
+            rejectReason: trimmedReason,
+            updatedBy: adminUserId,
+          },
+        });
+        const campaigns = await campaignLifecycleService.cancelForLockedOrganization(
+          tx,
+          organizationId,
+          adminUserId,
+          trimmedReason,
+        );
+        return { updated: row, cancelled: campaigns };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
     this.notifyOwnerOfOrganizationVerified(updated, "banned", trimmedReason);
+    void campaignLifecycleService
+      .notifyCancelledForLockedOrganization(cancelled, trimmedReason)
+      .catch((err) =>
+        console.warn("[organization] failed to notify cancelled campaigns", err),
+      );
     return this.withOwner(this.organizationCoreFromRow(updated));
   }
 
@@ -701,6 +727,21 @@ export class OrganizationService {
     return undefined;
   }
 
+  /**
+   * Role permissions, narrowed by the organization's state: a locked organization cannot start
+   * new campaigns. Managing existing ones stays, so running campaigns can finish.
+   */
+  private permissionsForOrganization(
+    organization: Pick<OrganizationResponse, "status">,
+    role: string | null,
+  ) {
+    const permissions = orgAccessService.permissionsFor(role);
+    if (organization.status !== GlobalStatus._STATUS_ACTIVE) {
+      return { ...permissions, canCreateCampaign: false };
+    }
+    return permissions;
+  }
+
   private attachViewerJoinState(
     organization: OrganizationResponse,
     latest: { id: string; status: number } | undefined,
@@ -715,7 +756,7 @@ export class OrganizationService {
       ...organization,
       myRole: role,
       isOwner: isOwnerRole(role),
-      permissions: orgAccessService.permissionsFor(role),
+      permissions: this.permissionsForOrganization(organization, role),
       ...(isMember ? { isMember } : {}),
     };
     if (requestStatus === undefined || latest === undefined) {
@@ -1386,14 +1427,17 @@ export class OrganizationService {
     }
 
     const org = await organizationRepository.findById(organizationId);
-    const row = await prisma.$transaction((tx) =>
-      organizationMembershipService.changeRole(tx, {
+    const row = await prisma.$transaction(async (tx) => {
+      const changed = await organizationMembershipService.changeRole(tx, {
         organizationId,
         userId: targetUserId,
         role: newRole as OrgMemberRole,
         actorId,
-      }),
-    );
+      });
+      // An owner made a lesser role may no longer lead shifts of campaigns outside their team.
+      await onRightsReduced(tx, organizationId, targetUserId, actorId);
+      return changed;
+    });
 
     if (org && targetRole !== newRole) {
       void enqueueOrgMembershipChangedWebsiteNotification({
@@ -1555,6 +1599,11 @@ export class OrganizationService {
             ? { role: newRole, updatedBy: userId }
             : { deletedAt: new Date(), updatedBy: userId },
         });
+        if (newRole) {
+          await onRightsReduced(tx, org.id, userId, userId);
+        } else {
+          await onMemberGone(tx, org.id, userId, userId);
+        }
         remaining = owners.map((o) => o.user_id).filter((id) => id !== userId);
       });
     } catch (error) {

@@ -61,10 +61,11 @@ model Report {
   deletedAt DateTime? @map("deleted_at")
 
   // Relations
-  reportMediaFiles ReportMediaFile[]
-  reportIssues     ReportIssue[]
-  aiAnalysisLogs   AiAnalysisLog[]
-  campaign         Campaign?         @relation(fields: [campaignId], references: [id])
+  reportMediaFiles  ReportMediaFile[]
+  reportIssues      ReportIssue[]
+  aiAnalysisLogs    AiAnalysisLog[]
+  campaign          Campaign?                    @relation(fields: [campaignId], references: [id])
+  meetingPointLinks CampaignMeetingPointReport[]
 
   @@index([campaignId])
   @@index([userId])
@@ -87,8 +88,6 @@ model Campaign {
    * Admin-provided reason when the campaign is banned; cleared on verify.
    */
   rejectReason  String?   @map("reject_reason")
-  startDate     DateTime? @map("start_date")
-  endDate       DateTime? @map("end_date")
   detailAddress String?   @map("detail_address") @db.VarChar(255)
   latitude      Float?
   longitude     Float?
@@ -98,6 +97,27 @@ model Campaign {
    * Level key into reward-service `difficulties` (volunteer cap, green points).
    */
   difficulty Int @default(1)
+
+  /// Contact person shown to accepted volunteers (phone only to them).
+  contactName           String?   @map("contact_name") @db.VarChar(120)
+  contactPhone          String?   @map("contact_phone") @db.VarChar(20)
+  /// Tools, clothing, risks.
+  safetyNotes           String?   @map("safety_notes")
+  /// Optional participation conditions: { minAge, skills[], bringOwnTools }.
+  requirements          Json?
+  /// Deadline to resubmit while NEEDS_REVISION (reports stay locked until then).
+  revisionDeadline      DateTime? @map("revision_deadline")
+  /// Last time the campaign was sent for review.
+  submittedAt           DateTime? @map("submitted_at")
+  /// First admin approval. Set means a later edit of an important field sends it back for review
+  /// while volunteers keep their place (spec 3.5).
+  approvedAt            DateTime? @map("approved_at")
+  /// What was sent for review last time; the admin sees a diff on resubmit.
+  lastSubmittedSnapshot Json?     @map("last_submitted_snapshot")
+  /// Why a day's minimum volunteers is below what the difficulty suggests (shown to the admin).
+  minVolunteersReason   String?   @map("min_volunteers_reason")
+  /// Last time managers invited nearby residents to fill short shifts (spec 3.2).
+  lastNearbyInviteAt    DateTime? @map("last_nearby_invite_at")
 
   organizationId String       @map("organization_id") @db.Uuid
   organization   Organization @relation(fields: [organizationId], references: [id])
@@ -112,12 +132,18 @@ model Campaign {
   reports                         Report[]
   campaignManagers                CampaignManager[]
   campaignJoiningRequests         CampaignJoiningRequest[]
+  shiftRegistrations              CampaignShiftRegistration[]
   campaignAttendanceCheckIns      CampaignAttendanceCheckIn[]
   campaignTasks                   CampaignTask[]
   campaignSubmissions             CampaignSubmission[]
   campaignResults                 CampaignResult[]
   campaignCompletionVerifications CampaignCompletionVerification[]
   sosList                         Sos[]
+  meetingPoints                   CampaignMeetingPoint[]
+  meetingPointReports             CampaignMeetingPointReport[]
+  statusLogs                      CampaignStatusLog[]
+  days                            CampaignDay[]
+  shifts                          CampaignShift[]
 
   @@index([status])
   @@index([createdBy])
@@ -1212,4 +1238,143 @@ model OrganizationViolation {
   @@index([organizationId])
   @@index([deletedAt])
   @@map("organization_violations")
+}
+
+/// A gathering point of a campaign (1–5). Every report of the campaign belongs to exactly one.
+model CampaignMeetingPoint {
+  id            String    @id @default(uuid()) @db.Uuid
+  campaignId    String    @map("campaign_id") @db.Uuid
+  name          String?   @db.VarChar(120)
+  latitude      Float
+  longitude     Float
+  detailAddress String?   @map("detail_address") @db.VarChar(255)
+  radiusKm      Float     @map("radius_km")
+  sortOrder     Int       @default(0) @map("sort_order")
+  createdBy     String?   @map("created_by") @db.Uuid
+  updatedBy     String?   @map("updated_by") @db.Uuid
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  deletedAt     DateTime? @map("deleted_at")
+
+  campaign Campaign                     @relation(fields: [campaignId], references: [id])
+  reports  CampaignMeetingPointReport[]
+  shifts   CampaignShift[]
+
+  @@index([campaignId])
+  @@map("campaign_meeting_points")
+}
+
+/// One day of a campaign (1–7, within 14 days of the first), with its own start and end.
+model CampaignDay {
+  id         String   @id @default(uuid()) @db.Uuid
+  campaignId String   @map("campaign_id") @db.Uuid
+  startAt    DateTime @map("start_at")
+  endAt      DateTime @map("end_at")
+  sortOrder  Int      @default(0) @map("sort_order")
+  /// Managers were told about understaffed shifts of this day (once, 72 h before).
+  understaffedNotifiedAt DateTime? @map("understaffed_notified_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  campaign Campaign        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  shifts   CampaignShift[]
+
+  @@index([campaignId])
+  @@index([startAt])
+  @@map("campaign_days")
+}
+
+/// A shift: one meeting point on one day. `minVolunteers` 0 turns the shift off.
+model CampaignShift {
+  id             String    @id @default(uuid()) @db.Uuid
+  campaignId     String    @map("campaign_id") @db.Uuid
+  dayId          String    @map("day_id") @db.Uuid
+  meetingPointId String    @map("meeting_point_id") @db.Uuid
+  /// Working window of the shift; defaults to the day's hours.
+  startAt        DateTime  @map("start_at")
+  endAt          DateTime  @map("end_at")
+  gatherAt       DateTime? @map("gather_at")
+  /// Volunteers needed to get the work done; 0 = the shift is off. A warning level, not a cap.
+  minVolunteers  Int       @default(0) @map("min_volunteers")
+  /// Expected maximum (tools, space, supervision); optional, warning only.
+  maxVolunteers  Int?      @map("max_volunteers")
+  /// Campaign manager in charge of this shift.
+  leaderUserId   String?   @map("leader_user_id") @db.Uuid
+  /// Managers were told the shift is over its expected maximum; cleared once it is back under.
+  overMaxNotifiedAt DateTime? @map("over_max_notified_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  campaign     Campaign             @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  day          CampaignDay          @relation(fields: [dayId], references: [id], onDelete: Cascade)
+  meetingPoint CampaignMeetingPoint @relation(fields: [meetingPointId], references: [id], onDelete: Cascade)
+  registrations CampaignShiftRegistration[]
+
+  @@unique([dayId, meetingPointId])
+  @@index([campaignId])
+  @@index([startAt])
+  @@map("campaign_shifts")
+}
+
+/// A volunteer's registration for one shift (spec 3.1): effective immediately, never capped.
+/// Leaving keeps the row (`leftAt`); at most one live row per shift and user (partial unique index in SQL).
+model CampaignShiftRegistration {
+  id                String    @id @default(uuid()) @db.Uuid
+  campaignId        String    @map("campaign_id") @db.Uuid
+  shiftId           String    @map("shift_id") @db.Uuid
+  userId            String    @map("user_id") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at")
+  leftAt            DateTime? @map("left_at")
+  /// Left because a manager turned the shift off, not by the volunteer.
+  closedByShift     Boolean   @default(false) @map("closed_by_shift")
+  /// Counted in a managers' daily registration digest.
+  managerNotifiedAt DateTime? @map("manager_notified_at")
+
+  campaign Campaign      @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  shift    CampaignShift @relation(fields: [shiftId], references: [id], onDelete: Restrict)
+
+  @@index([campaignId, leftAt])
+  @@index([userId, leftAt])
+  @@index([shiftId])
+  @@map("campaign_shift_registrations")
+}
+
+/// Which report a meeting point covers. Also holds a draft's selection, which locks nothing:
+/// the lock is `report_issues.campaign_id` + status INPROCESS, taken on submit.
+model CampaignMeetingPointReport {
+  meetingPointId String   @map("meeting_point_id") @db.Uuid
+  reportId       String   @map("report_id") @db.Uuid
+  campaignId     String   @map("campaign_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  meetingPoint CampaignMeetingPoint @relation(fields: [meetingPointId], references: [id], onDelete: Cascade)
+  report       Report               @relation(fields: [reportId], references: [id])
+  campaign     Campaign             @relation(fields: [campaignId], references: [id])
+
+  @@id([meetingPointId, reportId])
+  @@unique([campaignId, reportId])
+  @@index([reportId])
+  @@map("campaign_meeting_point_reports")
+}
+
+/// Audit log: every status change and every edit made while the campaign is under review.
+model CampaignStatusLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  campaignId String   @map("campaign_id") @db.Uuid
+  /// STATUS_CHANGE | EDIT
+  type       String   @db.VarChar(20)
+  /// Transition event (submit, approve, block, ...) or "edit".
+  event      String   @db.VarChar(40)
+  fromStatus Int?     @map("from_status")
+  toStatus   Int?     @map("to_status")
+  actorId    String?  @map("actor_id") @db.Uuid
+  /// manager | admin | system
+  actorRole  String   @map("actor_role") @db.VarChar(20)
+  reason     String?
+  /// Field diff { field: { from, to } } for edits; extra context otherwise.
+  changes    Json?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  campaign Campaign @relation(fields: [campaignId], references: [id])
+
+  @@index([campaignId, createdAt])
+  @@map("campaign_status_logs")
 }

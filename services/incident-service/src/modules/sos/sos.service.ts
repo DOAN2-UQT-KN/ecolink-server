@@ -2,6 +2,10 @@ import { GlobalStatus } from "../../constants/status.enum";
 import { HttpError } from "../../constants/http-status";
 import { HTTP_STATUS } from "../../constants/http-status";
 import { campaignRepository } from "../campaign/campaign.repository";
+import {
+  campaignAccessService,
+  isPlatformAdmin,
+} from "../campaign/campaign-access.service";
 import { sosRepository } from "./sos.repository";
 import { toSosCampaignResponse, toSosResponse } from "./sos.entity";
 import type {
@@ -157,10 +161,20 @@ export class SosService {
     }));
   }
 
-  async solveSos(id: number, updatedBy?: string): Promise<SosResponse> {
+  /** Only the people managing the SOS's campaign, or a platform admin, may close it. */
+  async solveSos(
+    id: number,
+    actor: { userId: string; role?: string | null },
+  ): Promise<SosResponse> {
     const existing = await sosRepository.findById(id);
     if (!existing) {
       throw new HttpError(HTTP_STATUS.NOT_FOUND.withMessage("SOS not found"));
+    }
+    if (
+      !isPlatformAdmin(actor.role) &&
+      !(await campaignAccessService.canManage(existing.campaignId, actor.userId))
+    ) {
+      throw new HttpError(HTTP_STATUS.SOS_PERMISSION_DENIED);
     }
 
     if (existing.status === GlobalStatus._STATUS_COMPLETED) {
@@ -169,7 +183,7 @@ export class SosService {
 
     const updated = await sosRepository.update(id, {
       status: GlobalStatus._STATUS_COMPLETED,
-      ...(updatedBy ? { updatedBy } : {}),
+      updatedBy: actor.userId,
     });
 
     return toSosResponse(updated);
