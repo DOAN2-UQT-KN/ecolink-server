@@ -25,7 +25,7 @@ import { getCampaignAdminNotifyUserIds } from "./campaign-completion-admin-notif
 import { campaignManagerRepository } from "./campaign_manager/campaign_manager.repository";
 import { rewardServiceClient } from "../reward/reward-service.client";
 import { campaignRegistrationRepository } from "./campaign_registration/campaign_registration.repository";
-import { campaignAttendanceRepository } from "./campaign_attendance/campaign_attendance.repository";
+import { shiftAttendanceService } from "./campaign_attendance/shift-attendance.service";
 import { campaignRepository } from "./campaign.repository";
 import { campaignAccessService } from "./campaign-access.service";
 import { TeamCampaign, assertLeadersInTeam } from "./campaign_manager/campaign-team";
@@ -42,6 +42,7 @@ import { campaignEligibilityService } from "./campaign-eligibility.service";
 import {
   campaignLifecycleService,
   diffSnapshots,
+  isCancellable,
   isPreApproval,
   scheduleFromRequest,
   scheduleOf,
@@ -247,6 +248,7 @@ export class CampaignService {
       const access = accessByCampaignId.get(campaign.id);
       const canManageCampaign = access?.canManage ?? false;
       const canDeleteCampaign = access?.canDelete ?? false;
+      const canCancelCampaign = canDeleteCampaign && isCancellable(campaign);
 
       return {
         ...campaign,
@@ -261,7 +263,7 @@ export class CampaignService {
             avatar: profile?.avatar ?? null,
           };
         }),
-        ...(viewerUserId != null ? { canManageCampaign, canDeleteCampaign } : {}),
+        ...(viewerUserId != null ? { canManageCampaign, canDeleteCampaign, canCancelCampaign } : {}),
       };
     });
   }
@@ -1136,8 +1138,7 @@ export class CampaignService {
   /**
    * Before approval (draft, under review, needs revision) every field may change; under review
    * each edit is logged for the admin and report locks follow the meeting points at once.
-   * Once approved only the free fields may change (description, cover, safety notes, contact);
-   * the rest waits for the edit/reschedule flow of phase 3.
+   * Once approved, edits go by id through `applyPostApprovalEdit` until the campaign starts (3.5).
    * The status never changes here — only through the lifecycle endpoints.
    */
   async updateCampaign(
@@ -1518,21 +1519,15 @@ export class CampaignService {
       throw new Error("Campaign difficulty missing in reward service");
     }
 
-    const approvedVolunteerIds =
-      await campaignRegistrationRepository.findRegisteredUserIds(
-        id,
-      );
-    const checkedInUserIds =
-      await campaignAttendanceRepository.findUserIdsByCampaignId(id);
-    const checkedInSet = new Set(checkedInUserIds);
-    /** Green points: only volunteers who checked in on site (QR). */
-    const checkedInVolunteerIds = approvedVolunteerIds.filter((uid) =>
-      checkedInSet.has(uid),
-    );
-    const credits = checkedInVolunteerIds.map((uid) => ({
-      userId: uid,
-      points: tier.greenPoints,
-    }));
+    /** Green points per shift attended long enough (spec 4.1, 5.3). */
+    const credits = await shiftAttendanceService.completionCredits(id, tier.greenPoints);
+    // Everyone registered or present hears the campaign is done (spec 5.4).
+    const approvedVolunteerIds = [
+      ...new Set([
+        ...(await campaignRegistrationRepository.findRegisteredUserIds(id)),
+        ...credits.map((c) => c.userId),
+      ]),
+    ];
 
     // TODO: re-enable Facebook recognition outbox event.
     // /** Facebook / AI thanks: all approved members (check-in is not required for public recognition). */
@@ -1743,6 +1738,12 @@ export class CampaignService {
     });
   }
 
+  /** Spec 3.6: the creator or an owner cancels the campaign, with a reason. */
+  async cancelCampaign(id: string, userId: string, reason: string): Promise<CampaignResponse> {
+    const campaign = await campaignLifecycleService.cancel(id, userId, reason);
+    return this.toResponseWithVotes(campaign, userId);
+  }
+
   async deleteCampaign(id: string, userId: string): Promise<void> {
     const existing = await campaignRepository.findById(id);
     if (!existing) {
@@ -1753,6 +1754,13 @@ export class CampaignService {
     // Running or finished campaigns are cancelled, never deleted.
     if (!CAMPAIGN_DELETABLE_STATUSES.includes(existing.status)) {
       throw new HttpError(HTTP_STATUS.CAMPAIGN_NOT_DELETABLE);
+    }
+    // Volunteers registered (an approved campaign under review again): cancel, so they hear.
+    if (
+      existing.approvedAt != null &&
+      (await prisma.campaignShiftRegistration.count({ where: { campaignId: id, leftAt: null } })) > 0
+    ) {
+      throw new HttpError(HTTP_STATUS.CAMPAIGN_HAS_VOLUNTEERS);
     }
 
     await prisma.$transaction(

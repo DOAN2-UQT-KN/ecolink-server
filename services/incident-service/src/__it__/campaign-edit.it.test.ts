@@ -2,7 +2,7 @@
  * Editing an approved campaign (Đặc tả luồng chiến dịch 3.5), against a real Postgres.
  *
  *   - free fields (title included) and shift numbers are saved at once, with a log
- *   - times of existing days and shifts change only through rescheduling
+ *   - new times for an existing day or shift are an important change, at least 48 h away
  *   - an important change sends the campaign back to review: registrations keep their ids,
  *     volunteers are told, new sign-ups wait, leaving still works, admins approve it again
  *   - removing a day removes its shifts and their registrations, and tells those volunteers
@@ -209,18 +209,45 @@ describe("free fields and shift numbers", () => {
       code("SHIFT_MIN_REQUIRED"),
     );
   });
-
-  it("times of an existing day go through rescheduling", async () => {
-    const c = await approvedCampaign();
-    const body = await editBody(c.id);
-    body.days[0].endAt = new Date(new Date(body.days[0].endAt).getTime() + HOUR).toISOString();
-    await expect(campaignService.updateCampaign(c.id, CM, body as never)).rejects.toMatchObject(
-      code("CAMPAIGN_USE_RESCHEDULE"),
-    );
-  });
 });
 
 describe("important fields", () => {
+  it("new times for an existing day and its shift send it back to review; registrations stay", async () => {
+    const c = await approvedCampaign();
+    const body = await editBody(c.id);
+    const later = (iso: string, hours: number) => new Date(new Date(iso).getTime() + hours * HOUR).toISOString();
+    const shift = body.shifts.find((sh) => sh.dayIndex === 0)!;
+    body.days[0] = { ...body.days[0], startAt: later(body.days[0].startAt, 2), endAt: later(body.days[0].endAt, 2) };
+    shift.startAt = later(shift.startAt, 2);
+    shift.endAt = later(shift.endAt, 2);
+    shift.gatherAt = later(shift.startAt, -0.5);
+    const res = await campaignService.updateCampaign(c.id, CM, body as never);
+
+    expect(res.reReview).toBe(true);
+    expect(await statusOf(c.id)).toBe(S.PENDING_REVIEW);
+    const day = await prisma.campaignDay.findUniqueOrThrow({ where: { id: body.days[0].id } });
+    expect(day.startAt.toISOString()).toBe(body.days[0].startAt);
+    const saved = await prisma.campaignShift.findUniqueOrThrow({ where: { id: c.shifts[0].id } });
+    expect(saved.startAt.toISOString()).toBe(shift.startAt);
+    expect(saved.gatherAt?.toISOString()).toBe(shift.gatherAt);
+    const regs = await prisma.campaignShiftRegistration.findMany({ where: { campaignId: c.id, leftAt: null } });
+    expect(regs.map((r) => r.shiftId).sort()).toEqual(c.shifts.map((s) => s.id).sort());
+    expect(await outboxKinds()).toEqual([
+      expect.objectContaining({ kind: "CAMPAIGN_UPDATED_NEEDS_REVIEW", userIds: [VOL] }),
+    ]);
+  });
+
+  it("an existing day cannot move to less than 48 hours from now", async () => {
+    const c = await approvedCampaign();
+    const body = await editBody(c.id);
+    const soon = new Date(Date.now() + 24 * HOUR);
+    body.days[0] = { ...body.days[0], startAt: soon.toISOString(), endAt: new Date(soon.getTime() + 4 * HOUR).toISOString() };
+    await expect(campaignService.updateCampaign(c.id, CM, body as never)).rejects.toMatchObject(
+      code("CAMPAIGN_INVALID"),
+    );
+    expect(await statusOf(c.id)).toBe(S.UPCOMING);
+  });
+
   it("adding a waste point sends it back to review; registrations stay and volunteers hear", async () => {
     const c = await approvedCampaign();
     const extra = await seedReport(0.002);

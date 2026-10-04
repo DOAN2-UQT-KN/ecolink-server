@@ -121,6 +121,28 @@ export const CAMPAIGN_UNDERSTAFFED_NOTICE_HOURS = 72;
 export const CAMPAIGN_NEARBY_REINVITE_COOLDOWN_HOURS = 24;
 /** Local hour (Asia/Ho_Chi_Minh) after which managers get the daily registration digest. */
 export const CAMPAIGN_REGISTRATION_DIGEST_HOUR = 20;
+/** Volunteers are reminded this many hours before the gathering time of each day (spec 3.7). */
+export const CAMPAIGN_REMINDER_HOURS = [24, 1] as const;
+
+/** Attendance per shift (spec 4.1). */
+/** A scan counts only within this distance of the shift's meeting point. */
+export const CAMPAIGN_ATTENDANCE_GEOFENCE_M = 50;
+/** Worse GPS accuracy than this is refused: turn on precise location and scan again. */
+export const CAMPAIGN_ATTENDANCE_MAX_ACCURACY_M = 50;
+/** The QR code changes every this many seconds; the previous code is still accepted. */
+export const CAMPAIGN_ATTENDANCE_QR_PERIOD_SEC = 20;
+/** A QR session stays open at most this long; the leader may open another. */
+export const CAMPAIGN_ATTENDANCE_SESSION_MINUTES = 60;
+/** A session may open this long before the shift's gathering time (or start). */
+export const CAMPAIGN_ATTENDANCE_OPEN_BEFORE_MINUTES = 30;
+/** A check-out scan is accepted until this long after the shift ends. */
+export const CAMPAIGN_ATTENDANCE_CHECKOUT_GRACE_MINUTES = 30;
+/** A second scan sooner than this after check-in is not taken as a check-out. */
+export const CAMPAIGN_ATTENDANCE_CHECKOUT_MIN_MINUTES = 10;
+/** Present at least this share of the shift to earn its points. */
+export const CAMPAIGN_ATTENDANCE_MIN_PRESENCE_RATIO = 0.6;
+/** Manual attendance: at most this share of the people present on the shift. */
+export const CAMPAIGN_ATTENDANCE_MANUAL_MAX_RATIO = 0.2;
 
 /** Warnings returned with a shift registration; none of them blocks it (spec 3.1). */
 export const CampaignRegistrationWarning = {

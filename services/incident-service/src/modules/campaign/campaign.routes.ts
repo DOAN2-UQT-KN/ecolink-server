@@ -171,6 +171,14 @@ router.post("/:id/submit", authenticate, campaignController.submitCampaign);
 router.put("/:id/review", authenticate, campaignController.reviewCampaign);
 
 /**
+ * @route   POST /api/v1/campaigns/:id/cancel
+ * @desc    Cancel an upcoming, running, or approved-and-under-review campaign (creator or owner)
+ * @access  Private
+ * @body    { reason } — required
+ */
+router.post("/:id/cancel", authenticate, campaignController.cancelCampaign);
+
+/**
  * @route   GET /api/v1/campaigns/:id/history
  * @desc    Status changes and edits under review
  * @access  Private (Campaign manager or admin)
@@ -203,26 +211,71 @@ router.post(
 );
 
 /**
- * @route   POST /api/v1/campaigns/:id/attendance-qr
- * @desc    Issue a short-lived JWT for attendance QR (campaign managers only; active campaigns).
+ * @route   POST /api/v1/campaigns/:id/attendance-qr, POST /api/v1/campaigns/:id/attendance-check-in
+ * @desc    Legacy per-campaign attendance: 410, attendance is per shift (spec 4.1)
+ * @access  Private
+ */
+router.post("/:id/attendance-qr", authenticate, campaignController.legacyAttendanceGone);
+router.post("/:id/attendance-check-in", authenticate, campaignController.legacyAttendanceGone);
+
+/**
+ * @route   POST /api/v1/campaigns/:id/attendance/scan
+ * @desc    Check in (first scan) or out (later scan) with a shift's dynamic QR and the device's GPS
+ * @access  Private
+ * @body    { token, latitude, longitude, accuracy, scannedAt? }
+ */
+router.post("/:id/attendance/scan", authenticate, campaignController.scanAttendance);
+
+/**
+ * @route   POST /api/v1/campaigns/:id/shifts/:shiftId/attendance/session
+ * @desc    Open the shift's QR session (up to 60 minutes) or return the open one (leader or managers)
  * @access  Private
  */
 router.post(
-  "/:id/attendance-qr",
+  "/:id/shifts/:shiftId/attendance/session",
   authenticate,
-  campaignController.issueCampaignAttendanceQr,
+  campaignController.openAttendanceSession,
 );
 
 /**
- * @route   POST /api/v1/campaigns/:id/attendance-check-in
- * @desc    Record in-person check-in using QR token (approved volunteers only).
+ * @route   GET /api/v1/campaigns/:id/shifts/:shiftId/attendance/qr
+ * @desc    The current dynamic code of the open session; ask again every `periodSec`
+ * @access  Private (leader or managers)
+ */
+router.get("/:id/shifts/:shiftId/attendance/qr", authenticate, campaignController.getAttendanceQr);
+
+/**
+ * @route   POST /api/v1/campaigns/:id/shifts/:shiftId/attendance/close
+ * @desc    Close the sessions and check out everyone still checked in (leader or managers)
  * @access  Private
- * @body    { token }
  */
 router.post(
-  "/:id/attendance-check-in",
+  "/:id/shifts/:shiftId/attendance/close",
   authenticate,
-  campaignController.checkInCampaignAttendance,
+  campaignController.closeAttendance,
+);
+
+/**
+ * @route   POST /api/v1/campaigns/:id/shifts/:shiftId/attendance/manual
+ * @desc    Record someone by hand with a reason; at most 20% of those present (leader or managers)
+ * @access  Private
+ * @body    { userId, reason, checkInAt? }
+ */
+router.post(
+  "/:id/shifts/:shiftId/attendance/manual",
+  authenticate,
+  campaignController.addManualAttendance,
+);
+
+/**
+ * @route   GET /api/v1/campaigns/:id/shifts/:shiftId/attendance
+ * @desc    Who is present on the shift, with eligibility (leader, managers, platform admins)
+ * @access  Private
+ */
+router.get(
+  "/:id/shifts/:shiftId/attendance",
+  authenticate,
+  campaignController.getShiftAttendance,
 );
 
 /**

@@ -134,6 +134,8 @@ model Campaign {
   campaignJoiningRequests         CampaignJoiningRequest[]
   shiftRegistrations              CampaignShiftRegistration[]
   campaignAttendanceCheckIns      CampaignAttendanceCheckIn[]
+  shiftAttendances                CampaignShiftAttendance[]
+  shiftAttendanceSessions         CampaignShiftAttendanceSession[]
   campaignTasks                   CampaignTask[]
   campaignSubmissions             CampaignSubmission[]
   campaignResults                 CampaignResult[]
@@ -312,7 +314,8 @@ model CampaignJoiningRequest {
   @@map("campaign_joining_requests")
 }
 
-/// In-person check-in for approved volunteers (QR flow). Used for completion green points eligibility.
+/// Legacy per-campaign check-in (before attendance per shift, spec 4.1). Kept as history only;
+/// its endpoints answer 410 and completion reads `CampaignShiftAttendance`.
 model CampaignAttendanceCheckIn {
   id          String   @id @default(uuid()) @db.Uuid
   campaignId  String   @map("campaign_id") @db.Uuid
@@ -1307,6 +1310,8 @@ model CampaignShift {
   day          CampaignDay          @relation(fields: [dayId], references: [id], onDelete: Cascade)
   meetingPoint CampaignMeetingPoint @relation(fields: [meetingPointId], references: [id], onDelete: Cascade)
   registrations CampaignShiftRegistration[]
+  attendances   CampaignShiftAttendance[]
+  attendanceSessions CampaignShiftAttendanceSession[]
 
   @@unique([dayId, meetingPointId])
   @@index([campaignId])
@@ -1327,6 +1332,9 @@ model CampaignShiftRegistration {
   closedByShift     Boolean   @default(false) @map("closed_by_shift")
   /// Counted in a managers' daily registration digest.
   managerNotifiedAt DateTime? @map("manager_notified_at")
+  /// Reminders sent for the gathering time of this shift's day (spec 3.7); cleared when times change.
+  reminded24hAt     DateTime? @map("reminded_24h_at")
+  reminded1hAt      DateTime? @map("reminded_1h_at")
 
   campaign Campaign      @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   shift    CampaignShift @relation(fields: [shiftId], references: [id], onDelete: Restrict)
@@ -1377,4 +1385,61 @@ model CampaignStatusLog {
 
   @@index([campaignId, createdAt])
   @@map("campaign_status_logs")
+}
+
+/// A QR attendance session of a shift (spec 4.1): opened by its leader (or a campaign manager),
+/// at most CAMPAIGN_ATTENDANCE_SESSION_MINUTES; another may be opened after. Closing it checks out
+/// everyone still checked in on the shift.
+model CampaignShiftAttendanceSession {
+  id         String    @id @default(uuid()) @db.Uuid
+  campaignId String    @map("campaign_id") @db.Uuid
+  shiftId    String    @map("shift_id") @db.Uuid
+  openedBy   String    @map("opened_by") @db.Uuid
+  openedAt   DateTime  @default(now()) @map("opened_at")
+  expiresAt  DateTime  @map("expires_at")
+  closedAt   DateTime? @map("closed_at")
+  closedBy   String?   @map("closed_by") @db.Uuid
+
+  campaign Campaign      @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  shift    CampaignShift @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+
+  @@index([shiftId, openedAt])
+  @@map("campaign_shift_attendance_sessions")
+}
+
+/// One volunteer's attendance on one shift (spec 4.1): check-in, check-out, where, and how.
+/// Points need a check-out and at least CAMPAIGN_ATTENDANCE_MIN_PRESENCE_RATIO of the shift.
+model CampaignShiftAttendance {
+  id                String    @id @default(uuid()) @db.Uuid
+  campaignId        String    @map("campaign_id") @db.Uuid
+  shiftId           String    @map("shift_id") @db.Uuid
+  userId            String    @map("user_id") @db.Uuid
+  checkInAt         DateTime  @map("check_in_at")
+  checkOutAt        DateTime? @map("check_out_at")
+  checkInLatitude   Float?    @map("check_in_latitude")
+  checkInLongitude  Float?    @map("check_in_longitude")
+  checkInAccuracy   Float?    @map("check_in_accuracy")
+  checkOutLatitude  Float?    @map("check_out_latitude")
+  checkOutLongitude Float?    @map("check_out_longitude")
+  checkOutAccuracy  Float?    @map("check_out_accuracy")
+  /// How the check-out happened: "scan", "session_close" or "manual".
+  checkOutMethod    String?   @map("check_out_method") @db.VarChar(20)
+  /// Added by a leader or manager (battery, broken phone); `manualReason` is required then.
+  manual            Boolean   @default(false)
+  manualReason      String?   @map("manual_reason")
+  recordedBy        String?   @map("recorded_by") @db.Uuid
+  /// Held a live registration for this shift when checking in ("đăng ký trước").
+  preRegistered     Boolean   @map("pre_registered")
+  /// The scan reached the server later than it was made (synced after a weak signal).
+  offline           Boolean   @default(false)
+  sessionId         String?   @map("session_id") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  campaign Campaign      @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  shift    CampaignShift @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+
+  @@unique([shiftId, userId])
+  @@index([campaignId, userId])
+  @@map("campaign_shift_attendances")
 }

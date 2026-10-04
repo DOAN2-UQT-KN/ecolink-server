@@ -16,6 +16,7 @@ export type CampaignTransitionEvent =
   | "ban"
   | "expire"
   | "cancel_org_locked"
+  | "cancel"
   | "submit_completion"
   | "approve_completion"
   | "reject_completion";
@@ -109,6 +110,20 @@ export const CAMPAIGN_TRANSITIONS: readonly TransitionRule[] = [
     ],
     to: CampaignStatus.CANCELLED,
     actors: ["admin"],
+    reasonRequired: true,
+  },
+  {
+    // Spec 3.6: the creator or an owner cancels an approved campaign, with a reason. Under review
+    // again (12 / 19) only once approved; the service checks `approvedAt`.
+    event: "cancel",
+    from: [
+      CampaignStatus.UPCOMING,
+      CampaignStatus.ACTIVE,
+      CampaignStatus.PENDING_REVIEW,
+      CampaignStatus.NEEDS_REVISION,
+    ],
+    to: CampaignStatus.CANCELLED,
+    actors: ["manager"],
     reasonRequired: true,
   },
   {

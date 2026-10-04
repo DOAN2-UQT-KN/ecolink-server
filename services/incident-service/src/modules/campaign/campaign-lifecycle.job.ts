@@ -1,5 +1,6 @@
 import { campaignLifecycleService } from "./campaign-lifecycle.service";
 import { sendRegistrationDigests } from "./campaign_registration/registration-digest";
+import { sendShiftReminders } from "./campaign_registration/shift-reminders";
 import { sendOverMaxAlerts, sendUnderstaffedAlerts } from "./campaign_registration/staffing-alerts";
 
 const INTERVAL_MS = Number(
@@ -32,6 +33,10 @@ async function tick(): Promise<void> {
         `[CampaignLifecycle] staffing alerts: ${understaffed} understaffed day(s), ${overMax} shift(s) over max`,
       );
     }
+    const reminders = await sendShiftReminders();
+    if (reminders > 0) {
+      console.log(`[CampaignLifecycle] ${reminders} shift reminder(s) queued`);
+    }
     const digests = await sendRegistrationDigests();
     if (digests > 0) {
       console.log(`[CampaignLifecycle] registration digest sent for ${digests} campaign(s)`);
@@ -48,7 +53,8 @@ async function tick(): Promise<void> {
  * out of time before approval: under review or waiting for changes past their start time,
  * waiting for changes past the 7-day deadline, and drafts left untouched for 30 days. After the
  * digest hour it also sends managers the day's registration digest; it also tells managers about
- * shifts short of volunteers 72 h before their day, and shifts over their expected maximum. Every 15 minutes by default, so a campaign expires close to its start.
+ * shifts short of volunteers 72 h before their day, and shifts over their expected maximum; and
+ * reminds volunteers 24 h and 1 h before each day's gathering time. Every 15 minutes by default, so a campaign expires close to its start.
  */
 export function startCampaignLifecycleJob(): void {
   if (process.env.CAMPAIGN_LIFECYCLE_ENABLED === "false") {

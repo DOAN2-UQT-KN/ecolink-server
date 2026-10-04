@@ -324,7 +324,7 @@ export class CampaignRegistrationService {
     const userIds = [...new Set(rows.map((r) => r.userId))];
     const [profiles, checkedIn] = await Promise.all([
       fetchOrganizationOwnersByUserIds(userIds),
-      campaignAttendanceRepository.findCheckedInAtByCampaignAndUserIds(campaignId, userIds),
+      campaignAttendanceRepository.findCheckInsByShift(campaignId, userIds),
     ]);
 
     return campaign.shifts
@@ -346,7 +346,7 @@ export class CampaignRegistrationService {
               bio: null,
             },
             registeredAt: r.createdAt,
-            checkedInAt: checkedIn.get(r.userId) ?? null,
+            checkedInAt: checkedIn.get(`${s.id}:${r.userId}`) ?? null,
           }));
         return {
           shiftId: s.id,

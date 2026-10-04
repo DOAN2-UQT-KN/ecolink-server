@@ -256,6 +256,8 @@ export interface CampaignResponse {
   /** True when the viewer is the campaign creator or an assigned campaign manager. */
   canManageCampaign?: boolean;
   canDeleteCampaign?: boolean;
+  /** The viewer may cancel it now: creator or owner, and a cancellable status (spec 3.6). */
+  canCancelCampaign?: boolean;
 }
 
 export interface AddCampaignManagersRequest {

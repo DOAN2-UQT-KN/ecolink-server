@@ -392,11 +392,6 @@ export const HTTP_STATUS = {
     "Campaign managers must be active members of the campaign's organization",
     "CAMPAIGN_MANAGER_NOT_MEMBER",
   ),
-  CAMPAIGN_USE_RESCHEDULE: createStatus(
-    409,
-    "Times of existing days and shifts change through rescheduling, not editing",
-    "CAMPAIGN_USE_RESCHEDULE",
-  ),
   SHIFT_MIN_REQUIRED: createStatus(
     422,
     "A running shift needs at least one volunteer; turn the shift off instead",
@@ -406,6 +401,56 @@ export const HTTP_STATUS = {
     422,
     "A shift leader must be one of the campaign's managers or an owner of its organization",
     "CAMPAIGN_LEADER_NOT_MANAGER",
+  ),
+  CAMPAIGN_NOT_CANCELLABLE: createStatus(
+    409,
+    "Only an upcoming or running campaign, or an approved one under review again, can be cancelled",
+    "CAMPAIGN_NOT_CANCELLABLE",
+  ),
+  CAMPAIGN_HAS_VOLUNTEERS: createStatus(
+    409,
+    "Volunteers have registered for this campaign; cancel it instead of deleting it",
+    "CAMPAIGN_HAS_VOLUNTEERS",
+  ),
+  ATTENDANCE_QR_INVALID: createStatus(
+    422,
+    "The QR code has expired; please scan again",
+    "ATTENDANCE_QR_INVALID",
+  ),
+  ATTENDANCE_OUTSIDE_AREA: createStatus(
+    422,
+    "You are not within the campaign area",
+    "ATTENDANCE_OUTSIDE_AREA",
+  ),
+  ATTENDANCE_GPS_INACCURATE: createStatus(
+    422,
+    "Your location is not precise enough; turn on precise location and scan again",
+    "ATTENDANCE_GPS_INACCURATE",
+  ),
+  ATTENDANCE_NOT_OPEN: createStatus(
+    409,
+    "Attendance for this shift is not open",
+    "ATTENDANCE_NOT_OPEN",
+  ),
+  ATTENDANCE_SELF_CHECK_IN: createStatus(
+    403,
+    "You cannot check yourself in to a shift you run; scan the code of a shift another manager runs",
+    "ATTENDANCE_SELF_CHECK_IN",
+  ),
+  ATTENDANCE_MANUAL_LIMIT: createStatus(
+    409,
+    "Manual attendance is limited to 20% of the people present on the shift",
+    "ATTENDANCE_MANUAL_LIMIT",
+  ),
+  ATTENDANCE_ALREADY_RECORDED: createStatus(
+    409,
+    "This person already has attendance on this shift",
+    "ATTENDANCE_ALREADY_RECORDED",
+  ),
+  ATTENDANCE_LEGACY_GONE: createStatus(
+    410,
+    "Attendance is now per shift; update the app and scan the shift's QR code",
+    "ATTENDANCE_LEGACY_GONE",
   ),
   CAMPAIGN_MANAGER_LEADS_SHIFTS: createStatus(
     409,

@@ -73,6 +73,8 @@ interface PlannedDay {
   existing: Day | null;
   startAt: Date;
   endAt: Date;
+  /** An existing day given new times. */
+  moved: boolean;
 }
 
 interface PlannedPoint {
@@ -116,6 +118,27 @@ const samePoint = (a: NormalizedMeetingPoint, b: NormalizedMeetingPoint) =>
   stable({ ...a, reportIds: [...a.reportIds].sort() }) ===
   stable({ ...b, reportIds: [...b.reportIds].sort() });
 
+/** A day's new times: valid, and at least the creation lead time from now. */
+function timesOf(d: { startAt: string; endAt: string }, now: Date): { startAt: Date; endAt: Date } {
+  const startAt = new Date(d.startAt);
+  const endAt = new Date(d.endAt);
+  if (Number.isNaN(startAt.getTime()) || Number.isNaN(endAt.getTime())) {
+    throw invalid("Every day needs a valid start and end time");
+  }
+  if (startAt.getTime() < now.getTime() + CAMPAIGN_MIN_LEAD_HOURS * HOUR_MS) {
+    throw new HttpError(HTTP_STATUS.CAMPAIGN_INVALID, {
+      details: [
+        {
+          field: "days",
+          code: "START_TOO_SOON",
+          message: `A new or moved day must start at least ${CAMPAIGN_MIN_LEAD_HOURS} hours from now`,
+        },
+      ],
+    });
+  }
+  return { startAt, endAt };
+}
+
 /** What a request changes, sorted into the groups of spec 3.5. */
 export interface EditPlan {
   free: Partial<Record<(typeof FREE_FIELDS)[number], string | null>>;
@@ -137,8 +160,8 @@ export interface EditPlan {
 
 /**
  * Sorts a request into free fields, shift numbers and important fields (spec 3.5), matching
- * days and meeting points by id. Times of existing days and shifts are refused: they change
- * through rescheduling (3.6).
+ * days and meeting points by id. New times for an existing day or shift are an important change;
+ * like a new day, they start at least the lead time from now, and only before they start.
  */
 export function planPostApprovalEdit(
   existing: CampaignWithReports,
@@ -192,28 +215,21 @@ export function planPostApprovalEdit(
       if (d.id) {
         const day = dayById.get(d.id);
         if (!day) throw invalid("A day does not belong to this campaign");
-        if (request.days !== undefined && (!sameMs(new Date(d.startAt), day.startAt) || !sameMs(new Date(d.endAt), day.endAt))) {
-          throw new HttpError(HTTP_STATUS.CAMPAIGN_USE_RESCHEDULE);
+        if (
+          request.days === undefined ||
+          (sameMs(new Date(d.startAt), day.startAt) && sameMs(new Date(d.endAt), day.endAt))
+        ) {
+          return { existing: day, startAt: day.startAt, endAt: day.endAt, moved: false };
         }
-        return { existing: day, startAt: day.startAt, endAt: day.endAt };
+        if (day.startAt.getTime() <= now.getTime()) {
+          throw new HttpError(HTTP_STATUS.SHIFT_ALREADY_STARTED.withMessage("This day has already started"));
+        }
+        const { startAt, endAt } = timesOf(d, now);
+        major = true;
+        return { existing: day, startAt, endAt, moved: true };
       }
-      const startAt = new Date(d.startAt);
-      const endAt = new Date(d.endAt);
-      if (Number.isNaN(startAt.getTime()) || Number.isNaN(endAt.getTime())) {
-        throw invalid("Every day needs a valid start and end time");
-      }
-      if (startAt.getTime() < now.getTime() + CAMPAIGN_MIN_LEAD_HOURS * HOUR_MS) {
-        throw new HttpError(HTTP_STATUS.CAMPAIGN_INVALID, {
-          details: [
-            {
-              field: "days",
-              code: "START_TOO_SOON",
-              message: `A new day must start at least ${CAMPAIGN_MIN_LEAD_HOURS} hours from now`,
-            },
-          ],
-        });
-      }
-      return { existing: null, startAt, endAt };
+      const { startAt, endAt } = timesOf(d, now);
+      return { existing: null, startAt, endAt, moved: false };
     },
   );
   if (new Set(requestDays.filter((d) => d.existing).map((d) => d.existing!.id)).size !==
@@ -309,8 +325,13 @@ export function planPostApprovalEdit(
         const start = asked.startAt ? new Date(asked.startAt) : day.startAt;
         const end = asked.endAt ? new Date(asked.endAt) : day.endAt;
         const gather = asked.gatherAt ? new Date(asked.gatherAt) : null;
-        if (!sameMs(start, current.startAt) || !sameMs(end, current.endAt) || !sameMs(gather, current.gatherAt)) {
-          throw new HttpError(HTTP_STATUS.CAMPAIGN_USE_RESCHEDULE);
+        const timesChanged =
+          !sameMs(start, current.startAt) || !sameMs(end, current.endAt) || !sameMs(gather, current.gatherAt);
+        if (timesChanged) {
+          if (current.startAt.getTime() <= now.getTime()) {
+            throw new HttpError(HTTP_STATUS.SHIFT_ALREADY_STARTED);
+          }
+          major = true;
         }
         const min = Number(asked.minVolunteers ?? 0);
         const max = asked.maxVolunteers == null ? null : Number(asked.maxVolunteers);
@@ -328,6 +349,7 @@ export function planPostApprovalEdit(
           startAt: current.startAt,
           endAt: current.endAt,
           gatherAt: current.gatherAt,
+          ...(timesChanged ? { startAt: start, endAt: end, gatherAt: gather } : {}),
           minVolunteers: min,
           maxVolunteers: max,
           leaderUserId: leader,
@@ -446,7 +468,8 @@ async function assertEditedCampaignValid(
   );
   const value = <K extends (typeof FREE_FIELDS)[number]>(key: K) =>
     plan.free[key] !== undefined ? plan.free[key] : (existing[key] ?? null);
-  const firstDayIsNew = plan.days[0] && !plan.days[0].existing;
+  // A new or moved first day must keep the lead time; an untouched one may well be close by now.
+  const firstDayIsNew = plan.days[0] && (!plan.days[0].existing || plan.days[0].moved);
   const issues = validateCampaignForSubmit(
     {
       title: value("title") ?? "",
@@ -559,7 +582,15 @@ export async function applyPostApprovalEdit(
       const dayIds: string[] = [];
       for (const [index, day] of plan.days.entries()) {
         if (day.existing) {
-          await tx.campaignDay.update({ where: { id: day.existing.id }, data: { sortOrder: index } });
+          await tx.campaignDay.update({
+            where: { id: day.existing.id },
+            data: {
+              sortOrder: index,
+              ...(day.moved
+                ? { startAt: day.startAt, endAt: day.endAt, understaffedNotifiedAt: null }
+                : {}),
+            },
+          });
           dayIds.push(day.existing.id);
         } else {
           const created = await tx.campaignDay.create({
@@ -628,7 +659,10 @@ export async function applyPostApprovalEdit(
       for (const sh of plan.shifts) {
         if (sh.existing) {
           const e = sh.existing;
+          const timesChanged =
+            !sameMs(sh.startAt, e.startAt) || !sameMs(sh.endAt, e.endAt) || !sameMs(sh.gatherAt, e.gatherAt);
           if (
+            timesChanged ||
             sh.minVolunteers !== e.minVolunteers ||
             sh.maxVolunteers !== e.maxVolunteers ||
             sh.leaderUserId !== e.leaderUserId
@@ -636,6 +670,7 @@ export async function applyPostApprovalEdit(
             await tx.campaignShift.update({
               where: { id: e.id },
               data: {
+                ...(timesChanged ? { startAt: sh.startAt, endAt: sh.endAt, gatherAt: sh.gatherAt } : {}),
                 minVolunteers: sh.minVolunteers,
                 maxVolunteers: sh.maxVolunteers,
                 leaderUserId: sh.leaderUserId,
@@ -657,6 +692,26 @@ export async function applyPostApprovalEdit(
             maxVolunteers: sh.maxVolunteers,
             leaderUserId: sh.leaderUserId,
           },
+        });
+      }
+
+      // New times: the days concerned are reminded again at their new gathering time (3.7).
+      const retimedDayIds = new Set([
+        ...plan.days.filter((d) => d.moved && d.existing).map((d) => d.existing!.id),
+        ...plan.shifts
+          .filter(
+            (sh) =>
+              sh.existing &&
+              (!sameMs(sh.startAt, sh.existing.startAt) ||
+                !sameMs(sh.endAt, sh.existing.endAt) ||
+                !sameMs(sh.gatherAt, sh.existing.gatherAt)),
+          )
+          .map((sh) => sh.existing!.dayId),
+      ]);
+      if (retimedDayIds.size > 0) {
+        await tx.campaignShiftRegistration.updateMany({
+          where: { leftAt: null, shift: { dayId: { in: [...retimedDayIds] } } },
+          data: { reminded24hAt: null, reminded1hAt: null },
         });
       }
 

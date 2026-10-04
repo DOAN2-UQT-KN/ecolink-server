@@ -90,6 +90,7 @@ export function notificationKindToPreferenceKey(
     case "CAMPAIGN_REGISTRATION_DIGEST":
     case "CAMPAIGN_SHIFT_UNDERSTAFFED":
     case "CAMPAIGN_SHIFT_OVER_MAX":
+    case "CAMPAIGN_SHIFT_REMINDER":
     case "VOLUNTEER_APPROVED":
     case "VOLUNTEER_REJECTED":
       return "volunteerRequest";

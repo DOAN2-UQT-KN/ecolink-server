@@ -35,6 +35,8 @@ import type {
 } from "./campaign.dto";
 import { CAMPAIGN_INCLUDE, type CampaignWithReports } from "./campaign.entity";
 import { enqueueWebsiteNotificationsToUsers } from "./notification-jobs.client";
+import { emitOutbox } from "../../outbox/outbox.writer";
+import { OutboxEventType } from "../../outbox/outbox.types";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -331,6 +333,17 @@ export function diffSnapshots(
     }
   }
   return diff;
+}
+
+/** Spec 3.6: upcoming, running, or approved and under review again after an edit. */
+export function isCancellable(campaign: { status: number; approvedAt?: Date | null }): boolean {
+  return (
+    campaign.status === CampaignStatus.UPCOMING ||
+    campaign.status === CampaignStatus.ACTIVE ||
+    (campaign.approvedAt != null &&
+      (campaign.status === CampaignStatus.PENDING_REVIEW ||
+        campaign.status === CampaignStatus.NEEDS_REVISION))
+  );
 }
 
 export class CampaignLifecycleService {
@@ -947,6 +960,76 @@ export class CampaignLifecycleService {
       cancelled.push(await this.loadInTx(tx, row.id));
     }
     return cancelled;
+  }
+
+  /**
+   * Spec 3.6: the creator or an owner cancels an approved campaign (upcoming, running, or under
+   * review again after an edit), with a reason. Its reports go back to the waiting list,
+   * registrations stay as history, nobody gets points (completion never follows). Every
+   * registered volunteer and the rest of the team hear, through the outbox.
+   */
+  async cancel(campaignId: string, userId: string, reason: string): Promise<CampaignWithReports> {
+    const campaign = await prisma.campaign.findFirst({
+      where: { id: campaignId, deletedAt: null },
+      include: CAMPAIGN_INCLUDE,
+    });
+    if (!campaign) throw new HttpError(HTTP_STATUS.NOT_FOUND.withMessage("Campaign not found"));
+    await campaignAccessService.assertCanDelete(campaign, userId);
+    if (!isCancellable(campaign)) throw new HttpError(HTTP_STATUS.CAMPAIGN_NOT_CANCELLABLE);
+    const text = reason?.trim() ?? "";
+
+    return prisma.$transaction(
+      async (tx) => {
+        await transitionCampaign(tx, {
+          campaignId,
+          event: "cancel",
+          fromStatus: campaign.status,
+          actor: "manager",
+          actorId: userId,
+          reason: text,
+          data: { rejectReason: text, revisionDeadline: null },
+        });
+        await this.releaseAllReports(tx, campaignId, userId);
+
+        const [volunteers, owners] = await Promise.all([
+          tx.campaignShiftRegistration.findMany({
+            where: { campaignId, leftAt: null },
+            distinct: ["userId"],
+            select: { userId: true },
+          }),
+          organizationMemberRepository.findOwnerUserIds(campaign.organizationId),
+        ]);
+        const volunteerIds = volunteers.map((v) => v.userId);
+        const teamIds = [
+          ...new Set([
+            ...(campaign.createdBy ? [campaign.createdBy] : []),
+            ...campaign.campaignManagers.map((m) => m.userId),
+            ...owners,
+          ]),
+        ].filter((id) => id !== userId && !volunteerIds.includes(id));
+        const payload = {
+          campaignId,
+          reason: text,
+          byOrganizer: "1",
+          ...campaignTitleNotificationPayload(campaign),
+        };
+        for (const [audience, userIds] of [
+          ["volunteers", volunteerIds],
+          ["team", teamIds],
+        ] as const) {
+          if (userIds.length === 0) continue;
+          await emitOutbox(tx, {
+            aggregateType: "campaign",
+            aggregateId: campaignId,
+            eventType: OutboxEventType.WEBSITE_NOTIFICATION,
+            dedupKey: `CAMPAIGN_CANCELLED:${campaignId}:${audience}`,
+            payload: { kind: "CAMPAIGN_CANCELLED", userIds, payload },
+          });
+        }
+        return this.loadInTx(tx, campaignId);
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
   }
 
   /** Creator and owners of each campaign cancelled because its organization was locked. */
