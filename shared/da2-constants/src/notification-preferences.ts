@@ -100,7 +100,6 @@ export function notificationKindToPreferenceKey(
       return "reportStatus";
     case "CAMPAIGN_SUBMISSION_PENDING_REVIEW":
     case "CAMPAIGN_SUBMISSION_APPROVED":
-    case "TASK_ASSIGNED":
       return "campaignNew";
     default:
       return null;

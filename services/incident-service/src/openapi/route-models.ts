@@ -54,31 +54,6 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
   "GET /api/v1/campaigns/all": {
     responseData: "CampaignsListEnvelopeData",
   },
-  "GET /api/v1/campaigns/tasks/my-assigned": {
-    responseData: "TasksListEnvelopeData",
-  },
-  "GET /api/v1/campaigns/tasks/:taskId": {
-    responseData: "TaskOneEnvelopeData",
-  },
-  "PUT /api/v1/campaigns/tasks/:taskId": {
-    requestBody: "UpdateCampaignTaskBody",
-    responseData: "TaskOneEnvelopeData",
-  },
-  "DELETE /api/v1/campaigns/tasks/:taskId": {
-    omitData: true,
-  },
-  "POST /api/v1/campaigns/tasks/:taskId/assign": {
-    requestBody: "AssignVolunteerBody",
-    responseData: "TaskAssignmentEnvelopeData",
-  },
-  "POST /api/v1/campaigns/tasks/:taskId/unassign": {
-    requestBody: "AssignVolunteerBody",
-    omitData: true,
-  },
-  "PUT /api/v1/campaigns/tasks/:taskId/status": {
-    requestBody: "TaskStatusUpdateBody",
-    responseData: "TaskOneEnvelopeData",
-  },
   "GET /api/v1/campaigns/:id": {
     responseData: "CampaignOneEnvelopeData",
   },
@@ -108,13 +83,6 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
   "GET /api/v1/campaigns/:id/managers": {
     query: "CampaignManagersListQuery",
     responseData: "PaginatedManagersEnvelopeData",
-  },
-  "POST /api/v1/campaigns/:id/tasks": {
-    requestBody: "CreateCampaignTaskBody",
-    responseData: "TaskOneEnvelopeData",
-  },
-  "GET /api/v1/campaigns/:id/tasks": {
-    responseData: "TasksListEnvelopeData",
   },
   "GET /api/v1/campaigns/:id/registration-options": {
     responseData: "RegistrationOptions",

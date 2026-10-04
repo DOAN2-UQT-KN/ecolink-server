@@ -138,7 +138,6 @@ model Campaign {
   shiftAttendanceSessions         CampaignShiftAttendanceSession[]
   shiftResults                    CampaignShiftResult[]
   shiftMedia                      CampaignShiftMedia[]
-  campaignTasks                   CampaignTask[]
   campaignSubmissions             CampaignSubmission[]
   campaignResults                 CampaignResult[]
   campaignCompletionVerifications CampaignCompletionVerification[]
@@ -168,8 +167,6 @@ model Media {
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
-  campaignTaskResultFiles CampaignTaskResultFile[]
-
   @@index([type])
   @@index([deletedAt])
   @@map("media")
@@ -196,101 +193,6 @@ model ReportMediaFile {
   @@index([reportId])
   @@index([mediaId])
   @@map("report_media_files")
-}
-
-model CampaignTask {
-  id         String  @id @default(uuid()) @db.Uuid
-  campaignId String? @map("campaign_id") @db.Uuid
-
-  title         String? @db.VarChar(200)
-  titleVi       String? @map("title_vi") @db.VarChar(200)
-  titleEn       String? @map("title_en") @db.VarChar(200)
-  description   String?
-  descriptionVi String? @map("description_vi")
-  descriptionEn String? @map("description_en")
-  priority      Int     @default(2)
-
-  status Int @default(12)
-
-  scheduledDate DateTime? @map("scheduled_date")
-  scheduledTime String?   @map("scheduled_time") @db.VarChar(50)
-
-  createdBy String? @map("created_by") @db.Uuid
-  updatedBy String? @map("updated_by") @db.Uuid
-
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
-  deletedAt DateTime? @map("deleted_at")
-
-  // Relations
-  campaign                Campaign?                @relation(fields: [campaignId], references: [id])
-  campaignTaskAssignments CampaignTaskAssignment[]
-  campaignTaskResult      CampaignTaskResult?
-
-  @@index([campaignId])
-  @@index([status])
-  @@map("campaign_tasks")
-}
-
-/**
- * Optional evidence / notes submitted for a campaign task (one row per task).
- */
-model CampaignTaskResult {
-  id             String  @id @default(uuid()) @db.Uuid
-  campaignTaskId String  @unique @map("campaign_task_id") @db.Uuid
-  description    String?
-  descriptionVi  String? @map("description_vi")
-  descriptionEn  String? @map("description_en")
-
-  createdBy String? @map("created_by") @db.Uuid
-  updatedBy String? @map("updated_by") @db.Uuid
-
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-
-  campaignTask CampaignTask             @relation(fields: [campaignTaskId], references: [id], onDelete: Cascade)
-  files        CampaignTaskResultFile[]
-
-  @@map("campaign_task_results")
-}
-
-model CampaignTaskResultFile {
-  id                   String @id @default(uuid()) @db.Uuid
-  campaignTaskResultId String @map("campaign_task_result_id") @db.Uuid
-  mediaId              String @map("media_id") @db.Uuid
-
-  createdBy String? @map("created_by") @db.Uuid
-  updatedBy String? @map("updated_by") @db.Uuid
-
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-
-  campaignTaskResult CampaignTaskResult @relation(fields: [campaignTaskResultId], references: [id], onDelete: Cascade)
-  media              Media              @relation(fields: [mediaId], references: [id])
-
-  @@index([campaignTaskResultId])
-  @@index([mediaId])
-  @@map("campaign_task_result_files")
-}
-
-model CampaignTaskAssignment {
-  id             String  @id @default(uuid()) @db.Uuid
-  campaignTaskId String? @map("campaign_task_id") @db.Uuid
-  volunteerId    String? @map("volunteer_id") @db.Uuid
-
-  createdBy String? @map("created_by") @db.Uuid
-  updatedBy String? @map("updated_by") @db.Uuid
-
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
-  deletedAt DateTime? @map("deleted_at")
-
-  // Relations
-  campaignTask CampaignTask? @relation(fields: [campaignTaskId], references: [id])
-
-  @@index([campaignTaskId])
-  @@index([volunteerId])
-  @@map("campaign_task_assignments")
 }
 
 model CampaignJoiningRequest {

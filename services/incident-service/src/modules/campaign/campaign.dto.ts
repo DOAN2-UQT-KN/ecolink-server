@@ -383,35 +383,6 @@ export interface PaginatedManagersEnvelopeData {
   totalPages: number;
 }
 
-export interface AssignVolunteerBody {
-  volunteerId: string;
-}
-
-export interface TaskStatusUpdateBody {
-  status: number;
-}
-
-export interface CreateCampaignTaskBody {
-  title: string;
-  description?: string;
-  priority?: 1 | 2 | 3;
-  scheduledDate?: string;
-  scheduledTime?: string;
-}
-
-export interface UpdateCampaignTaskBody {
-  title?: string;
-  description?: string;
-  status?: number;
-  priority?: 1 | 2 | 3;
-  scheduledDate?: string;
-  scheduledTime?: string;
-  result?: {
-    description?: string;
-    file?: string[];
-  };
-}
-
 export interface RemoveCampaignManagerBody {
   userId: string;
 }
@@ -488,16 +459,4 @@ export interface VolunteersListEnvelopeData {
 
 export interface ManagersListEnvelopeData {
   managers: object[];
-}
-
-export interface TaskOneEnvelopeData {
-  task: object;
-}
-
-export interface TasksListEnvelopeData {
-  tasks: object[];
-}
-
-export interface TaskAssignmentEnvelopeData {
-  assignment: object;
 }

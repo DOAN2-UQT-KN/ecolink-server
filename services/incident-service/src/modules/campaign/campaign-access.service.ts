@@ -17,7 +17,7 @@ export interface CampaignAccess {
   isManager: boolean;
   /** The viewer's active role in the campaign's organization, or null. */
   orgRole: string | null;
-  /** Edit, tasks, join requests, attendance, submissions, managers, SOS. */
+  /** Edit, shift results, join requests, attendance, submissions, managers, SOS. */
   canManage: boolean;
   canDelete: boolean;
 }

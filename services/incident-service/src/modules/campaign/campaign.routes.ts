@@ -70,74 +70,6 @@ router.get(
 );
 
 /**
- * @route   GET /api/v1/campaigns/tasks/my-assigned
- * @desc    Tasks assigned to the current user (volunteer)
- * @access  Private
- */
-router.get(
-  "/tasks/my-assigned",
-  authenticate,
-  campaignController.getMyAssignedTasks,
-);
-
-/**
- * @route   GET /api/v1/campaigns/tasks/:taskId
- * @desc    Task detail with assignments
- * @access  Private
- */
-router.get("/tasks/:taskId", authenticate, campaignController.getTaskById);
-
-/**
- * @route   PUT /api/v1/campaigns/tasks/:taskId
- * @desc    Update a task
- * @access  Private
- */
-router.put("/tasks/:taskId", authenticate, campaignController.updateTask);
-
-/**
- * @route   DELETE /api/v1/campaigns/tasks/:taskId
- * @desc    Soft-delete a task
- * @access  Private
- */
-router.delete("/tasks/:taskId", authenticate, campaignController.deleteTask);
-
-/**
- * @route   POST /api/v1/campaigns/tasks/:taskId/assign
- * @desc    Assign a volunteer to a task
- * @access  Private
- * @body    { volunteerId }
- */
-router.post(
-  "/tasks/:taskId/assign",
-  authenticate,
-  campaignController.assignTask,
-);
-
-/**
- * @route   POST /api/v1/campaigns/tasks/:taskId/unassign
- * @desc    Unassign a volunteer from a task
- * @access  Private
- * @body    { volunteerId }
- */
-router.post(
-  "/tasks/:taskId/unassign",
-  authenticate,
-  campaignController.unassignTask,
-);
-
-/**
- * @route   PUT /api/v1/campaigns/tasks/:taskId/status
- * @desc    Update task status (assigned volunteer)
- * @access  Private
- * @body    { status }
- */
-router.put(
-  "/tasks/:taskId/status",
-  authenticate,
-  campaignController.updateTaskStatus,
-);
-
-/**
  * @route   GET /api/v1/campaigns/:id
  * @desc    Get campaign by ID
  * @access  Private
@@ -364,7 +296,7 @@ router.put("/:id", authenticate, campaignController.updateCampaign);
 router.delete("/:id", authenticate, campaignController.deleteCampaign);
 
 // =====================
-// Campaign managers & tasks (scoped by campaign id)
+// Campaign managers (scoped by campaign id)
 // =====================
 
 /**
@@ -395,19 +327,6 @@ router.get(
   authenticate,
   campaignController.getCampaignManagers,
 );
-
-/**
- * @route   POST /api/v1/campaigns/:id/tasks
- * @access  Private
- * @body    { title, description?, priority?: 1|2|3, scheduledDate?, scheduledTime? }
- */
-router.post("/:id/tasks", authenticate, campaignController.createTask);
-
-/**
- * @route   GET /api/v1/campaigns/:id/tasks
- * @access  Private
- */
-router.get("/:id/tasks", authenticate, campaignController.getCampaignTasks);
 
 // =====================
 // Joining Request Routes

@@ -1375,7 +1375,7 @@ export class CampaignService {
   }
 
   /**
-   * Manager: active campaign (all tasks done) → awaiting final admin approval.
+   * Manager: active campaign (all shifts ended) → awaiting final admin approval.
    * `INREVIEW` is accepted only for campaigns already in that legacy status.
    */
   async submitCampaignCompletionForAdminApproval(
@@ -1393,17 +1393,6 @@ export class CampaignService {
     }
 
     await campaignAccessService.assertCanManage(existing, userId);
-
-    const incompleteTaskCount = await prisma.campaignTask.count({
-      where: {
-        campaignId: id,
-        deletedAt: null,
-        status: { not: GlobalStatus._STATUS_COMPLETED },
-      },
-    });
-    if (incompleteTaskCount > 0) {
-      throw new Error("Some tasks is not completed");
-    }
 
     const canSubmitFromStatus =
       existing.status === GlobalStatus._STATUS_ACTIVE ||
@@ -1503,17 +1492,6 @@ export class CampaignService {
       throw new Error(
         "Campaign must await admin completion approval before it can be finalized",
       );
-    }
-
-    const incompleteTaskCount = await prisma.campaignTask.count({
-      where: {
-        campaignId: id,
-        deletedAt: null,
-        status: { not: GlobalStatus._STATUS_COMPLETED },
-      },
-    });
-    if (incompleteTaskCount > 0) {
-      throw new Error("Some tasks is not completed");
     }
 
     const tier = await rewardServiceClient.getDifficultyByLevel(
