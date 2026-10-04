@@ -136,6 +136,8 @@ model Campaign {
   campaignAttendanceCheckIns      CampaignAttendanceCheckIn[]
   shiftAttendances                CampaignShiftAttendance[]
   shiftAttendanceSessions         CampaignShiftAttendanceSession[]
+  shiftResults                    CampaignShiftResult[]
+  shiftMedia                      CampaignShiftMedia[]
   campaignTasks                   CampaignTask[]
   campaignSubmissions             CampaignSubmission[]
   campaignResults                 CampaignResult[]
@@ -1304,6 +1306,10 @@ model CampaignShift {
   leaderUserId   String?   @map("leader_user_id") @db.Uuid
   /// Managers were told the shift is over its expected maximum; cleared once it is back under.
   overMaxNotifiedAt DateTime? @map("over_max_notified_at")
+  /// Actual end when the shift was ended early (spec 4.2); its effective end is `endedAt ?? endAt`.
+  endedAt        DateTime? @map("ended_at")
+  /// Last daily reminder that the shift's result is missing (spec 4.2).
+  resultRemindedAt DateTime? @map("result_reminded_at")
   createdAt      DateTime  @default(now()) @map("created_at")
 
   campaign     Campaign             @relation(fields: [campaignId], references: [id], onDelete: Cascade)
@@ -1312,6 +1318,8 @@ model CampaignShift {
   registrations CampaignShiftRegistration[]
   attendances   CampaignShiftAttendance[]
   attendanceSessions CampaignShiftAttendanceSession[]
+  result        CampaignShiftResult?
+  media         CampaignShiftMedia[]
 
   @@unique([dayId, meetingPointId])
   @@index([campaignId])
@@ -1453,4 +1461,65 @@ model CampaignShiftAttendance {
   @@unique([shiftId, userId])
   @@index([campaignId, userId])
   @@map("campaign_shift_attendances")
+}
+
+/// The result of a shift (spec 4.2), submitted by its leader or a campaign manager; a shift past
+/// its end is "ended" only once it has one. Editable until the campaign is marked done.
+model CampaignShiftResult {
+  id          String   @id @default(uuid()) @db.Uuid
+  campaignId  String   @map("campaign_id") @db.Uuid
+  shiftId     String   @unique @map("shift_id") @db.Uuid
+  description String
+  wasteBags   Int?     @map("waste_bags")
+  wasteKg     Float?   @map("waste_kg")
+  submittedBy String   @map("submitted_by") @db.Uuid
+  submittedAt DateTime @default(now()) @map("submitted_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  campaign Campaign                    @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  shift    CampaignShift               @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  reports  CampaignShiftResultReport[]
+
+  @@index([campaignId])
+  @@map("campaign_shift_results")
+}
+
+/// A trash report handled on the shift: "cleaned" or "partial", with before and after photos.
+/// A report of the meeting point that is not listed was not handled.
+model CampaignShiftResultReport {
+  id         String   @id @default(uuid()) @db.Uuid
+  resultId   String   @map("result_id") @db.Uuid
+  reportId   String   @map("report_id") @db.Uuid
+  /// cleaned | partial
+  status     String   @db.VarChar(20)
+  beforeUrls String[] @map("before_urls")
+  afterUrls  String[] @map("after_urls")
+
+  result CampaignShiftResult @relation(fields: [resultId], references: [id], onDelete: Cascade)
+
+  @@unique([resultId, reportId])
+  @@index([reportId])
+  @@map("campaign_shift_result_reports")
+}
+
+/// A photo or video of a shift's activity (spec 4.2), added by a volunteer who attended or by the
+/// leader / a manager; the leader picks which go into the result (`includedInResult`).
+model CampaignShiftMedia {
+  id               String    @id @default(uuid()) @db.Uuid
+  campaignId       String    @map("campaign_id") @db.Uuid
+  shiftId          String    @map("shift_id") @db.Uuid
+  url              String
+  /// image | video
+  kind             String    @db.VarChar(10)
+  uploadedBy       String    @map("uploaded_by") @db.Uuid
+  includedInResult Boolean   @default(false) @map("included_in_result")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  deletedAt        DateTime? @map("deleted_at")
+
+  campaign Campaign      @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  shift    CampaignShift @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+
+  @@index([shiftId, createdAt])
+  @@index([campaignId])
+  @@map("campaign_shift_media")
 }

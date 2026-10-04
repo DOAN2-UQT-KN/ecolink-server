@@ -81,6 +81,7 @@ import { reportService } from "../report/report.service";
 import { findNearbyUserIds } from "./nearby-users";
 import { emitOutbox } from "../../outbox/outbox.writer";
 import { OutboxEventType } from "../../outbox/outbox.types";
+import { shiftResultService } from "./campaign_shift_result/shift-result.service";
 
 function assertDifficultyInRange(level: number): void {
   if (
@@ -1412,6 +1413,9 @@ export class CampaignService {
         "Campaign must be active before requesting completion approval",
       );
     }
+
+    // Spec 5.1: every shift that is on must be ended (with its result) first.
+    await shiftResultService.assertAllShiftsEnded(id);
 
     const updated = await prisma.$transaction(async (tx) => {
       await transitionCampaign(tx, {

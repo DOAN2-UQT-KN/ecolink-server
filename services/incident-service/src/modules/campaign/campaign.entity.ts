@@ -17,6 +17,7 @@ import {
   CampaignShiftResponse,
   MeetingPointResponse,
 } from "./campaign.dto";
+import { shiftStatusOf } from "./campaign_shift_result/shift-status";
 
 export type CampaignEntity = Campaign;
 
@@ -29,8 +30,11 @@ export type CampaignWithReports = Campaign & {
   campaignManagers: Pick<CampaignManager, "userId">[];
   meetingPoints?: MeetingPointWithReports[];
   days?: CampaignDay[];
-  shifts?: CampaignShift[];
+  shifts?: CampaignShiftWithResult[];
 };
+
+/** A shift with whether it has a result, which its status needs (spec 4.2). */
+export type CampaignShiftWithResult = CampaignShift & { result?: { id: string } | null };
 
 /** The relations every campaign read loads (managers, locked reports, meeting points). */
 export const CAMPAIGN_INCLUDE = {
@@ -48,7 +52,7 @@ export const CAMPAIGN_INCLUDE = {
     include: { reports: { select: { reportId: true } } },
   },
   days: { orderBy: { startAt: "asc" } },
-  shifts: true,
+  shifts: { include: { result: { select: { id: true } } } },
 } as const;
 
 export const toMeetingPointResponse = (
@@ -71,7 +75,10 @@ export const toCampaignDayResponse = (day: CampaignDay): CampaignDayResponse => 
   sortOrder: day.sortOrder,
 });
 
-export const toCampaignShiftResponse = (shift: CampaignShift): CampaignShiftResponse => ({
+export const toCampaignShiftResponse = (
+  shift: CampaignShiftWithResult,
+  now = new Date(),
+): CampaignShiftResponse => ({
   id: shift.id,
   dayId: shift.dayId,
   meetingPointId: shift.meetingPointId,
@@ -81,6 +88,8 @@ export const toCampaignShiftResponse = (shift: CampaignShift): CampaignShiftResp
   minVolunteers: shift.minVolunteers,
   maxVolunteers: shift.maxVolunteers,
   leaderUserId: shift.leaderUserId,
+  endedAt: shift.endedAt,
+  status: shiftStatusOf(shift, shift.result != null, now),
 });
 
 /** First start and last end of a campaign's days; null when it has none yet. */
@@ -149,7 +158,7 @@ export const toCampaignResponse = (
     suggestedMinVolunteers,
     days: (entity.days ?? []).map(toCampaignDayResponse),
     meetingPoints: (entity.meetingPoints ?? []).map(toMeetingPointResponse),
-    shifts: (entity.shifts ?? []).map(toCampaignShiftResponse),
+    shifts: (entity.shifts ?? []).map((s) => toCampaignShiftResponse(s)),
     greenPoints,
     currentMembers,
     maxMembers,

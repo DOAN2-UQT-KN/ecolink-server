@@ -1,4 +1,4 @@
-import type { CampaignRequirements } from "@da2/constants";
+import type { CampaignRequirements, ShiftStatusValue } from "@da2/constants";
 import type { OrganizationOwnerResponse } from "../organization/organization.dto";
 import type { ResourceVoteSummary } from "../vote/vote.dto";
 import type { CampaignCompletionVerificationSummary } from "./campaign_completion_verification/campaign_completion_verification.dto";
@@ -107,6 +107,10 @@ export interface CampaignShiftResponse {
   minVolunteers: number;
   maxVolunteers: number | null;
   leaderUserId: string | null;
+  /** Actual end when the shift was ended early (spec 4.2). */
+  endedAt: Date | null;
+  /** Derived status (spec 4.2): upcoming, running, awaiting_result, ended or off. */
+  status: ShiftStatusValue;
   /** Live registrations; only on responses that count them (campaign detail). */
   registeredCount?: number;
 }

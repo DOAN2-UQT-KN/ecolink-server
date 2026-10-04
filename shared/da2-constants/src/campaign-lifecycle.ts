@@ -147,6 +147,32 @@ export const CAMPAIGN_ATTENDANCE_MIN_PRESENCE_RATIO = 0.6;
 /** Manual attendance: at most this share of the people present on the shift. */
 export const CAMPAIGN_ATTENDANCE_MANUAL_MAX_RATIO = 0.2;
 
+/**
+ * Status of a shift (spec 4.2), derived from its times, its actual end when ended early and
+ * whether it has a result; never stored.
+ */
+export const SHIFT_STATUS = {
+  UPCOMING: "upcoming",
+  RUNNING: "running",
+  AWAITING_RESULT: "awaiting_result",
+  ENDED: "ended",
+  /** `minVolunteers` 0: the shift is turned off. */
+  OFF: "off",
+} as const;
+
+export type ShiftStatusValue = (typeof SHIFT_STATUS)[keyof typeof SHIFT_STATUS];
+
+/** A shift without a result this long after its end reminds its leader and managers, daily. */
+export const CAMPAIGN_SHIFT_RESULT_REMINDER_HOURS = 24;
+/** Trash reports handled on a shift: cleaned, or partly done. Not listed = not handled. */
+export const SHIFT_RESULT_REPORT_STATUS = {
+  CLEANED: "cleaned",
+  PARTIAL: "partial",
+} as const;
+/** Photos per trash report side (before / after) and activity media per shift. */
+export const SHIFT_RESULT_MAX_PHOTOS_PER_SIDE = 10;
+export const SHIFT_MEDIA_MAX_PER_SHIFT = 200;
+
 /** Warnings returned with a shift registration; none of them blocks it (spec 3.1). */
 export const CampaignRegistrationWarning = {
   OVERLAP: "OVERLAP",

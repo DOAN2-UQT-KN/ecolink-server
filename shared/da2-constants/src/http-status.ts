@@ -442,6 +442,31 @@ export const HTTP_STATUS = {
     "Attendance is now per shift; update the app and scan the shift's QR code",
     "ATTENDANCE_LEGACY_GONE",
   ),
+  SHIFT_NOT_STARTED: createStatus(
+    409,
+    "This shift has not started yet",
+    "SHIFT_NOT_STARTED",
+  ),
+  SHIFT_RESULT_REQUIRED: createStatus(
+    409,
+    "Submit the shift's result before ending it",
+    "SHIFT_RESULT_REQUIRED",
+  ),
+  SHIFT_RESULT_INVALID: createStatus(
+    422,
+    "The shift's result is incomplete or invalid",
+    "SHIFT_RESULT_INVALID",
+  ),
+  SHIFT_RESULT_LOCKED: createStatus(
+    409,
+    "The shift's result can no longer be changed",
+    "SHIFT_RESULT_LOCKED",
+  ),
+  CAMPAIGN_SHIFTS_NOT_ENDED: createStatus(
+    409,
+    "Every active shift must be ended, with its result, before the campaign is marked done",
+    "CAMPAIGN_SHIFTS_NOT_ENDED",
+  ),
   CAMPAIGN_MANAGER_LEADS_SHIFTS: createStatus(
     409,
     "This manager still leads upcoming shifts; assign another leader first",

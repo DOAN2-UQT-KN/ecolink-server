@@ -20,6 +20,7 @@ import {
 import type { OrganizationOwnerResponse } from "../../organization/organization.dto";
 import { campaignAccessService, isPlatformAdmin } from "../campaign-access.service";
 import { haversineKm } from "../campaign-submit-validation";
+import { effectiveEnd } from "../campaign_shift_result/shift-status";
 import { signShiftQr, verifyShiftQr } from "./shift-attendance-qr";
 
 const MINUTE_MS = 60 * 1000;
@@ -27,36 +28,42 @@ const MINUTE_MS = 60 * 1000;
 /** Attendance opens while the campaign is upcoming (people gather before the first start) or running. */
 const ATTENDANCE_STATUSES: number[] = [CampaignStatus.UPCOMING, CampaignStatus.ACTIVE];
 
-type ShiftWindow = { startAt: Date; endAt: Date; gatherAt: Date | null };
+type ShiftWindow = { startAt: Date; endAt: Date; endedAt?: Date | null; gatherAt: Date | null };
+/** A shift's hours; it ends at `endedAt` when its leader ended it early (spec 4.2). */
+type ShiftHours = { startAt: Date; endAt: Date; endedAt?: Date | null };
 
 /** From a little before the gathering time (or start) until check-outs stop after the end. */
 function windowOf(shift: ShiftWindow) {
   const first = Math.min(shift.startAt.getTime(), shift.gatherAt?.getTime() ?? Infinity);
+  const end = effectiveEnd(shift);
   return {
     openFrom: new Date(first - CAMPAIGN_ATTENDANCE_OPEN_BEFORE_MINUTES * MINUTE_MS),
-    checkInUntil: shift.endAt,
-    checkOutUntil: new Date(shift.endAt.getTime() + CAMPAIGN_ATTENDANCE_CHECKOUT_GRACE_MINUTES * MINUTE_MS),
+    checkInUntil: end,
+    // Ended early: everyone was checked out then, no more scans.
+    checkOutUntil: shift.endedAt
+      ? end
+      : new Date(end.getTime() + CAMPAIGN_ATTENDANCE_CHECKOUT_GRACE_MINUTES * MINUTE_MS),
   };
 }
 
-/** Time present within the shift's hours; nothing without a check-out. */
-export function presenceMs(
-  att: { checkInAt: Date; checkOutAt: Date | null },
-  shift: { startAt: Date; endAt: Date },
-): number {
+/** Time present within the shift's hours (up to its actual end); nothing without a check-out. */
+export function presenceMs(att: { checkInAt: Date; checkOutAt: Date | null }, shift: ShiftHours): number {
   if (!att.checkOutAt) return 0;
   const from = Math.max(att.checkInAt.getTime(), shift.startAt.getTime());
-  const to = Math.min(att.checkOutAt.getTime(), shift.endAt.getTime());
+  const to = Math.min(att.checkOutAt.getTime(), effectiveEnd(shift).getTime());
   return Math.max(0, to - from);
 }
 
-/** Spec 4.1: present at least 60% of the shift, with a check-out, and not excluded by a manager. */
+/**
+ * Spec 4.1: present at least 60% of the shift, with a check-out, and not excluded by a manager.
+ * A shift ended early counts until its actual end (spec 4.2).
+ */
 export function isEligible(
   att: { checkInAt: Date; checkOutAt: Date | null; excludedAt?: Date | null },
-  shift: { startAt: Date; endAt: Date },
+  shift: ShiftHours,
 ): boolean {
   if (att.excludedAt) return false;
-  const length = shift.endAt.getTime() - shift.startAt.getTime();
+  const length = effectiveEnd(shift).getTime() - shift.startAt.getTime();
   return length > 0 && presenceMs(att, shift) >= CAMPAIGN_ATTENDANCE_MIN_PRESENCE_RATIO * length;
 }
 
@@ -106,6 +113,8 @@ export interface ShiftAttendanceView {
   shiftId: string;
   startAt: Date;
   endAt: Date;
+  /** Actual end when the shift was ended early (spec 4.2). */
+  endedAt: Date | null;
   leaderUserId: string | null;
   session: { id: string; openedBy: string; expiresAt: Date } | null;
   canRun: boolean;
@@ -281,7 +290,7 @@ export class ShiftAttendanceService {
       where: { shiftId_userId: { shiftId: shift.id, userId } },
     });
     if (!existing) {
-      if (scannedAt.getTime() > shift.endAt.getTime()) {
+      if (scannedAt.getTime() > effectiveEnd(shift).getTime()) {
         throw new HttpError(HTTP_STATUS.ATTENDANCE_NOT_OPEN);
       }
       const registered = await prisma.campaignShiftRegistration.count({
@@ -347,28 +356,40 @@ export class ShiftAttendanceService {
   async closeSession(campaignId: string, shiftId: string, userId: string, now = new Date()) {
     const shift = await this.loadShift(campaignId, shiftId);
     await this.assertCanRun(campaignId, shift.leaderUserId, userId);
-    const checkOutAt = new Date(Math.min(now.getTime(), shift.endAt.getTime()));
-    return prisma.$transaction(async (tx) => {
-      await tx.campaignShiftAttendanceSession.updateMany({
-        where: { shiftId, closedAt: null },
-        data: { closedAt: now, closedBy: userId },
-      });
-      const open = await tx.campaignShiftAttendance.findMany({
-        where: { shiftId, checkOutAt: null },
-        select: { id: true, checkInAt: true },
-      });
-      for (const row of open) {
-        await tx.campaignShiftAttendance.update({
-          where: { id: row.id },
-          data: {
-            checkOutAt: new Date(Math.max(checkOutAt.getTime(), row.checkInAt.getTime())),
-            checkOutMethod: "session_close",
-            recordedBy: userId,
-          },
-        });
-      }
-      return { checkedOut: open.length };
+    const checkOutAt = new Date(Math.min(now.getTime(), effectiveEnd(shift).getTime()));
+    return prisma.$transaction((tx) => this.closeAllInTx(tx, shiftId, userId, now, checkOutAt));
+  }
+
+  /**
+   * Closes the shift's open sessions and checks out everyone still checked in at `checkOutAt`
+   * (never before their check-in). Also used when a shift is ended early (spec 4.2).
+   */
+  async closeAllInTx(
+    tx: Prisma.TransactionClient,
+    shiftId: string,
+    userId: string,
+    now: Date,
+    checkOutAt: Date,
+  ) {
+    await tx.campaignShiftAttendanceSession.updateMany({
+      where: { shiftId, closedAt: null },
+      data: { closedAt: now, closedBy: userId },
     });
+    const open = await tx.campaignShiftAttendance.findMany({
+      where: { shiftId, checkOutAt: null },
+      select: { id: true, checkInAt: true },
+    });
+    for (const row of open) {
+      await tx.campaignShiftAttendance.update({
+        where: { id: row.id },
+        data: {
+          checkOutAt: new Date(Math.max(checkOutAt.getTime(), row.checkInAt.getTime())),
+          checkOutMethod: "session_close",
+          recordedBy: userId,
+        },
+      });
+    }
+    return { checkedOut: open.length };
   }
 
   /**
@@ -392,7 +413,7 @@ export class ShiftAttendanceService {
     }
     const asked = input.checkInAt ?? now;
     const checkInAt = new Date(
-      Math.min(Math.max(asked.getTime(), shift.startAt.getTime()), shift.endAt.getTime(), now.getTime()),
+      Math.min(Math.max(asked.getTime(), shift.startAt.getTime()), effectiveEnd(shift).getTime(), now.getTime()),
     );
 
     return prisma.$transaction(
@@ -531,6 +552,7 @@ export class ShiftAttendanceService {
       shiftId,
       startAt: shift.startAt,
       endAt: shift.endAt,
+      endedAt: shift.endedAt,
       leaderUserId: shift.leaderUserId,
       session: session ? { id: session.id, openedBy: session.openedBy, expiresAt: session.expiresAt } : null,
       canRun,
@@ -559,7 +581,7 @@ export class ShiftAttendanceService {
     const [rows, registrations] = await Promise.all([
       prisma.campaignShiftAttendance.findMany({
         where: { campaignId },
-        include: { shift: { select: { startAt: true, endAt: true } } },
+        include: { shift: { select: { startAt: true, endAt: true, endedAt: true } } },
       }),
       prisma.campaignShiftRegistration.groupBy({
         by: ["userId"],

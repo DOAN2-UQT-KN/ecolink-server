@@ -302,6 +302,54 @@ router.get(
 );
 
 /**
+ * @route   GET /api/v1/campaigns/:id/shift-overview
+ * @desc    Every shift's status, attendance and result figures, with campaign totals (managers, admins)
+ * @access  Private
+ */
+router.get("/:id/shift-overview", authenticate, campaignController.getShiftOverview);
+
+/**
+ * @route   GET /api/v1/campaigns/:id/shifts/:shiftId/result
+ * @desc    The shift's status; its result and photo pool for managers, admins, its leader and volunteers who attended
+ * @access  Private
+ */
+router.get("/:id/shifts/:shiftId/result", authenticate, campaignController.getShiftResult);
+
+/**
+ * @route   PUT /api/v1/campaigns/:id/shifts/:shiftId/result
+ * @desc    Submit or replace the shift's result, once started, while the campaign runs (leader or managers)
+ * @access  Private
+ * @body    { description, wasteBags?, wasteKg?, reports: [{ reportId, status, beforeUrls[], afterUrls[] }], mediaIds[] }
+ */
+router.put("/:id/shifts/:shiftId/result", authenticate, campaignController.saveShiftResult);
+
+/**
+ * @route   POST /api/v1/campaigns/:id/shifts/:shiftId/end
+ * @desc    End a running shift early once it has a result; checks everyone out (leader or managers)
+ * @access  Private
+ */
+router.post("/:id/shifts/:shiftId/end", authenticate, campaignController.endShiftEarly);
+
+/**
+ * @route   POST /api/v1/campaigns/:id/shifts/:shiftId/media
+ * @desc    Add a photo or video to the shift's pool (volunteers who attended, leader, managers)
+ * @access  Private
+ * @body    { url, kind: "image" | "video" }
+ */
+router.post("/:id/shifts/:shiftId/media", authenticate, campaignController.addShiftMedia);
+
+/**
+ * @route   DELETE /api/v1/campaigns/:id/shifts/:shiftId/media/:mediaId
+ * @desc    Remove a photo from the pool (its uploader, the leader or managers)
+ * @access  Private
+ */
+router.delete(
+  "/:id/shifts/:shiftId/media/:mediaId",
+  authenticate,
+  campaignController.removeShiftMedia,
+);
+
+/**
  * @route   PUT /api/v1/campaigns/:id
  * @desc    Update campaign by ID
  * @access  Private (Campaign manager only)

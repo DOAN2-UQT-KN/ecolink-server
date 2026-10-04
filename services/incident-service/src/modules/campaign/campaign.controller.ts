@@ -11,6 +11,7 @@ import { campaignManagerService } from "./campaign_manager/campaign_manager.serv
 import { campaignTaskService } from "./campaign_task/campaign_task.service";
 import { campaignRegistrationService } from "./campaign_registration/campaign_registration.service";
 import { shiftAttendanceService } from "./campaign_attendance/shift-attendance.service";
+import { shiftResultService } from "./campaign_shift_result/shift-result.service";
 import { GlobalStatus } from "../../constants/status.enum";
 import {
   CAMPAIGN_DIFFICULTY_MAX,
@@ -1923,6 +1924,79 @@ export class CampaignController {
       body("accuracy").isFloat({ min: 0 }).withMessage("accuracy is required"),
       body("scannedAt").optional({ values: "null" }).isISO8601(),
     ],
+  );
+
+  // =====================
+  // Shift results and status (spec 4.2)
+  // =====================
+
+  /** GET /campaigns/:id/shifts/:shiftId/result — status for anyone; the result for those allowed. */
+  getShiftResult = this.shiftAttendanceAction("Get shift result", (req, userId) =>
+    shiftResultService.get(req.params.id, req.params.shiftId, { userId, role: req.user?.role }),
+  );
+
+  /** PUT /campaigns/:id/shifts/:shiftId/result — submit or replace the result (leader or managers). */
+  saveShiftResult = this.shiftAttendanceAction(
+    "Save shift result",
+    (req, userId) =>
+      shiftResultService.save(req.params.id, req.params.shiftId, userId, {
+        description: String(req.body.description ?? ""),
+        wasteBags: req.body.wasteBags == null ? null : Number(req.body.wasteBags),
+        wasteKg: req.body.wasteKg == null ? null : Number(req.body.wasteKg),
+        reports: (req.body.reports ?? []).map((r: Record<string, unknown>) => ({
+          reportId: String(r.reportId),
+          status: String(r.status),
+          beforeUrls: Array.isArray(r.beforeUrls) ? r.beforeUrls.map(String) : [],
+          afterUrls: Array.isArray(r.afterUrls) ? r.afterUrls.map(String) : [],
+        })),
+        mediaIds: (req.body.mediaIds ?? []).map(String),
+      }),
+    [
+      body("description").isString().trim().isLength({ min: 1, max: 5000 }).withMessage("description is required"),
+      body("wasteBags").optional({ values: "null" }).isInt({ min: 0 }),
+      body("wasteKg").optional({ values: "null" }).isFloat({ min: 0 }),
+      body("reports").optional().isArray({ max: 200 }),
+      body("reports.*.reportId").isUUID().withMessage("reportId must be a valid UUID"),
+      body("reports.*.status").isIn(["cleaned", "partial"]).withMessage("status is cleaned or partial"),
+      body("reports.*.beforeUrls").isArray(),
+      body("reports.*.afterUrls").isArray(),
+      body("mediaIds").optional().isArray({ max: 500 }),
+      body("mediaIds.*").isUUID().withMessage("mediaIds must be UUIDs"),
+    ],
+  );
+
+  /** POST /campaigns/:id/shifts/:shiftId/end — end a running shift early, once it has a result. */
+  endShiftEarly = this.shiftAttendanceAction("End shift early", (req, userId) =>
+    shiftResultService.endEarly(req.params.id, req.params.shiftId, userId),
+  );
+
+  /** POST /campaigns/:id/shifts/:shiftId/media — add a photo or video to the shift's pool. */
+  addShiftMedia = this.shiftAttendanceAction(
+    "Add shift media",
+    (req, userId) =>
+      shiftResultService
+        .addMedia(req.params.id, req.params.shiftId, userId, {
+          url: String(req.body.url),
+          kind: String(req.body.kind),
+        })
+        .then((media) => ({ media })),
+    [
+      body("url").isString().trim().isLength({ min: 1, max: 2000 }).withMessage("url is required"),
+      body("kind").isIn(["image", "video"]).withMessage("kind is image or video"),
+    ],
+  );
+
+  /** DELETE /campaigns/:id/shifts/:shiftId/media/:mediaId — remove a photo from the pool. */
+  removeShiftMedia = this.shiftAttendanceAction(
+    "Remove shift media",
+    (req, userId) =>
+      shiftResultService.removeMedia(req.params.id, req.params.shiftId, req.params.mediaId, userId),
+    [param("mediaId").isUUID().withMessage("mediaId must be a valid UUID")],
+  );
+
+  /** GET /campaigns/:id/shift-overview — every shift's status and the totals (managers, admins). */
+  getShiftOverview = this.shiftAttendanceAction("Get shift overview", (req, userId) =>
+    shiftResultService.overview(req.params.id, { userId, role: req.user?.role }),
   );
 }
 
