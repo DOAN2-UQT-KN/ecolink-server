@@ -13,12 +13,22 @@ export class CampaignManagerRepository {
     userId: string;
     assignedBy: string;
   }) {
-    return this.prisma.campaignManager.create({
-      data: {
+    // A removed manager keeps a soft-deleted row under the composite key: restore it.
+    return this.prisma.campaignManager.upsert({
+      where: {
+        campaignId_userId: { campaignId: data.campaignId, userId: data.userId },
+      },
+      create: {
         campaignId: data.campaignId,
         userId: data.userId,
         assignedBy: data.assignedBy,
         createdBy: data.assignedBy,
+        updatedBy: data.assignedBy,
+      },
+      update: {
+        deletedAt: null,
+        assignedBy: data.assignedBy,
+        assignedAt: new Date(),
         updatedBy: data.assignedBy,
       },
     });

@@ -126,11 +126,12 @@ export class SosController {
       }
 
       try {
-        const updatedBy = req.user?.userId;
-        const sos = await sosService.solveSos(
-          parseInt(req.params.id, 10),
-          updatedBy,
-        );
+        const userId = req.user?.userId;
+        if (!userId) return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+        const sos = await sosService.solveSos(parseInt(req.params.id, 10), {
+          userId,
+          role: req.user?.role,
+        });
         sendSuccess(
           res,
           HTTP_STATUS.OK.withMessage("SOS marked as solved"),

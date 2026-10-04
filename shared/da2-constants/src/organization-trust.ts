@@ -43,6 +43,31 @@ export enum TrustTier {
   VERIFIED = "VERIFIED",
 }
 
+/** The trust fields that decide the Blue Tick. */
+export interface OrganizationTrustFields {
+  trustTier: string;
+  tickSuspended: boolean;
+  kycStatus: string;
+  verificationExpiresAt: Date | string | null;
+}
+
+/**
+ * The Blue Tick rule, used everywhere an organization's verification matters (badge, campaign
+ * limits): verified tier, tick not suspended, KYC approved, and a lane-B verification that has not
+ * passed its `verificationExpiresAt` (lane A has no expiry). Expiry is applied when read; no job
+ * rewrites the stored fields.
+ */
+export function isOrganizationVerified(
+  org: OrganizationTrustFields,
+  now: Date = new Date(),
+): boolean {
+  if (org.trustTier !== TrustTier.VERIFIED) return false;
+  if (org.tickSuspended) return false;
+  if (org.kycStatus !== KycStatus.APPROVED) return false;
+  if (org.verificationExpiresAt == null) return true;
+  return new Date(org.verificationExpiresAt).getTime() > now.getTime();
+}
+
 /**
  * Lifecycle of an application.
  *

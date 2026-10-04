@@ -27,6 +27,8 @@ export enum GlobalStatus {
   _STATUS_FAILED = 23,
   _STATUS_CLOSED = 24,
   _STATUS_REPROCESS = 25,
+  /** Campaign approved, first shift not started yet. 26 is taken on the client (UPLOAD_FAILED). */
+  _STATUS_UPCOMING = 27,
 }
 
 export const ReportStatus = GlobalStatus;

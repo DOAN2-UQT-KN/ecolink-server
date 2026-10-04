@@ -54,36 +54,15 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
   "GET /api/v1/campaigns/all": {
     responseData: "CampaignsListEnvelopeData",
   },
-  "GET /api/v1/campaigns/tasks/my-assigned": {
-    responseData: "TasksListEnvelopeData",
-  },
-  "GET /api/v1/campaigns/tasks/:taskId": {
-    responseData: "TaskOneEnvelopeData",
-  },
-  "PUT /api/v1/campaigns/tasks/:taskId": {
-    requestBody: "UpdateCampaignTaskBody",
-    responseData: "TaskOneEnvelopeData",
-  },
-  "DELETE /api/v1/campaigns/tasks/:taskId": {
-    omitData: true,
-  },
-  "POST /api/v1/campaigns/tasks/:taskId/assign": {
-    requestBody: "AssignVolunteerBody",
-    responseData: "TaskAssignmentEnvelopeData",
-  },
-  "POST /api/v1/campaigns/tasks/:taskId/unassign": {
-    requestBody: "AssignVolunteerBody",
-    omitData: true,
-  },
-  "PUT /api/v1/campaigns/tasks/:taskId/status": {
-    requestBody: "TaskStatusUpdateBody",
-    responseData: "TaskOneEnvelopeData",
-  },
   "GET /api/v1/campaigns/:id": {
     responseData: "CampaignOneEnvelopeData",
   },
   "PUT /api/v1/campaigns/:id/completion-review": {
     requestBody: "AdminCompletionReviewBody",
+    responseData: "CampaignOneEnvelopeData",
+  },
+  "PUT /api/v1/campaigns/:id/mark-done": {
+    requestBody: "MarkCampaignDoneBody",
     responseData: "CampaignOneEnvelopeData",
   },
   "PUT /api/v1/campaigns/:id/verify": {
@@ -109,32 +88,12 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
     query: "CampaignManagersListQuery",
     responseData: "PaginatedManagersEnvelopeData",
   },
-  "POST /api/v1/campaigns/:id/tasks": {
-    requestBody: "CreateCampaignTaskBody",
-    responseData: "TaskOneEnvelopeData",
+  "GET /api/v1/campaigns/:id/registration-options": {
+    responseData: "RegistrationOptions",
   },
-  "GET /api/v1/campaigns/:id/tasks": {
-    responseData: "TasksListEnvelopeData",
-  },
-  "POST /api/v1/campaigns/volunteers/join-requests": {
-    requestBody: "CreateJoinRequestBody",
-    responseData: "JoinRequestOneEnvelopeData",
-  },
-  "GET /api/v1/campaigns/volunteers/join-requests": {
-    query: "GetJoinRequestsQuery",
-    responseData: "PaginatedJoinRequestsEnvelopeData",
-  },
-  "GET /api/v1/campaigns/volunteers/join-requests/my": {
-    query: "MyJoinRequestsQuery",
-    responseData: "PaginatedJoinRequestsEnvelopeData",
-  },
-  "PUT /api/v1/campaigns/volunteers/join-requests/process": {
-    requestBody: "ProcessJoinRequestBody",
-    responseData: "JoinRequestOneEnvelopeData",
-  },
-  "DELETE /api/v1/campaigns/volunteers/join-requests/cancel": {
-    requestBody: "CancelJoinRequestBody",
-    omitData: true,
+  "PUT /api/v1/campaigns/:id/registrations/me": {
+    requestBody: "UpdateMyRegistrationsBody",
+    responseData: "MyRegistrationResult",
   },
   "GET /api/v1/campaigns/volunteers/approved": {
     query: "GetApprovedVolunteersQuery",

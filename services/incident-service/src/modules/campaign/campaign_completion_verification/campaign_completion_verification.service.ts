@@ -1,3 +1,4 @@
+import { isCompletionFlagged } from "@da2/constants";
 import { VoteValue } from "../../../constants/status.enum";
 import { GlobalStatus } from "../../../constants/status.enum";
 import { HttpError, HTTP_STATUS } from "../../../constants/http-status";
@@ -36,6 +37,7 @@ export class CampaignCompletionVerificationService {
       result.set(id, {
         cleanCount: counts.cleanCount,
         notCleanCount: counts.notCleanCount,
+        flagged: isCompletionFlagged(counts.cleanCount, counts.notCleanCount),
         myVerification:
           viewerUserId != null
             ? (myValues.get(id) ?? VoteValue.NONE)

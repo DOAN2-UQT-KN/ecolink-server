@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { body, param, query, validationResult } from "express-validator";
+import { body, param, query, validationResult, type ValidationChain } from "express-validator";
 import {
   HTTP_STATUS,
   sendError,
@@ -8,24 +8,126 @@ import {
 } from "../../constants/http-status";
 import { campaignService } from "./campaign.service";
 import { campaignManagerService } from "./campaign_manager/campaign_manager.service";
-import { campaignTaskService } from "./campaign_task/campaign_task.service";
-import { campaignJoiningRequestService } from "./campaign_joining_request/campaign_joining_request.service";
-import { campaignAttendanceService } from "./campaign_attendance/campaign_attendance.service";
-import { GlobalStatus, JoinRequestStatus } from "../../constants/status.enum";
+import { campaignRegistrationService } from "./campaign_registration/campaign_registration.service";
+import { shiftAttendanceService } from "./campaign_attendance/shift-attendance.service";
+import { shiftResultService } from "./campaign_shift_result/shift-result.service";
+import { campaignCompletionService } from "./campaign_completion/completion.service";
+import { GlobalStatus } from "../../constants/status.enum";
+import {
+  CAMPAIGN_COMPLETION_UNHANDLED_REASON_MAX,
+  CAMPAIGN_DIFFICULTY_MAX,
+  CAMPAIGN_DIFFICULTY_MIN,
+  CAMPAIGN_DAY_MAX,
+  CAMPAIGN_MEETING_POINT_MAX,
+  CAMPAIGN_REVIEW_REASON_MAX_LENGTH,
+} from "@da2/constants";
+import { isPlatformAdmin } from "./campaign-access.service";
+import { campaignEligibilityService } from "./campaign-eligibility.service";
+import { campaignLifecycleService } from "./campaign-lifecycle.service";
 import type {
   AdminCompletionReviewBody,
+  AdminReviewCampaignBody,
   AdminVerifyCampaignBody,
   CampaignListQuery,
   CampaignManagersListQuery,
   CampaignMultiSubmissionReviewListQuery,
-  GetApprovedVolunteersQuery,
-  GetJoinRequestsQuery,
-  MyJoinRequestsQuery,
+  MarkCampaignDoneBody,
 } from "./campaign.dto";
 import { normalizeQueryUuidList } from "../../utils/query-uuid-list";
 import { resolveRequestLocale } from "../../utils/resolve-request-locale";
 
 const CAMPAIGN_BATCH_QUERY_MAX_IDS = 100;
+
+/**
+ * Shape checks for the fields added with drafts and meeting points. Business rules (lengths,
+ * dates, distances, volunteer numbers) run on submit, so a draft can be saved half-filled.
+ */
+const campaignDetailValidators = () => [
+  body("contactName")
+    .optional({ nullable: true })
+    .isString()
+    .isLength({ max: 120 })
+    .withMessage("contactName must be at most 120 characters")
+    .trim(),
+  body("contactPhone")
+    .optional({ nullable: true })
+    .isString()
+    .isLength({ max: 20 })
+    .withMessage("contactPhone must be at most 20 characters")
+    .trim(),
+  body("safetyNotes").optional({ nullable: true }).isString().trim(),
+  body("requirements")
+    .optional({ nullable: true })
+    .isObject()
+    .withMessage("requirements must be an object"),
+  body("requirements.minAge")
+    .optional({ nullable: true })
+    .isInt({ min: 0, max: 100 })
+    .withMessage("requirements.minAge must be 0–100"),
+  body("requirements.skills")
+    .optional()
+    .isArray({ max: 20 })
+    .withMessage("requirements.skills must be an array"),
+  body("requirements.skills.*").optional().isString().isLength({ max: 100 }),
+  body("requirements.bringOwnTools").optional().isBoolean(),
+  body("meetingPoints")
+    .optional()
+    .isArray({ max: CAMPAIGN_MEETING_POINT_MAX })
+    .withMessage(`meetingPoints must be an array of at most ${CAMPAIGN_MEETING_POINT_MAX}`),
+  body("meetingPoints.*.id").optional().isUUID(),
+  body("meetingPoints.*.name")
+    .optional({ nullable: true })
+    .isString()
+    .isLength({ max: 120 }),
+  body("meetingPoints.*.latitude")
+    .isFloat({ min: -90, max: 90 })
+    .withMessage("meeting point latitude must be between -90 and 90"),
+  body("meetingPoints.*.longitude")
+    .isFloat({ min: -180, max: 180 })
+    .withMessage("meeting point longitude must be between -180 and 180"),
+  body("meetingPoints.*.radiusKm")
+    .isFloat({ min: 0 })
+    .withMessage("meeting point radiusKm must be a non-negative number"),
+  body("meetingPoints.*.detailAddress")
+    .optional({ nullable: true })
+    .isString()
+    .isLength({ max: 255 }),
+  body("meetingPoints.*.reportIds").optional().isArray(),
+  body("meetingPoints.*.reportIds.*").isUUID(),
+  body(["startDate", "endDate"])
+    .not()
+    .exists()
+    .withMessage("startDate and endDate were replaced by days"),
+  body("days")
+    .optional()
+    .isArray({ max: CAMPAIGN_DAY_MAX })
+    .withMessage(`days must be an array of at most ${CAMPAIGN_DAY_MAX}`),
+  body("days.*.id").optional().isUUID(),
+  body("days.*.startAt").isISO8601().withMessage("day startAt must be an ISO 8601 datetime"),
+  body("days.*.endAt").isISO8601().withMessage("day endAt must be an ISO 8601 datetime"),
+  body("shifts")
+    .optional()
+    .isArray({ max: CAMPAIGN_DAY_MAX * CAMPAIGN_MEETING_POINT_MAX })
+    .withMessage("shifts must be an array"),
+  body("shifts.*.dayIndex").isInt({ min: 0, max: CAMPAIGN_DAY_MAX - 1 }),
+  body("shifts.*.meetingPointIndex").isInt({ min: 0, max: CAMPAIGN_MEETING_POINT_MAX - 1 }),
+  body("shifts.*.minVolunteers")
+    .isInt({ min: 0 })
+    .withMessage("shift minVolunteers must be a whole number ≥ 0"),
+  body("shifts.*.maxVolunteers")
+    .optional({ nullable: true })
+    .isInt({ min: 1 })
+    .withMessage("shift maxVolunteers must be a whole number ≥ 1"),
+  body("minVolunteersReason")
+    .optional({ nullable: true })
+    .isString()
+    .isLength({ max: 1000 })
+    .withMessage("minVolunteersReason must be at most 1000 characters"),
+  body("shifts.*.startAt").optional({ nullable: true }).isISO8601(),
+  body("shifts.*.endAt").optional({ nullable: true }).isISO8601(),
+  body("shifts.*.gatherAt").optional({ nullable: true }).isISO8601(),
+  body("shifts.*.leaderUserId").optional({ nullable: true }).isUUID(),
+];
 
 export class CampaignController {
   constructor() {}
@@ -66,45 +168,12 @@ export class CampaignController {
       .withMessage("banner must be at most 2048 characters")
       .trim(),
     body("description").optional().trim(),
-    body("startDate")
-      .optional()
-      .isISO8601()
-      .withMessage("startDate must be a valid ISO 8601 datetime"),
-    body("endDate")
-      .optional()
-      .isISO8601()
-      .withMessage("endDate must be a valid ISO 8601 datetime"),
-    body("detailAddress")
-      .optional()
-      .isString()
-      .isLength({ max: 255 })
-      .withMessage("detailAddress must be at most 255 characters")
-      .trim(),
-    body("latitude")
-      .optional()
-      .isFloat({ min: -90, max: 90 })
-      .withMessage("latitude must be between -90 and 90"),
-    body("longitude")
-      .optional()
-      .isFloat({ min: -180, max: 180 })
-      .withMessage("longitude must be between -180 and 180"),
-    body("radiusKm")
-      .optional()
-      .isFloat({ min: 0 })
-      .withMessage("radiusKm must be a non-negative number"),
     body("difficulty")
-      .isInt({ min: 1 })
+      .isInt({ min: CAMPAIGN_DIFFICULTY_MIN, max: CAMPAIGN_DIFFICULTY_MAX })
       .withMessage(
-        "difficulty must be a positive integer (reward-service tier)",
+        `difficulty must be between ${CAMPAIGN_DIFFICULTY_MIN} and ${CAMPAIGN_DIFFICULTY_MAX}`,
       ),
-    body("reportIds")
-      .optional()
-      .isArray()
-      .withMessage("reportIds must be an array"),
-    body("reportIds.*")
-      .optional()
-      .isUUID()
-      .withMessage("Each reportId must be a valid UUID"),
+    ...campaignDetailValidators(),
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
@@ -128,12 +197,6 @@ export class CampaignController {
         }
         if (error instanceof Error) {
           if (error.message.includes("reportIds")) {
-            return sendError(
-              res,
-              HTTP_STATUS.BAD_REQUEST.withMessage(error.message),
-            );
-          }
-          if (error.message.includes("Invalid campaign difficulty")) {
             return sendError(
               res,
               HTTP_STATUS.BAD_REQUEST.withMessage(error.message),
@@ -182,6 +245,7 @@ export class CampaignController {
     query("difficulty").optional().isInt({ min: 1 }),
     query("greenPointsFrom").optional().isInt({ min: 0 }),
     query("greenPointsTo").optional().isInt({ min: 0 }),
+    query("excludeMemberOrgs").optional().isBoolean(),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -192,7 +256,16 @@ export class CampaignController {
       }
 
       try {
+        const isAdmin = isPlatformAdmin(req.user?.role);
         const q: CampaignListQuery = {
+          // Drafts and campaigns under review, blocked or expired are admin-only here;
+          // their managers find them under GET /campaigns/my.
+          publicOnly: !isAdmin,
+          excludeDrafts: true,
+          excludeMemberOrgsOfUserId:
+            isAdmin && String(req.query.excludeMemberOrgs) === "true"
+              ? req.user?.userId
+              : undefined,
           lang: resolveRequestLocale(req),
           search: req.query.search
             ? String(req.query.search).trim()
@@ -239,12 +312,7 @@ export class CampaignController {
           sortOrder: req.query.sortOrder as CampaignListQuery["sortOrder"],
         };
 
-        const result = await campaignService.getCampaigns(
-          q,
-          req.user?.userId,
-          undefined,
-          req.user?.userId,
-        );
+        const result = await campaignService.listCampaigns(q, req.user?.userId);
         sendSuccess(res, HTTP_STATUS.OK, result);
       } catch (error) {
         console.error("Get campaigns error:", error);
@@ -403,6 +471,7 @@ export class CampaignController {
           campaignParsed.ids,
           req.user?.userId,
           resolveRequestLocale(req),
+          req.user?.role,
         );
         sendSuccess(res, HTTP_STATUS.OK, { campaigns });
       } catch (error) {
@@ -428,6 +497,7 @@ export class CampaignController {
           req.params.id,
           req.user?.userId,
           resolveRequestLocale(req),
+          req.user?.role,
         );
         if (!campaign) {
           return sendError(
@@ -439,6 +509,168 @@ export class CampaignController {
         sendSuccess(res, HTTP_STATUS.OK, { campaign });
       } catch (error) {
         console.error("Get campaign error:", error);
+        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+      }
+    },
+  ];
+
+  /** Whether the caller may create a campaign for an organization, and why not. */
+  getCreateEligibility = [
+    query("organizationId")
+      .isUUID()
+      .withMessage("organizationId must be a valid UUID"),
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: errors.array(),
+        });
+      }
+      const userId = req.user?.userId;
+      if (!userId) return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+      try {
+        const eligibility = await campaignEligibilityService.get(
+          userId,
+          String(req.query.organizationId),
+        );
+        sendSuccess(res, HTTP_STATUS.OK, { eligibility });
+      } catch (error) {
+        if (sendHttpErrorResponse(res, error)) return;
+        console.error("Campaign eligibility error:", error);
+        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+      }
+    },
+  ];
+
+  /** Send a draft, or a campaign waiting for changes, for admin review. */
+  submitCampaign = [
+    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: errors.array(),
+        });
+      }
+      const userId = req.user?.userId;
+      if (!userId) return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+      try {
+        const campaign = await campaignService.submitCampaign(
+          req.params.id,
+          userId,
+        );
+        sendSuccess(
+          res,
+          HTTP_STATUS.OK.withMessage("Campaign sent for review"),
+          { campaign },
+        );
+      } catch (error) {
+        if (sendHttpErrorResponse(res, error)) return;
+        console.error("Submit campaign error:", error);
+        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+      }
+    },
+  ];
+
+  /** Admin: approve, request changes to, or block a campaign waiting for review. */
+  reviewCampaign = [
+    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+    body("decision")
+      .isIn(["approve", "request_revision", "block"])
+      .withMessage("decision must be approve, request_revision or block"),
+    body("reason")
+      .optional({ nullable: true })
+      .isString()
+      .isLength({ max: CAMPAIGN_REVIEW_REASON_MAX_LENGTH })
+      .withMessage(
+        `reason must be at most ${CAMPAIGN_REVIEW_REASON_MAX_LENGTH} characters`,
+      ),
+    body("reason").custom((value, { req }) => {
+      if (req.body.decision !== "approve" && !String(value ?? "").trim()) {
+        throw new Error("reason is required to request changes or block");
+      }
+      return true;
+    }),
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: errors.array(),
+        });
+      }
+      const userId = req.user?.userId;
+      if (!userId) return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+      if (!isPlatformAdmin(req.user?.role)) {
+        return sendError(
+          res,
+          HTTP_STATUS.FORBIDDEN.withMessage("Only admin can review a campaign"),
+        );
+      }
+      const { decision, reason } = req.body as AdminReviewCampaignBody;
+      try {
+        const campaign = await campaignService.reviewCampaign(
+          req.params.id,
+          userId,
+          decision,
+          reason,
+        );
+        sendSuccess(res, HTTP_STATUS.OK, { campaign });
+      } catch (error) {
+        if (sendHttpErrorResponse(res, error)) return;
+        console.error("Review campaign error:", error);
+        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+      }
+    },
+  ];
+
+  /** POST /campaigns/:id/cancel — the creator or an owner cancels the campaign (spec 3.6). */
+  cancelCampaign = [
+    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+    body("reason")
+      .isString()
+      .trim()
+      .isLength({ min: 1, max: CAMPAIGN_REVIEW_REASON_MAX_LENGTH })
+      .withMessage(`reason is required, at most ${CAMPAIGN_REVIEW_REASON_MAX_LENGTH} characters`),
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
+      }
+      const userId = req.user?.userId;
+      if (!userId) return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+      try {
+        const campaign = await campaignService.cancelCampaign(req.params.id, userId, req.body.reason);
+        sendSuccess(res, HTTP_STATUS.OK, { campaign });
+      } catch (error) {
+        if (sendHttpErrorResponse(res, error)) return;
+        console.error("Cancel campaign error:", error);
+        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+      }
+    },
+  ];
+
+  /** Status changes and edits under review (managers and admins). */
+  getCampaignHistory = [
+    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: errors.array(),
+        });
+      }
+      const userId = req.user?.userId;
+      if (!userId) return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+      try {
+        const history = await campaignLifecycleService.getHistory(
+          req.params.id,
+          userId,
+          req.user?.role,
+        );
+        sendSuccess(res, HTTP_STATUS.OK, { history });
+      } catch (error) {
+        if (sendHttpErrorResponse(res, error)) return;
+        console.error("Campaign history error:", error);
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     },
@@ -534,38 +766,38 @@ export class CampaignController {
   ];
 
   /**
-   * Admin review of a pending campaign completion (approve or reject).
+   * Admin decision on a campaign marked done (spec 5.2): approve (optional `difficulty`), reject
+   * (`rejectReason` + `shiftIds` to reopen; at most 3 times) or cancel (`rejectReason`).
    */
   adminReviewCampaignCompletion = [
     param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
     body("decision")
-      .isIn(["approve", "reject"])
-      .withMessage('decision must be "approve" or "reject"'),
+      .isIn(["approve", "reject", "cancel"])
+      .withMessage('decision must be "approve", "reject" or "cancel"'),
     body("rejectReason").custom((value, { req }) => {
-      const decision = req.body?.decision;
-      const isReject = decision === "reject";
+      const needsReason = req.body?.decision === "reject" || req.body?.decision === "cancel";
       if (value === undefined || value === null) {
-        if (isReject) {
-          throw new Error(
-            "reject_reason is required when rejecting completion",
-          );
-        }
+        if (needsReason) throw new Error("rejectReason is required to reject or cancel");
         return true;
       }
       if (typeof value !== "string") {
-        throw new Error("reject_reason must be a string or null");
+        throw new Error("rejectReason must be a string or null");
       }
       const trimmed = value.trim();
-      if (isReject && !trimmed) {
-        throw new Error(
-          "reject_reason is required when rejecting completion",
-        );
+      if (needsReason && !trimmed) {
+        throw new Error("rejectReason is required to reject or cancel");
       }
       if (trimmed.length > 5000) {
-        throw new Error("reject_reason too long (max 5000 characters)");
+        throw new Error("rejectReason too long (max 5000 characters)");
       }
       return true;
     }),
+    body("difficulty").optional({ values: "null" }).isInt().withMessage("difficulty must be a whole number"),
+    body("shiftIds")
+      .if(body("decision").equals("reject"))
+      .isArray({ min: 1, max: 200 })
+      .withMessage("Pick at least one shift to complete again"),
+    body("shiftIds.*").optional().isUUID().withMessage("shiftIds must be UUIDs"),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -591,47 +823,33 @@ export class CampaignController {
           );
         }
 
-        const { decision, rejectReason } =
+        const { decision, rejectReason, difficulty, shiftIds } =
           req.body as AdminCompletionReviewBody;
-        const trimmedReason =
-          typeof rejectReason === "string" ? rejectReason.trim() : undefined;
-
         const campaign = await campaignService.adminReviewCampaignCompletion(
           req.params.id,
           userId,
-          decision,
-          trimmedReason,
+          {
+            decision,
+            rejectReason: typeof rejectReason === "string" ? rejectReason.trim() : undefined,
+            difficulty: difficulty == null ? null : Number(difficulty),
+            shiftIds: decision === "reject" ? (shiftIds ?? []).map(String) : undefined,
+          },
           userId,
         );
 
-        sendSuccess(
-          res,
-          HTTP_STATUS.OK.withMessage(
-            decision === "approve"
-              ? "Campaign marked as done successfully"
-              : "Completion request rejected; campaign returned to active",
-          ),
-          { campaign },
-        );
+        const messages = {
+          approve: "Campaign marked as done successfully",
+          reject: "Completion request rejected; campaign returned to active",
+          cancel: "Campaign cancelled",
+        } as const;
+        sendSuccess(res, HTTP_STATUS.OK.withMessage(messages[decision]), { campaign });
       } catch (error) {
-        console.error("Admin review campaign completion error:", error);
         if (sendHttpErrorResponse(res, error)) {
           return;
         }
-        if (error instanceof Error) {
-          if (error.message.includes("not found")) {
-            return sendError(
-              res,
-              HTTP_STATUS.NOT_FOUND.withMessage("Campaign not found"),
-            );
-          }
-          if (
-            error.message.includes("must await admin completion") ||
-            error.message.includes("Some tasks is not completed") ||
-            error.message.includes("Reject only applies")
-          ) {
-            return sendError(res, HTTP_STATUS.BAD_REQUEST.withMessage(error.message));
-          }
+        console.error("Admin review campaign completion error:", error);
+        if (error instanceof Error && error.message.includes("not found")) {
+          return sendError(res, HTTP_STATUS.NOT_FOUND.withMessage("Campaign not found"));
         }
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
@@ -702,6 +920,13 @@ export class CampaignController {
    */
   markCampaignDone = [
     param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+    body("unhandled").optional().isArray({ max: 500 }),
+    body("unhandled.*.reportId").isUUID().withMessage("reportId must be a valid UUID"),
+    body("unhandled.*.reason")
+      .isString()
+      .trim()
+      .isLength({ min: 1, max: CAMPAIGN_COMPLETION_UNHANDLED_REASON_MAX })
+      .withMessage(`reason is required (1–${CAMPAIGN_COMPLETION_UNHANDLED_REASON_MAX} characters)`),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -721,6 +946,11 @@ export class CampaignController {
           await campaignService.submitCampaignCompletionForAdminApproval(
             req.params.id,
             userId,
+            undefined,
+            ((req.body as MarkCampaignDoneBody)?.unhandled ?? []).map((u) => ({
+              reportId: String(u.reportId),
+              reason: String(u.reason ?? ""),
+            })),
           );
 
         sendSuccess(
@@ -730,6 +960,7 @@ export class CampaignController {
         );
       } catch (error) {
         console.error("Mark campaign done error:", error);
+        if (sendHttpErrorResponse(res, error)) return;
         if (error instanceof Error) {
           if (error.message.includes("not found")) {
             return sendError(
@@ -743,12 +974,6 @@ export class CampaignController {
             error.message.includes("not awaiting initial admin verification") ||
             error.message.includes("Only campaign managers")
           ) {
-            return sendError(
-              res,
-              HTTP_STATUS.BAD_REQUEST.withMessage(error.message),
-            );
-          }
-          if (error.message.includes("Some tasks is not completed")) {
             return sendError(
               res,
               HTTP_STATUS.BAD_REQUEST.withMessage(error.message),
@@ -782,47 +1007,18 @@ export class CampaignController {
       .withMessage("banner must be at most 2048 characters")
       .trim(),
     body("description").optional().trim(),
-    body("startDate")
-      .optional({ nullable: true })
-      .isISO8601()
-      .withMessage("startDate must be a valid ISO 8601 datetime"),
-    body("endDate")
-      .optional({ nullable: true })
-      .isISO8601()
-      .withMessage("endDate must be a valid ISO 8601 datetime"),
-    body("detailAddress")
-      .optional({ nullable: true })
-      .isString()
-      .isLength({ max: 255 })
-      .withMessage("detailAddress must be at most 255 characters")
-      .trim(),
-    body("latitude")
-      .optional({ nullable: true })
-      .isFloat({ min: -90, max: 90 })
-      .withMessage("latitude must be between -90 and 90"),
-    body("longitude")
-      .optional({ nullable: true })
-      .isFloat({ min: -180, max: 180 })
-      .withMessage("longitude must be between -180 and 180"),
-    body("radiusKm")
-      .optional({ nullable: true })
-      .isFloat({ min: 0 })
-      .withMessage("radiusKm must be a non-negative number"),
-    body("status").optional().isInt().withMessage("Status must be an integer"),
+    body("status")
+      .not()
+      .exists()
+      .withMessage(
+        "status cannot be set here; use submit, review or mark-done",
+      ),
     body("difficulty")
       .optional()
-      .isInt({ min: 1 })
+      .isInt({ min: CAMPAIGN_DIFFICULTY_MIN, max: CAMPAIGN_DIFFICULTY_MAX })
       .withMessage(
-        "difficulty must be a positive integer (reward-service tier)",
+        `difficulty must be between ${CAMPAIGN_DIFFICULTY_MIN} and ${CAMPAIGN_DIFFICULTY_MAX}`,
       ),
-    body("reportIds")
-      .optional()
-      .isArray()
-      .withMessage("reportIds must be an array"),
-    body("reportIds.*")
-      .optional()
-      .isUUID()
-      .withMessage("Each reportId must be a valid UUID"),
     body("managerIds")
       .optional()
       .isArray()
@@ -831,6 +1027,7 @@ export class CampaignController {
       .optional()
       .isUUID()
       .withMessage("Each managerId must be a valid UUID"),
+    ...campaignDetailValidators(),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -855,6 +1052,7 @@ export class CampaignController {
         sendSuccess(res, HTTP_STATUS.OK, { campaign });
       } catch (error) {
         console.error("Update campaign error:", error);
+        if (sendHttpErrorResponse(res, error)) return;
         if (error instanceof Error) {
           if (error.message.includes("not found")) {
             return sendError(
@@ -862,24 +1060,7 @@ export class CampaignController {
               HTTP_STATUS.NOT_FOUND.withMessage("Campaign not found"),
             );
           }
-          if (
-            error.message.includes("Only campaign manager") ||
-            error.message.includes("Forbidden")
-          ) {
-            return sendError(
-              res,
-              HTTP_STATUS.FORBIDDEN.withMessage(
-                "Only campaign manager can modify campaign",
-              ),
-            );
-          }
           if (error.message.includes("reportIds")) {
-            return sendError(
-              res,
-              HTTP_STATUS.BAD_REQUEST.withMessage(error.message),
-            );
-          }
-          if (error.message.includes("Invalid campaign difficulty")) {
             return sendError(
               res,
               HTTP_STATUS.BAD_REQUEST.withMessage(error.message),
@@ -926,22 +1107,12 @@ export class CampaignController {
         );
       } catch (error) {
         console.error("Delete campaign error:", error);
+        if (sendHttpErrorResponse(res, error)) return;
         if (error instanceof Error) {
           if (error.message.includes("not found")) {
             return sendError(
               res,
               HTTP_STATUS.NOT_FOUND.withMessage("Campaign not found"),
-            );
-          }
-          if (
-            error.message.includes("Only campaign manager") ||
-            error.message.includes("Forbidden")
-          ) {
-            return sendError(
-              res,
-              HTTP_STATUS.FORBIDDEN.withMessage(
-                "Only campaign manager can modify campaign",
-              ),
             );
           }
         }
@@ -952,312 +1123,171 @@ export class CampaignController {
   ];
 
   // =====================
-  // Joining Request Operations
+  // Shift registrations (spec 3.1)
   // =====================
 
-  /**
-   * Create a join request for a campaign
-   */
-  createJoinRequest = [
-    body("campaignId").notEmpty().withMessage("Campaign ID is required").trim(),
+  /** GET /campaigns/:id/registration-options — what the "pick shifts" popup shows. */
+  getRegistrationOptions = [
+    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
-        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
-          errors: errors.array(),
-        });
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
       }
-
       try {
-        const volunteerId = req.user?.userId;
-        if (!volunteerId) {
-          return sendError(res, HTTP_STATUS.UNAUTHORIZED);
-        }
-
-        const joinRequest =
-          await campaignJoiningRequestService.createJoinRequest(
-            req.body.campaignId,
-            volunteerId,
-          );
-        sendSuccess(res, HTTP_STATUS.CREATED, { joinRequest });
+        const userId = req.user?.userId;
+        if (!userId) return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+        const options = await campaignRegistrationService.getOptions(req.params.id, userId);
+        sendSuccess(res, HTTP_STATUS.OK, options);
       } catch (error) {
-        console.error("Create campaign join request error:", error);
-        if (error instanceof Error) {
-          if (error.message.includes("Campaign not found")) {
-            return sendError(
-              res,
-              HTTP_STATUS.NOT_FOUND.withMessage("Campaign not found"),
-            );
-          }
-          if (error.message.includes("already exists")) {
-            return sendError(
-              res,
-              HTTP_STATUS.CONFLICT.withMessage("Join request already exists"),
-            );
-          }
-        }
+        console.error("Get registration options error:", error);
+        if (sendHttpErrorResponse(res, error)) return;
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     },
   ];
 
   /**
-   * GET /campaigns/volunteers/join-requests — list join requests for a campaign (managers only).
-   * Query: campaignId (required), status?, volunteerId?, page, limit, sortBy, sortOrder.
+   * PUT /campaigns/:id/registrations/me — replaces the caller's shifts; [] leaves the campaign.
+   * Body: { shiftIds: string[], acceptConditions?: boolean }.
    */
-  getJoinRequests = [
-    query("campaignId")
-      .notEmpty()
-      .withMessage("Campaign ID is required")
-      .trim(),
-    query("status").optional().isInt().withMessage("status must be an integer"),
-    query("volunteerId")
-      .optional()
-      .isUUID()
-      .withMessage("volunteerId must be a valid UUID"),
-    query("page").optional().isInt({ min: 1 }),
-    query("limit").optional().isInt({ min: 1, max: 100 }),
-    query("sortBy").optional().isIn(["createdAt", "updatedAt"]),
-    query("sortOrder").optional().isIn(["asc", "desc"]),
+  updateMyRegistrations = [
+    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+    body("shiftIds").isArray({ max: 100 }).withMessage("shiftIds must be an array"),
+    body("shiftIds.*").isUUID().withMessage("Each shift ID must be a valid UUID"),
+    body("acceptConditions").optional().isBoolean().toBoolean(),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
-        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
-          errors: errors.array(),
-        });
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
       }
-
       try {
-        const managerId = req.user?.userId;
-        if (!managerId) {
-          return sendError(res, HTTP_STATUS.UNAUTHORIZED);
-        }
-
-        const q: GetJoinRequestsQuery = {
-          campaignId: String(req.query.campaignId).trim(),
-          page: req.query.page
-            ? parseInt(String(req.query.page), 10)
-            : undefined,
-          limit: req.query.limit
-            ? parseInt(String(req.query.limit), 10)
-            : undefined,
-          status:
-            req.query.status !== undefined && req.query.status !== ""
-              ? parseInt(String(req.query.status), 10)
-              : undefined,
-          volunteerId: req.query.volunteerId
-            ? String(req.query.volunteerId).trim()
-            : undefined,
-          sortBy: req.query.sortBy as GetJoinRequestsQuery["sortBy"],
-          sortOrder: req.query.sortOrder as GetJoinRequestsQuery["sortOrder"],
-        };
-
-        const result =
-          await campaignJoiningRequestService.getJoinRequestsByCampaignForManager(
-            q.campaignId,
-            managerId,
-            q,
-          );
+        const userId = req.user?.userId;
+        if (!userId) return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+        const result = await campaignRegistrationService.setMyShifts(req.params.id, userId, {
+          shiftIds: req.body.shiftIds,
+          acceptConditions: req.body.acceptConditions,
+        });
         sendSuccess(res, HTTP_STATUS.OK, result);
       } catch (error) {
-        console.error("Get campaign join requests error:", error);
-        if (error instanceof Error) {
-          if (error.message.includes("Only campaign managers")) {
-            return sendError(res, HTTP_STATUS.FORBIDDEN);
-          }
-        }
+        console.error("Update my registrations error:", error);
+        if (sendHttpErrorResponse(res, error)) return;
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     },
   ];
 
-  /**
-   * GET /campaigns/volunteers/join-requests/my — my join requests with optional filters and pagination.
-   */
-  getMyJoinRequests = [
-    query("campaignId").optional().isUUID(),
-    query("status").optional().isInt(),
-    query("page").optional().isInt({ min: 1 }),
-    query("limit").optional().isInt({ min: 1, max: 100 }),
-    query("sortBy").optional().isIn(["createdAt", "updatedAt"]),
-    query("sortOrder").optional().isIn(["asc", "desc"]),
+  /** GET /campaigns/:id/registrations — each shift with who registered (managers, registered volunteers, admins). */
+  getCampaignRegistrations = [
+    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
-        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
-          errors: errors.array(),
-        });
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
       }
-
       try {
-        const volunteerId = req.user?.userId;
-        if (!volunteerId) {
-          return sendError(res, HTTP_STATUS.UNAUTHORIZED);
-        }
+        const userId = req.user?.userId;
+        if (!userId) return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+        const [shifts, nextInviteAt] = await Promise.all([
+          campaignRegistrationService.listByShift(req.params.id, {
+            userId,
+            role: req.user?.role,
+          }),
+          campaignRegistrationService.getNextInviteAt(req.params.id),
+        ]);
+        sendSuccess(res, HTTP_STATUS.OK, { shifts, nextInviteAt });
+      } catch (error) {
+        console.error("Get campaign registrations error:", error);
+        if (sendHttpErrorResponse(res, error)) return;
+        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+      }
+    },
+  ];
 
-        const q: MyJoinRequestsQuery = {
-          campaignId: req.query.campaignId
-            ? String(req.query.campaignId).trim()
-            : undefined,
-          page: req.query.page
-            ? parseInt(String(req.query.page), 10)
-            : undefined,
-          limit: req.query.limit
-            ? parseInt(String(req.query.limit), 10)
-            : undefined,
-          status:
-            req.query.status !== undefined && req.query.status !== ""
-              ? parseInt(String(req.query.status), 10)
-              : undefined,
-          sortBy: req.query.sortBy as MyJoinRequestsQuery["sortBy"],
-          sortOrder: req.query.sortOrder as MyJoinRequestsQuery["sortOrder"],
-        };
+  /** POST /campaigns/:id/invite-nearby — managers invite residents around the meeting points. */
+  inviteNearby = [
+    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
 
-        const result = await campaignJoiningRequestService.getMyJoinRequests(
-          volunteerId,
-          q,
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
+      }
+      try {
+        const userId = req.user?.userId;
+        if (!userId) return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+        const result = await campaignRegistrationService.inviteNearby(req.params.id, userId);
+        sendSuccess(res, HTTP_STATUS.OK, result);
+      } catch (error) {
+        console.error("Invite nearby residents error:", error);
+        if (sendHttpErrorResponse(res, error)) return;
+        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+      }
+    },
+  ];
+
+  /** POST /campaigns/:id/shifts/:shiftId/close — managers turn a shift off before it starts. */
+  closeShift = [
+    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+    param("shiftId").isUUID().withMessage("Shift ID must be a valid UUID"),
+
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
+      }
+      try {
+        const userId = req.user?.userId;
+        if (!userId) return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+        const result = await campaignRegistrationService.closeShift(
+          req.params.id,
+          req.params.shiftId,
+          userId,
         );
         sendSuccess(res, HTTP_STATUS.OK, result);
       } catch (error) {
-        console.error("Get my join requests error:", error);
+        console.error("Close shift error:", error);
+        if (sendHttpErrorResponse(res, error)) return;
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     },
   ];
 
-  /**
-   * Approve or reject a join request (campaign managers only)
-   */
-  processJoinRequest = [
-    body("requestId").notEmpty().withMessage("Request ID is required").trim(),
-    body("approved").isBoolean().withMessage("Approved must be boolean"),
+  /** PUT /campaigns/:id/shifts/:shiftId/leader — choose who leads a shift (team only). */
+  setShiftLeader = [
+    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+    param("shiftId").isUUID().withMessage("Shift ID must be a valid UUID"),
+    body("leaderUserId").isUUID().withMessage("leaderUserId must be a valid UUID"),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
-        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
-          errors: errors.array(),
-        });
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
       }
-
       try {
-        const managerId = req.user?.userId;
-        if (!managerId) {
-          return sendError(res, HTTP_STATUS.UNAUTHORIZED);
-        }
-
-        const status = req.body.approved
-          ? JoinRequestStatus._STATUS_APPROVED
-          : JoinRequestStatus._STATUS_REJECTED;
-
-        const result = await campaignJoiningRequestService.processJoinRequest(
-          req.body.requestId,
-          managerId,
-          status,
+        const userId = req.user?.userId;
+        if (!userId) return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+        const result = await campaignManagerService.setShiftLeader(
+          req.params.id,
+          req.params.shiftId,
+          req.body.leaderUserId,
+          userId,
         );
-        if (result.type === "approved") {
-          sendSuccess(res, HTTP_STATUS.OK, { joinRequest: result.joinRequest });
-        } else {
-          sendSuccess(res, HTTP_STATUS.OK, {
-            deleted: true,
-            requestId: result.requestId,
-          });
-        }
+        sendSuccess(res, HTTP_STATUS.OK, result);
       } catch (error) {
-        console.error("Process join request error:", error);
-        if (error instanceof Error) {
-          if (error.message.includes("not found")) {
-            return sendError(res, HTTP_STATUS.NOT_FOUND);
-          }
-          if (error.message.includes("Only campaign managers")) {
-            return sendError(res, HTTP_STATUS.FORBIDDEN);
-          }
-          if (error.message.includes("already processed")) {
-            return sendError(
-              res,
-              HTTP_STATUS.CONFLICT.withMessage(
-                "Join request already processed",
-              ),
-            );
-          }
-          if (error.message.includes("capacity exceeded")) {
-            return sendError(
-              res,
-              HTTP_STATUS.BAD_REQUEST.withMessage(error.message),
-            );
-          }
-          if (
-            error.message.includes("REWARD_SERVICE_URL") ||
-            error.message.includes("INTERNAL_REWARD_API_KEY") ||
-            error.message.includes("Invalid reward service")
-          ) {
-            return sendError(
-              res,
-              HTTP_STATUS.INTERNAL_SERVER_ERROR.withMessage(error.message),
-            );
-          }
-        }
+        console.error("Set shift leader error:", error);
+        if (sendHttpErrorResponse(res, error)) return;
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     },
   ];
 
   /**
-   * Cancel a join request (volunteer only)
-   */
-  cancelJoinRequest = [
-    body("requestId").notEmpty().withMessage("Request ID is required").trim(),
-
-    async (req: Request, res: Response): Promise<void> => {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
-          errors: errors.array(),
-        });
-      }
-
-      try {
-        const volunteerId = req.user?.userId;
-        if (!volunteerId) {
-          return sendError(res, HTTP_STATUS.UNAUTHORIZED);
-        }
-
-        await campaignJoiningRequestService.cancelJoinRequest(
-          req.body.requestId,
-          volunteerId,
-        );
-        sendSuccess(
-          res,
-          HTTP_STATUS.OK.withMessage("Join request cancelled successfully"),
-        );
-      } catch (error) {
-        console.error("Cancel join request error:", error);
-        if (error instanceof Error) {
-          if (error.message.includes("not found")) {
-            return sendError(res, HTTP_STATUS.NOT_FOUND);
-          }
-          if (error.message.includes("Cannot cancel")) {
-            return sendError(res, HTTP_STATUS.FORBIDDEN);
-          }
-          if (error.message.includes("only cancel pending")) {
-            return sendError(
-              res,
-              HTTP_STATUS.CONFLICT.withMessage(
-                "Can only cancel pending requests",
-              ),
-            );
-          }
-        }
-        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
-      }
-    },
-  ];
-
-  /**
-   * GET /campaigns/volunteers/approved — approved volunteers for a campaign (managers only).
+   * GET /campaigns/volunteers/approved — people registered for at least one shift.
+   * Query: campaignId (required), volunteerId?, page, limit, sortOrder.
    */
   getApprovedVolunteers = [
     query("campaignId")
@@ -1274,47 +1304,25 @@ export class CampaignController {
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
-        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
-          errors: errors.array(),
-        });
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
       }
-
       try {
-        const managerId = req.user?.userId;
-        if (!managerId) {
-          return sendError(res, HTTP_STATUS.UNAUTHORIZED);
-        }
-
-        const q: GetApprovedVolunteersQuery = {
-          campaignId: String(req.query.campaignId).trim(),
-          volunteerId: req.query.volunteerId
-            ? String(req.query.volunteerId).trim()
-            : undefined,
-          page: req.query.page
-            ? parseInt(String(req.query.page), 10)
-            : undefined,
-          limit: req.query.limit
-            ? parseInt(String(req.query.limit), 10)
-            : undefined,
-          sortBy: req.query.sortBy as GetApprovedVolunteersQuery["sortBy"],
-          sortOrder: req.query
-            .sortOrder as GetApprovedVolunteersQuery["sortOrder"],
-        };
-
-        const result =
-          await campaignJoiningRequestService.getApprovedVolunteersForManager(
-            q.campaignId,
-            // managerId,
-            q,
-          );
+        const userId = req.user?.userId;
+        if (!userId) return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+        const result = await campaignRegistrationService.listVolunteers(
+          String(req.query.campaignId).trim(),
+          { userId, role: req.user?.role },
+          {
+            volunteerId: req.query.volunteerId ? String(req.query.volunteerId).trim() : undefined,
+            page: req.query.page ? parseInt(String(req.query.page), 10) : undefined,
+            limit: req.query.limit ? parseInt(String(req.query.limit), 10) : undefined,
+            sortOrder: req.query.sortOrder as "asc" | "desc" | undefined,
+          },
+        );
         sendSuccess(res, HTTP_STATUS.OK, result);
       } catch (error) {
-        console.error("Get approved volunteers error:", error);
-        if (error instanceof Error) {
-          if (error.message.includes("Only campaign managers")) {
-            return sendError(res, HTTP_STATUS.FORBIDDEN);
-          }
-        }
+        console.error("Get registered volunteers error:", error);
+        if (sendHttpErrorResponse(res, error)) return;
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     },
@@ -1439,436 +1447,201 @@ export class CampaignController {
     },
   ];
 
-  // =====================
-  // Campaign tasks
-  // =====================
-
-  createTask = [
-    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
-    body("title").notEmpty().withMessage("Title is required").trim(),
-    body("description").optional().trim(),
-    body("priority")
-      .optional()
-      .isInt({ min: 1, max: 3 })
-      .withMessage("priority must be 1 (HIGH), 2 (MEDIUM), or 3 (LOW)"),
-    body("scheduledDate")
-      .optional()
-      .isISO8601()
-      .withMessage("Invalid date format"),
-    body("scheduledTime")
-      .optional()
-      .isString()
-      .withMessage("scheduledTime must be a string")
-      .trim(),
-
-    async (req: Request, res: Response): Promise<void> => {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
-          errors: errors.array(),
-        });
-      }
-
-      try {
-        const userId = req.user?.userId;
-        if (!userId) {
-          return sendError(res, HTTP_STATUS.UNAUTHORIZED);
-        }
-
-        const task = await campaignTaskService.createTask(userId, {
-          campaignId: req.params.id,
-          title: req.body.title,
-          description: req.body.description,
-          priority:
-            req.body.priority !== undefined
-              ? parseInt(String(req.body.priority), 10)
-              : undefined,
-          scheduledDate: req.body.scheduledDate,
-          scheduledTime: req.body.scheduledTime,
-        });
-        sendSuccess(res, HTTP_STATUS.CREATED, { task });
-      } catch (error) {
-        console.error("Create campaign task error:", error);
-        if (sendHttpErrorResponse(res, error)) return;
-        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
-      }
-    },
-  ];
-
-  getCampaignTasks = [
-    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
-
-    async (req: Request, res: Response): Promise<void> => {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
-          errors: errors.array(),
-        });
-      }
-
-      try {
-        const tasks = await campaignTaskService.getCampaignTasks(req.params.id);
-        sendSuccess(res, HTTP_STATUS.OK, { tasks });
-      } catch (error) {
-        console.error("Get campaign tasks error:", error);
-        if (sendHttpErrorResponse(res, error)) return;
-        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
-      }
-    },
-  ];
-
-  getTaskById = [
-    param("taskId").isUUID().withMessage("Task ID must be a valid UUID"),
-
-    async (req: Request, res: Response): Promise<void> => {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
-          errors: errors.array(),
-        });
-      }
-
-      try {
-        const task = await campaignTaskService.getTaskDetail(req.params.taskId);
-        if (!task) {
-          return sendError(res, HTTP_STATUS.NOT_FOUND);
-        }
-        sendSuccess(res, HTTP_STATUS.OK, { task });
-      } catch (error) {
-        console.error("Get campaign task error:", error);
-        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
-      }
-    },
-  ];
-
-  updateTask = [
-    param("taskId").isUUID().withMessage("Task ID must be a valid UUID"),
-    body("title").optional().trim(),
-    body("description").optional().trim(),
-    body("status").optional().isInt(),
-    body("priority")
-      .optional()
-      .isInt({ min: 1, max: 3 })
-      .withMessage("priority must be 1 (HIGH), 2 (MEDIUM), or 3 (LOW)"),
-    body("result")
-      .optional()
-      .isObject()
-      .withMessage("result must be an object"),
-    body("result.description").optional().isString(),
-    body("result.file").optional().isArray(),
-    body("result.file.*").optional().isString().trim(),
-    body("result.fileKinds").optional().isArray(),
-    body("result.fileKinds.*")
-      .optional()
-      .isIn(["image", "video", "file"])
-      .withMessage("result.fileKinds values must be image, video, or file"),
-    body("scheduledDate")
-      .optional()
-      .isISO8601()
-      .withMessage("Invalid date format"),
-    body("scheduledTime")
-      .optional()
-      .isString()
-      .withMessage("scheduledTime must be a string")
-      .trim(),
-
-    async (req: Request, res: Response): Promise<void> => {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
-          errors: errors.array(),
-        });
-      }
-
-      try {
-        const userId = req.user?.userId;
-        if (!userId) {
-          return sendError(res, HTTP_STATUS.UNAUTHORIZED);
-        }
-
-        const b = req.body as Record<string, unknown>;
-        const updateData: {
-          title?: string;
-          description?: string;
-          status?: number;
-          scheduledDate?: string;
-          scheduledTime?: string;
-          priority?: number;
-          result?: {
-            description?: string;
-            file?: string[];
-            fileKinds?: Array<"image" | "video" | "file">;
-          };
-        } = {};
-        if (b.title !== undefined) updateData.title = b.title as string;
-        if (b.description !== undefined) {
-          updateData.description = b.description as string;
-        }
-        if (b.status !== undefined) {
-          updateData.status = parseInt(String(b.status), 10);
-        }
-        if (b.priority !== undefined) {
-          updateData.priority = parseInt(String(b.priority), 10);
-        }
-        if (b.scheduledDate !== undefined) {
-          updateData.scheduledDate = b.scheduledDate as string;
-        }
-        if (b.scheduledTime !== undefined) {
-          updateData.scheduledTime = b.scheduledTime as string;
-        }
-        if (b.result !== undefined) {
-          const result = b.result as Record<string, unknown>;
-          updateData.result = {};
-          if (result.description !== undefined) {
-            updateData.result.description = result.description as string;
-          }
-          if (result.file !== undefined) {
-            updateData.result.file = result.file as string[];
-          }
-          if (result.fileKinds !== undefined) {
-            updateData.result.fileKinds = result.fileKinds as Array<
-              "image" | "video" | "file"
-            >;
-          }
-        }
-
-        const task = await campaignTaskService.updateTask(
-          req.params.taskId,
-          userId,
-          updateData,
-        );
-        sendSuccess(res, HTTP_STATUS.OK, { task });
-      } catch (error) {
-        console.error("Update campaign task error:", error);
-        if (sendHttpErrorResponse(res, error)) return;
-        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
-      }
-    },
-  ];
-
-  deleteTask = [
-    param("taskId").isUUID().withMessage("Task ID must be a valid UUID"),
-
-    async (req: Request, res: Response): Promise<void> => {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
-          errors: errors.array(),
-        });
-      }
-
-      try {
-        const userId = req.user?.userId;
-        if (!userId) {
-          return sendError(res, HTTP_STATUS.UNAUTHORIZED);
-        }
-
-        await campaignTaskService.deleteTask(req.params.taskId, userId);
-        sendSuccess(
-          res,
-          HTTP_STATUS.OK.withMessage("Task deleted successfully"),
-        );
-      } catch (error) {
-        console.error("Delete campaign task error:", error);
-        if (sendHttpErrorResponse(res, error)) return;
-        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
-      }
-    },
-  ];
-
-  assignTask = [
-    param("taskId").isUUID().withMessage("Task ID must be a valid UUID"),
-    body("volunteerId")
-      .isUUID()
-      .withMessage("Volunteer ID must be a valid UUID"),
-
-    async (req: Request, res: Response): Promise<void> => {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
-          errors: errors.array(),
-        });
-      }
-
-      try {
-        const userId = req.user?.userId;
-        if (!userId) {
-          return sendError(res, HTTP_STATUS.UNAUTHORIZED);
-        }
-
-        const assignment = await campaignTaskService.assignTask(
-          req.params.taskId,
-          req.body.volunteerId as string,
-          userId,
-        );
-        sendSuccess(res, HTTP_STATUS.CREATED, { assignment });
-      } catch (error) {
-        console.error("Assign campaign task error:", error);
-        if (sendHttpErrorResponse(res, error)) return;
-        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
-      }
-    },
-  ];
-
-  unassignTask = [
-    param("taskId").isUUID().withMessage("Task ID must be a valid UUID"),
-    body("volunteerId")
-      .isUUID()
-      .withMessage("Volunteer ID must be a valid UUID"),
-
-    async (req: Request, res: Response): Promise<void> => {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
-          errors: errors.array(),
-        });
-      }
-
-      try {
-        const userId = req.user?.userId;
-        if (!userId) {
-          return sendError(res, HTTP_STATUS.UNAUTHORIZED);
-        }
-
-        await campaignTaskService.unassignTask(
-          req.params.taskId,
-          req.body.volunteerId as string,
-          userId,
-        );
-        sendSuccess(
-          res,
-          HTTP_STATUS.OK.withMessage("Volunteer unassigned successfully"),
-        );
-      } catch (error) {
-        console.error("Unassign campaign task error:", error);
-        if (sendHttpErrorResponse(res, error)) return;
-        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
-      }
-    },
-  ];
-
-  getMyAssignedTasks = async (req: Request, res: Response): Promise<void> => {
-    try {
-      const userId = req.user?.userId;
-      if (!userId) {
-        return sendError(res, HTTP_STATUS.UNAUTHORIZED);
-      }
-
-      const tasks = await campaignTaskService.getMyAssignedTasks(userId);
-      sendSuccess(res, HTTP_STATUS.OK, { tasks });
-    } catch (error) {
-      console.error("Get my assigned tasks error:", error);
-      sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
-    }
+  /** Legacy per-campaign attendance (before spec 4.1): gone, attendance is per shift now. */
+  legacyAttendanceGone = (_req: Request, res: Response): void => {
+    sendError(res, HTTP_STATUS.ATTENDANCE_LEGACY_GONE);
   };
 
-  updateTaskStatus = [
-    param("taskId").isUUID().withMessage("Task ID must be a valid UUID"),
-    body("status").isInt().withMessage("Invalid status"),
+  // =====================
+  // Attendance per shift (spec 4.1)
+  // =====================
 
-    async (req: Request, res: Response): Promise<void> => {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
-          errors: errors.array(),
-        });
-      }
-
-      try {
+  private shiftAttendanceAction(
+    label: string,
+    run: (req: Request, userId: string) => Promise<unknown>,
+    extra: ValidationChain[] = [],
+  ) {
+    return [
+      param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+      param("shiftId").optional().isUUID().withMessage("Shift ID must be a valid UUID"),
+      ...extra,
+      async (req: Request, res: Response): Promise<void> => {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+          return sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
+        }
         const userId = req.user?.userId;
-        if (!userId) {
-          return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+        if (!userId) return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+        try {
+          sendSuccess(res, HTTP_STATUS.OK, await run(req, userId));
+        } catch (error) {
+          if (sendHttpErrorResponse(res, error)) return;
+          console.error(`${label} error:`, error);
+          sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
         }
+      },
+    ];
+  }
 
-        const task = await campaignTaskService.updateTaskStatusByVolunteer(
-          req.params.taskId,
-          userId,
-          parseInt(req.body.status, 10),
-        );
-        sendSuccess(res, HTTP_STATUS.OK, { task });
-      } catch (error) {
-        console.error("Update campaign task status error:", error);
-        if (sendHttpErrorResponse(res, error)) return;
-        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
-      }
-    },
-  ];
+  /** POST /campaigns/:id/shifts/:shiftId/attendance/session — open (or get) the QR session. */
+  openAttendanceSession = this.shiftAttendanceAction("Open attendance session", (req, userId) =>
+    shiftAttendanceService
+      .openSession(req.params.id, req.params.shiftId, userId)
+      .then((session) => ({ session })),
+  );
 
-  issueCampaignAttendanceQr = [
-    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+  /** GET /campaigns/:id/shifts/:shiftId/attendance/qr — the current dynamic code. */
+  getAttendanceQr = this.shiftAttendanceAction("Get attendance QR", (req, userId) =>
+    shiftAttendanceService.issueQr(req.params.id, req.params.shiftId, userId),
+  );
 
-    async (req: Request, res: Response): Promise<void> => {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
-          errors: errors.array(),
-        });
-      }
+  /** POST /campaigns/:id/shifts/:shiftId/attendance/close — end attendance, check everyone out. */
+  closeAttendance = this.shiftAttendanceAction("Close attendance", (req, userId) =>
+    shiftAttendanceService.closeSession(req.params.id, req.params.shiftId, userId),
+  );
 
-      try {
-        const userId = req.user?.userId;
-        if (!userId) {
-          return sendError(res, HTTP_STATUS.UNAUTHORIZED);
-        }
+  /** POST /campaigns/:id/shifts/:shiftId/attendance/manual — record someone by hand, with a reason. */
+  addManualAttendance = this.shiftAttendanceAction(
+    "Add manual attendance",
+    (req, userId) =>
+      shiftAttendanceService.addManual(req.params.id, req.params.shiftId, userId, {
+        userId: req.body.userId,
+        reason: req.body.reason,
+        checkInAt: req.body.checkInAt ? new Date(req.body.checkInAt) : undefined,
+      }),
+    [
+      body("userId").isUUID().withMessage("userId must be a valid UUID"),
+      body("reason").isString().trim().isLength({ min: 1, max: 500 }).withMessage("reason is required"),
+      body("checkInAt").optional({ values: "null" }).isISO8601(),
+    ],
+  );
 
-        const { token, expiresAt } =
-          await campaignAttendanceService.issueAttendanceQr(
-            req.params.id,
-            userId,
-          );
+  /** POST /campaigns/:id/shifts/:shiftId/attendance/:userId/exclude — out of the points, with a reason. */
+  excludeAttendance = this.shiftAttendanceAction(
+    "Exclude attendance",
+    (req, userId) =>
+      shiftAttendanceService.setExcluded(req.params.id, req.params.shiftId, req.params.userId, userId, {
+        reason: req.body.reason,
+      }),
+    [
+      param("userId").isUUID().withMessage("userId must be a valid UUID"),
+      body("reason").isString().trim().isLength({ min: 1, max: 500 }).withMessage("reason is required"),
+    ],
+  );
 
-        sendSuccess(res, HTTP_STATUS.OK, {
-          token,
-          expiresAt,
-        });
-      } catch (error) {
-        console.error("Issue campaign attendance QR error:", error);
-        if (sendHttpErrorResponse(res, error)) {
-          return;
-        }
-        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
-      }
-    },
-  ];
+  /** POST /campaigns/:id/shifts/:shiftId/attendance/:userId/restore — back into the points. */
+  restoreAttendance = this.shiftAttendanceAction(
+    "Restore attendance",
+    (req, userId) =>
+      shiftAttendanceService.setExcluded(req.params.id, req.params.shiftId, req.params.userId, userId, null),
+    [param("userId").isUUID().withMessage("userId must be a valid UUID")],
+  );
 
-  checkInCampaignAttendance = [
-    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
-    body("token").notEmpty().withMessage("token is required").isString(),
+  /** GET /campaigns/:id/shifts/:shiftId/attendance — who is present (leader, managers, admins). */
+  getShiftAttendance = this.shiftAttendanceAction("Get shift attendance", (req, userId) =>
+    shiftAttendanceService.listForShift(req.params.id, req.params.shiftId, {
+      userId,
+      role: req.user?.role,
+    }),
+  );
 
-    async (req: Request, res: Response): Promise<void> => {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
-          errors: errors.array(),
-        });
-      }
+  /** POST /campaigns/:id/attendance/scan — check in or out with the shift's code and GPS. */
+  scanAttendance = this.shiftAttendanceAction(
+    "Scan attendance",
+    (req, userId) =>
+      shiftAttendanceService.scan(req.params.id, userId, {
+        token: String(req.body.token).trim(),
+        latitude: Number(req.body.latitude),
+        longitude: Number(req.body.longitude),
+        accuracy: Number(req.body.accuracy),
+        scannedAt: req.body.scannedAt ? new Date(req.body.scannedAt) : undefined,
+      }),
+    [
+      body("token").isString().notEmpty().withMessage("token is required"),
+      body("latitude").isFloat({ min: -90, max: 90 }).withMessage("latitude is required"),
+      body("longitude").isFloat({ min: -180, max: 180 }).withMessage("longitude is required"),
+      body("accuracy").isFloat({ min: 0 }).withMessage("accuracy is required"),
+      body("scannedAt").optional({ values: "null" }).isISO8601(),
+    ],
+  );
 
-      try {
-        const userId = req.user?.userId;
-        if (!userId) {
-          return sendError(res, HTTP_STATUS.UNAUTHORIZED);
-        }
+  // =====================
+  // Shift results and status (spec 4.2)
+  // =====================
 
-        const rawToken = String(req.body.token).trim();
-        const result = await campaignAttendanceService.checkInWithQrToken(
-          req.params.id,
-          rawToken,
-          userId,
-        );
+  /** GET /campaigns/:id/shifts/:shiftId/result — status for anyone; the result on a public campaign; the pool for those allowed. */
+  getShiftResult = this.shiftAttendanceAction("Get shift result", (req, userId) =>
+    shiftResultService.get(req.params.id, req.params.shiftId, { userId, role: req.user?.role }),
+  );
 
-        sendSuccess(res, HTTP_STATUS.OK, {
-          checkedInAt: result.checkedInAt,
-          alreadyCheckedIn: result.alreadyCheckedIn,
-        });
-      } catch (error) {
-        console.error("Campaign attendance check-in error:", error);
-        if (sendHttpErrorResponse(res, error)) {
-          return;
-        }
-        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
-      }
-    },
-  ];
+  /** PUT /campaigns/:id/shifts/:shiftId/result — submit or replace the result (leader or managers). */
+  saveShiftResult = this.shiftAttendanceAction(
+    "Save shift result",
+    (req, userId) =>
+      shiftResultService.save(req.params.id, req.params.shiftId, userId, {
+        description: String(req.body.description ?? ""),
+        wasteBags: req.body.wasteBags == null ? null : Number(req.body.wasteBags),
+        wasteKg: req.body.wasteKg == null ? null : Number(req.body.wasteKg),
+        reports: (req.body.reports ?? []).map((r: Record<string, unknown>) => ({
+          reportId: String(r.reportId),
+          status: String(r.status),
+          beforeUrls: Array.isArray(r.beforeUrls) ? r.beforeUrls.map(String) : [],
+          afterUrls: Array.isArray(r.afterUrls) ? r.afterUrls.map(String) : [],
+        })),
+        mediaIds: (req.body.mediaIds ?? []).map(String),
+      }),
+    [
+      body("description").isString().trim().isLength({ min: 1, max: 5000 }).withMessage("description is required"),
+      body("wasteBags").optional({ values: "null" }).isInt({ min: 0 }),
+      body("wasteKg").optional({ values: "null" }).isFloat({ min: 0 }),
+      body("reports").optional().isArray({ max: 200 }),
+      body("reports.*.reportId").isUUID().withMessage("reportId must be a valid UUID"),
+      body("reports.*.status").isIn(["cleaned", "partial"]).withMessage("status is cleaned or partial"),
+      body("reports.*.beforeUrls").isArray(),
+      body("reports.*.afterUrls").isArray(),
+      body("mediaIds").optional().isArray({ max: 500 }),
+      body("mediaIds.*").isUUID().withMessage("mediaIds must be UUIDs"),
+    ],
+  );
+
+  /** POST /campaigns/:id/shifts/:shiftId/end — end a running shift early, once it has a result. */
+  endShiftEarly = this.shiftAttendanceAction("End shift early", (req, userId) =>
+    shiftResultService.endEarly(req.params.id, req.params.shiftId, userId),
+  );
+
+  /** POST /campaigns/:id/shifts/:shiftId/media — add a photo or video to the shift's pool. */
+  addShiftMedia = this.shiftAttendanceAction(
+    "Add shift media",
+    (req, userId) =>
+      shiftResultService
+        .addMedia(req.params.id, req.params.shiftId, userId, {
+          url: String(req.body.url),
+          kind: String(req.body.kind),
+        })
+        .then((media) => ({ media })),
+    [
+      body("url").isString().trim().isLength({ min: 1, max: 2000 }).withMessage("url is required"),
+      body("kind").isIn(["image", "video"]).withMessage("kind is image or video"),
+    ],
+  );
+
+  /** DELETE /campaigns/:id/shifts/:shiftId/media/:mediaId — remove a photo from the pool. */
+  removeShiftMedia = this.shiftAttendanceAction(
+    "Remove shift media",
+    (req, userId) =>
+      shiftResultService.removeMedia(req.params.id, req.params.shiftId, req.params.mediaId, userId),
+    [param("mediaId").isUUID().withMessage("mediaId must be a valid UUID")],
+  );
+
+  /** GET /campaigns/:id/completion-review — the submission, totals and residents' answers (spec 5.2). */
+  getCompletionReview = this.shiftAttendanceAction("Get completion review", (req, userId) =>
+    campaignCompletionService.getForReview(req.params.id, { userId, role: req.user?.role }),
+  );
+
+  /** GET /campaigns/:id/shift-overview — every shift's status and the totals (anyone on a public campaign). */
+  getShiftOverview = this.shiftAttendanceAction("Get shift overview", (req, userId) =>
+    shiftResultService.overview(req.params.id, { userId, role: req.user?.role }),
+  );
 }
 
 export const campaignController = new CampaignController();

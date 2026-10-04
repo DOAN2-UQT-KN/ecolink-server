@@ -27,6 +27,17 @@ export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
 /** Kinds that bypass user opt-out (e.g. admin workflow). */
 const ADMIN_ONLY_NOTIFICATION_KINDS = new Set([
   "CAMPAIGN_COMPLETION_PENDING_ADMIN",
+  "CAMPAIGN_PENDING_REVIEW",
+  "CAMPAIGN_REVISION_REQUESTED",
+  "CAMPAIGN_BLOCKED",
+  "CAMPAIGN_EXPIRED",
+  "CAMPAIGN_CANCELLED",
+  "CAMPAIGN_SHIFT_CLOSED",
+  "CAMPAIGN_CREATOR_TRANSFERRED",
+  "CAMPAIGN_SHIFT_LEADER_REMOVED",
+  "CAMPAIGN_UPDATED_NEEDS_REVIEW",
+  "CAMPAIGN_REREVIEW_EXPIRED",
+  "CAMPAIGN_SHIFT_RESULT_MISSING",
   "ORGANIZATION_CONTACT_VERIFY",
   "ORGANIZATION_APPROVED",
   "ORGANIZATION_REJECTED",
@@ -64,9 +75,11 @@ export function notificationKindToPreferenceKey(
   }
   switch (kind) {
     case "CAMPAIGN_CREATED":
+    case "CAMPAIGN_APPROVED":
       return "campaignNew";
     case "CAMPAIGN_VERIFY_INVITE":
     case "CAMPAIGN_COMPLETION_VERIFY_INVITE":
+    case "CAMPAIGN_JOIN_INVITE":
       return "campaignNearbyVerify";
     case "CAMPAIGN_DONE":
       return "campaignDone";
@@ -75,6 +88,10 @@ export function notificationKindToPreferenceKey(
     case "CAMPAIGN_COMPLETION_REJECTED_BY_ADMIN":
       return "campaignCompletionRejected";
     case "VOLUNTEER_REQUEST":
+    case "CAMPAIGN_REGISTRATION_DIGEST":
+    case "CAMPAIGN_SHIFT_UNDERSTAFFED":
+    case "CAMPAIGN_SHIFT_OVER_MAX":
+    case "CAMPAIGN_SHIFT_REMINDER":
     case "VOLUNTEER_APPROVED":
     case "VOLUNTEER_REJECTED":
       return "volunteerRequest";
@@ -83,7 +100,6 @@ export function notificationKindToPreferenceKey(
       return "reportStatus";
     case "CAMPAIGN_SUBMISSION_PENDING_REVIEW":
     case "CAMPAIGN_SUBMISSION_APPROVED":
-    case "TASK_ASSIGNED":
       return "campaignNew";
     default:
       return null;

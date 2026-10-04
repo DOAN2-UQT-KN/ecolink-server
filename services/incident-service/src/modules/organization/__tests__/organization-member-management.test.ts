@@ -24,6 +24,12 @@ const memberUpdateMock = jest.fn();
 const reconcileMock = jest.fn();
 const ownerLeftMock = jest.fn();
 
+const onMemberGoneMock = jest.fn(async () => undefined);
+const onRightsReducedMock = jest.fn(async () => undefined);
+jest.mock("../../campaign/campaign_manager/campaign-team-cleanup", () => ({
+  onMemberGone: (...a: unknown[]) => onMemberGoneMock(...(a as [])),
+  onRightsReduced: (...a: unknown[]) => onRightsReducedMock(...(a as [])),
+}));
 const txFake = {
   organizationJoiningRequest: { update: jest.fn() },
   organizationMember: { update: (...a: unknown[]) => memberUpdateMock(...a) },
@@ -384,6 +390,8 @@ describe("OrganizationService — owner tự rút lui", () => {
       data: expect.objectContaining({ deletedAt: expect.any(Date), updatedBy: ACTOR }),
     });
     expect(softDeleteMembershipMock).not.toHaveBeenCalled();
+    // Leaving the organization also takes them off its campaign teams.
+    expect(onMemberGoneMock).toHaveBeenCalledWith(txFake, ORG, ACTOR, ACTOR);
     expect(reconcileMock).toHaveBeenCalledWith(ORG);
     expect(ownerLeftMock).toHaveBeenCalledWith(
       [TARGET],
@@ -398,6 +406,9 @@ describe("OrganizationService — owner tự rút lui", () => {
     await organizationService.stepDown(ORG, ACTOR, "ADMIN");
 
     expect(memberUpdateMock.mock.calls[0][0].data).toEqual({ role: "ADMIN", updatedBy: ACTOR });
+    // Still a member, so only shifts they led as an owner lose their leader.
+    expect(onRightsReducedMock).toHaveBeenCalledWith(txFake, ORG, ACTOR, ACTOR);
+    expect(onMemberGoneMock).not.toHaveBeenCalled();
     expect(ownerLeftMock).toHaveBeenCalledWith(
       [TARGET],
       expect.objectContaining({ newRole: "ADMIN" }),

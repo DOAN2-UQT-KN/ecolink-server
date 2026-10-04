@@ -1,18 +1,20 @@
-import { Campaign, Sos } from "@prisma/client";
+import { Sos } from "@prisma/client";
+import { campaignSpan, type CampaignWithReports } from "../campaign/campaign.entity";
 import { SosCampaignResponse, SosResponse } from "./sos.dto";
 
 export type SosEntity = Sos;
 
 export const toSosCampaignResponse = (
-  campaign: Campaign,
+  campaign: CampaignWithReports,
 ): SosCampaignResponse => ({
   id: campaign.id,
   title: campaign.title,
   banner: campaign.banner,
   description: campaign.description,
   status: campaign.status,
-  startDate: campaign.startDate,
-  endDate: campaign.endDate,
+  // First start and last end of the campaign's days.
+  startDate: campaignSpan(campaign.days)?.startAt ?? null,
+  endDate: campaignSpan(campaign.days)?.endAt ?? null,
   detailAddress: campaign.detailAddress,
   latitude: campaign.latitude,
   longitude: campaign.longitude,
