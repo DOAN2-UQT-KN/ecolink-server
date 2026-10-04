@@ -169,6 +169,37 @@ export const SHIFT_RESULT_REPORT_STATUS = {
   CLEANED: "cleaned",
   PARTIAL: "partial",
 } as const;
+/**
+ * Spec 5.1: per trash report in the completion submission. "unhandled" = in no shift's result,
+ * with the manager's reason.
+ */
+export const CAMPAIGN_COMPLETION_REPORT_STATUS = {
+  CLEANED: "cleaned",
+  PARTIAL: "partial",
+  UNHANDLED: "unhandled",
+} as const;
+export type CampaignCompletionReportStatusValue =
+  (typeof CAMPAIGN_COMPLETION_REPORT_STATUS)[keyof typeof CAMPAIGN_COMPLETION_REPORT_STATUS];
+/** Reason for a trash report left unhandled when marking the campaign done. */
+export const CAMPAIGN_COMPLETION_UNHANDLED_REASON_MAX = 500;
+/**
+ * Spec 5.1: the admin sees a red flag when at least this share of residents' answers say "not
+ * clean", once there are at least `CAMPAIGN_COMPLETION_FLAG_MIN_VOTES` answers.
+ */
+export const CAMPAIGN_COMPLETION_FLAG_RATIO = 0.3;
+export const CAMPAIGN_COMPLETION_FLAG_MIN_VOTES = 5;
+/** Spec 5.2: after this many rejections the admin may only approve or cancel. */
+export const CAMPAIGN_COMPLETION_MAX_REJECTIONS = 3;
+
+/** Residents' answers → whether the admin should look twice (computed, never stored). */
+export function isCompletionFlagged(cleanCount: number, notCleanCount: number): boolean {
+  const total = cleanCount + notCleanCount;
+  return (
+    total >= CAMPAIGN_COMPLETION_FLAG_MIN_VOTES &&
+    notCleanCount / total >= CAMPAIGN_COMPLETION_FLAG_RATIO
+  );
+}
+
 /** Photos per trash report side (before / after) and activity media per shift. */
 export const SHIFT_RESULT_MAX_PHOTOS_PER_SIDE = 10;
 export const SHIFT_MEDIA_MAX_PER_SHIFT = 200;

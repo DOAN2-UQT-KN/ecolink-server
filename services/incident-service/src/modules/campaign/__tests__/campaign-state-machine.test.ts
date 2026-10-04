@@ -21,6 +21,7 @@ describe("assertTransitionAllowed", () => {
     ["expire", S.NEEDS_REVISION, "system"],
     ["submit_completion", S.ACTIVE, "manager"],
     ["approve_completion", S.PENDING_COMPLETION, "admin"],
+    ["cancel_by_admin", S.PENDING_COMPLETION, "admin"],
   ] as const)("%s from %i by %s is allowed", (event, fromStatus, actor) => {
     expect(() =>
       assertTransitionAllowed({ event, fromStatus, actor, reason: "x" }),
@@ -36,6 +37,7 @@ describe("assertTransitionAllowed", () => {
     ["expire", S.ACTIVE],
     ["start", S.PENDING_REVIEW],
     ["submit_completion", S.UPCOMING],
+    ["cancel_by_admin", S.ACTIVE],
   ] as const)("%s from %i is an invalid transition", (event, fromStatus) => {
     expect(() =>
       assertTransitionAllowed({ event, fromStatus, actor: "admin", reason: "x" }),

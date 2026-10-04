@@ -467,6 +467,16 @@ export const HTTP_STATUS = {
     "Every active shift must be ended, with its result, before the campaign is marked done",
     "CAMPAIGN_SHIFTS_NOT_ENDED",
   ),
+  CAMPAIGN_REPORTS_UNHANDLED: createStatus(
+    422,
+    "Give a reason for every trash report no shift handled",
+    "CAMPAIGN_REPORTS_UNHANDLED",
+  ),
+  CAMPAIGN_COMPLETION_REJECT_LIMIT: createStatus(
+    409,
+    "This completion was already rejected 3 times; approve or cancel the campaign",
+    "CAMPAIGN_COMPLETION_REJECT_LIMIT",
+  ),
   CAMPAIGN_MANAGER_LEADS_SHIFTS: createStatus(
     409,
     "This manager still leads upcoming shifts; assign another leader first",

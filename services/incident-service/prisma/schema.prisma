@@ -118,6 +118,10 @@ model Campaign {
   minVolunteersReason   String?   @map("min_volunteers_reason")
   /// Last time managers invited nearby residents to fill short shifts (spec 3.2).
   lastNearbyInviteAt    DateTime? @map("last_nearby_invite_at")
+  /// Last time a manager marked the campaign done (spec 5.1).
+  completionSubmittedAt DateTime? @map("completion_submitted_at")
+  /// Times the admin rejected the completion; at 3 only approve or cancel remain (spec 5.2).
+  completionRejectionCount Int    @default(0) @map("completion_rejection_count")
 
   organizationId String       @map("organization_id") @db.Uuid
   organization   Organization @relation(fields: [organizationId], references: [id])
@@ -138,6 +142,7 @@ model Campaign {
   shiftAttendanceSessions         CampaignShiftAttendanceSession[]
   shiftResults                    CampaignShiftResult[]
   shiftMedia                      CampaignShiftMedia[]
+  completionReports               CampaignCompletionReport[]
   campaignSubmissions             CampaignSubmission[]
   campaignResults                 CampaignResult[]
   campaignCompletionVerifications CampaignCompletionVerification[]
@@ -1377,6 +1382,11 @@ model CampaignShiftResult {
   submittedBy String   @map("submitted_by") @db.Uuid
   submittedAt DateTime @default(now()) @map("submitted_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
+  /// Set when the admin rejects the completion and asks for more on this shift (spec 5.2): the
+  /// shift is back to "awaiting result" until its result is saved again, which clears it.
+  reopenedAt   DateTime? @map("reopened_at")
+  reopenReason String?   @map("reopen_reason")
+  reopenedBy   String?   @map("reopened_by") @db.Uuid
 
   campaign Campaign                    @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   shift    CampaignShift               @relation(fields: [shiftId], references: [id], onDelete: Cascade)
@@ -1424,4 +1434,25 @@ model CampaignShiftMedia {
   @@index([shiftId, createdAt])
   @@index([campaignId])
   @@map("campaign_shift_media")
+}
+
+/// Spec 5.1: the completion submission, one row per trash report of the campaign, built from the
+/// shifts' results when a manager marks the campaign done (rewritten on each submission). "cleaned"
+/// / "partial" = best state across shifts with every photo; "unhandled" = in no result, with reason.
+model CampaignCompletionReport {
+  id          String   @id @default(uuid()) @db.Uuid
+  campaignId  String   @map("campaign_id") @db.Uuid
+  reportId    String   @map("report_id") @db.Uuid
+  /// cleaned | partial | unhandled
+  status      String   @db.VarChar(20)
+  reason      String?
+  beforeUrls  String[] @map("before_urls")
+  afterUrls   String[] @map("after_urls")
+  submittedAt DateTime @default(now()) @map("submitted_at")
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, reportId])
+  @@index([reportId])
+  @@map("campaign_completion_reports")
 }

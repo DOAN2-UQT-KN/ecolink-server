@@ -11,8 +11,10 @@ import { campaignManagerService } from "./campaign_manager/campaign_manager.serv
 import { campaignRegistrationService } from "./campaign_registration/campaign_registration.service";
 import { shiftAttendanceService } from "./campaign_attendance/shift-attendance.service";
 import { shiftResultService } from "./campaign_shift_result/shift-result.service";
+import { campaignCompletionService } from "./campaign_completion/completion.service";
 import { GlobalStatus } from "../../constants/status.enum";
 import {
+  CAMPAIGN_COMPLETION_UNHANDLED_REASON_MAX,
   CAMPAIGN_DIFFICULTY_MAX,
   CAMPAIGN_DIFFICULTY_MIN,
   CAMPAIGN_DAY_MAX,
@@ -29,6 +31,7 @@ import type {
   CampaignListQuery,
   CampaignManagersListQuery,
   CampaignMultiSubmissionReviewListQuery,
+  MarkCampaignDoneBody,
 } from "./campaign.dto";
 import { normalizeQueryUuidList } from "../../utils/query-uuid-list";
 import { resolveRequestLocale } from "../../utils/resolve-request-locale";
@@ -763,38 +766,38 @@ export class CampaignController {
   ];
 
   /**
-   * Admin review of a pending campaign completion (approve or reject).
+   * Admin decision on a campaign marked done (spec 5.2): approve (optional `difficulty`), reject
+   * (`rejectReason` + `shiftIds` to reopen; at most 3 times) or cancel (`rejectReason`).
    */
   adminReviewCampaignCompletion = [
     param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
     body("decision")
-      .isIn(["approve", "reject"])
-      .withMessage('decision must be "approve" or "reject"'),
+      .isIn(["approve", "reject", "cancel"])
+      .withMessage('decision must be "approve", "reject" or "cancel"'),
     body("rejectReason").custom((value, { req }) => {
-      const decision = req.body?.decision;
-      const isReject = decision === "reject";
+      const needsReason = req.body?.decision === "reject" || req.body?.decision === "cancel";
       if (value === undefined || value === null) {
-        if (isReject) {
-          throw new Error(
-            "reject_reason is required when rejecting completion",
-          );
-        }
+        if (needsReason) throw new Error("rejectReason is required to reject or cancel");
         return true;
       }
       if (typeof value !== "string") {
-        throw new Error("reject_reason must be a string or null");
+        throw new Error("rejectReason must be a string or null");
       }
       const trimmed = value.trim();
-      if (isReject && !trimmed) {
-        throw new Error(
-          "reject_reason is required when rejecting completion",
-        );
+      if (needsReason && !trimmed) {
+        throw new Error("rejectReason is required to reject or cancel");
       }
       if (trimmed.length > 5000) {
-        throw new Error("reject_reason too long (max 5000 characters)");
+        throw new Error("rejectReason too long (max 5000 characters)");
       }
       return true;
     }),
+    body("difficulty").optional({ values: "null" }).isInt().withMessage("difficulty must be a whole number"),
+    body("shiftIds")
+      .if(body("decision").equals("reject"))
+      .isArray({ min: 1, max: 200 })
+      .withMessage("Pick at least one shift to complete again"),
+    body("shiftIds.*").optional().isUUID().withMessage("shiftIds must be UUIDs"),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -820,46 +823,33 @@ export class CampaignController {
           );
         }
 
-        const { decision, rejectReason } =
+        const { decision, rejectReason, difficulty, shiftIds } =
           req.body as AdminCompletionReviewBody;
-        const trimmedReason =
-          typeof rejectReason === "string" ? rejectReason.trim() : undefined;
-
         const campaign = await campaignService.adminReviewCampaignCompletion(
           req.params.id,
           userId,
-          decision,
-          trimmedReason,
+          {
+            decision,
+            rejectReason: typeof rejectReason === "string" ? rejectReason.trim() : undefined,
+            difficulty: difficulty == null ? null : Number(difficulty),
+            shiftIds: decision === "reject" ? (shiftIds ?? []).map(String) : undefined,
+          },
           userId,
         );
 
-        sendSuccess(
-          res,
-          HTTP_STATUS.OK.withMessage(
-            decision === "approve"
-              ? "Campaign marked as done successfully"
-              : "Completion request rejected; campaign returned to active",
-          ),
-          { campaign },
-        );
+        const messages = {
+          approve: "Campaign marked as done successfully",
+          reject: "Completion request rejected; campaign returned to active",
+          cancel: "Campaign cancelled",
+        } as const;
+        sendSuccess(res, HTTP_STATUS.OK.withMessage(messages[decision]), { campaign });
       } catch (error) {
-        console.error("Admin review campaign completion error:", error);
         if (sendHttpErrorResponse(res, error)) {
           return;
         }
-        if (error instanceof Error) {
-          if (error.message.includes("not found")) {
-            return sendError(
-              res,
-              HTTP_STATUS.NOT_FOUND.withMessage("Campaign not found"),
-            );
-          }
-          if (
-            error.message.includes("must await admin completion") ||
-            error.message.includes("Reject only applies")
-          ) {
-            return sendError(res, HTTP_STATUS.BAD_REQUEST.withMessage(error.message));
-          }
+        console.error("Admin review campaign completion error:", error);
+        if (error instanceof Error && error.message.includes("not found")) {
+          return sendError(res, HTTP_STATUS.NOT_FOUND.withMessage("Campaign not found"));
         }
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
@@ -930,6 +920,13 @@ export class CampaignController {
    */
   markCampaignDone = [
     param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+    body("unhandled").optional().isArray({ max: 500 }),
+    body("unhandled.*.reportId").isUUID().withMessage("reportId must be a valid UUID"),
+    body("unhandled.*.reason")
+      .isString()
+      .trim()
+      .isLength({ min: 1, max: CAMPAIGN_COMPLETION_UNHANDLED_REASON_MAX })
+      .withMessage(`reason is required (1–${CAMPAIGN_COMPLETION_UNHANDLED_REASON_MAX} characters)`),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -949,6 +946,11 @@ export class CampaignController {
           await campaignService.submitCampaignCompletionForAdminApproval(
             req.params.id,
             userId,
+            undefined,
+            ((req.body as MarkCampaignDoneBody)?.unhandled ?? []).map((u) => ({
+              reportId: String(u.reportId),
+              reason: String(u.reason ?? ""),
+            })),
           );
 
         sendSuccess(
@@ -1567,7 +1569,7 @@ export class CampaignController {
   // Shift results and status (spec 4.2)
   // =====================
 
-  /** GET /campaigns/:id/shifts/:shiftId/result — status for anyone; the result for those allowed. */
+  /** GET /campaigns/:id/shifts/:shiftId/result — status for anyone; the result on a public campaign; the pool for those allowed. */
   getShiftResult = this.shiftAttendanceAction("Get shift result", (req, userId) =>
     shiftResultService.get(req.params.id, req.params.shiftId, { userId, role: req.user?.role }),
   );
@@ -1631,7 +1633,12 @@ export class CampaignController {
     [param("mediaId").isUUID().withMessage("mediaId must be a valid UUID")],
   );
 
-  /** GET /campaigns/:id/shift-overview — every shift's status and the totals (managers, admins). */
+  /** GET /campaigns/:id/completion-review — the submission, totals and residents' answers (spec 5.2). */
+  getCompletionReview = this.shiftAttendanceAction("Get completion review", (req, userId) =>
+    campaignCompletionService.getForReview(req.params.id, { userId, role: req.user?.role }),
+  );
+
+  /** GET /campaigns/:id/shift-overview — every shift's status and the totals (anyone on a public campaign). */
   getShiftOverview = this.shiftAttendanceAction("Get shift overview", (req, userId) =>
     shiftResultService.overview(req.params.id, { userId, role: req.user?.role }),
   );

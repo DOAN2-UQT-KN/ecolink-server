@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import {
+  CAMPAIGN_PUBLIC_STATUSES,
   CampaignStatus,
   SHIFT_MEDIA_MAX_PER_SHIFT,
   SHIFT_RESULT_MAX_PHOTOS_PER_SIDE,
@@ -16,7 +17,7 @@ import {
 import type { OrganizationOwnerResponse } from "../../organization/organization.dto";
 import { campaignAccessService, isPlatformAdmin } from "../campaign-access.service";
 import { isEligible, shiftAttendanceService } from "../campaign_attendance/shift-attendance.service";
-import { effectiveEnd, shiftStatusOf } from "./shift-status";
+import { effectiveEnd, hasLiveResult, shiftStatusOf } from "./shift-status";
 
 export type ShiftResultReportStatus =
   (typeof SHIFT_RESULT_REPORT_STATUS)[keyof typeof SHIFT_RESULT_REPORT_STATUS];
@@ -54,12 +55,19 @@ export interface ShiftResultView {
   leaderUserId: string | null;
   /** Leader or campaign manager: may submit the result and end the shift early. */
   canEdit: boolean;
-  /** May see the result: managers, admins, the leader, and volunteers who attended. */
+  /**
+   * May see the whole shift, its full photo pool included: managers, admins, the leader, and
+   * volunteers who attended. Anyone else sees the submitted result (and the photos chosen for it)
+   * once the campaign is public.
+   */
   canView: boolean;
   /** May add photos to the shift's pool. */
   canContribute: boolean;
   /** The campaign is no longer running (marked done or later): nothing changes any more. */
   locked: boolean;
+  /** Set when the admin asked for more on this shift (spec 5.2); cleared once the result is saved. */
+  reopenedAt: Date | null;
+  reopenReason: string | null;
   /** Trash reports of the shift's meeting point. */
   reportIds: string[];
   result: {
@@ -76,7 +84,7 @@ export interface ShiftResultView {
       afterUrls: string[];
     }>;
   } | null;
-  /** The shift's pool; only for those who may see the result. */
+  /** The shift's pool for `canView`; only the photos chosen for the result for anyone else. */
   media: ShiftMediaResponse[];
 }
 
@@ -92,6 +100,9 @@ export interface ShiftOverviewRow {
   present: number;
   eligible: number;
   hasResult: boolean;
+  /** Set when the admin asked for more on this shift (spec 5.2). */
+  reopenedAt: Date | null;
+  reopenReason: string | null;
   wasteBags: number | null;
   wasteKg: number | null;
 }
@@ -186,7 +197,10 @@ export class ShiftResultService {
     return rows.map((r) => r.reportId);
   }
 
-  /** The shift's status for anyone; the result and its photos for those who may see them. */
+  /**
+   * The shift's status for anyone. Its submitted result (with the photos chosen for it) for anyone
+   * once the campaign is public; the full photo pool for managers, admins, the leader and attendees.
+   */
   async get(
     campaignId: string,
     shiftId: string,
@@ -197,7 +211,7 @@ export class ShiftResultService {
     const canEdit = await this.canEdit(campaignId, shift.leaderUserId, viewer.userId);
     const attendance = canEdit ? null : await this.attendanceOf(shiftId, viewer.userId);
     const canView = canEdit || isPlatformAdmin(viewer.role) || attendance != null;
-    const status = shiftStatusOf(shift, shift.result != null, now);
+    const status = shiftStatusOf(shift, shift.result, now);
     const locked = shift.campaign.status !== CampaignStatus.ACTIVE;
     const started = shift.minVolunteers > 0 && now.getTime() >= shift.startAt.getTime();
     const canContribute =
@@ -214,13 +228,16 @@ export class ShiftResultService {
       canView,
       canContribute,
       locked,
+      reopenedAt: shift.result?.reopenedAt ?? null,
+      reopenReason: shift.result?.reopenedAt ? (shift.result.reopenReason ?? null) : null,
     };
-    if (!canView) return { ...base, reportIds: [], result: null, media: [] };
+    const isPublic = CAMPAIGN_PUBLIC_STATUSES.includes(shift.campaign.status);
+    if (!canView && !isPublic) return { ...base, reportIds: [], result: null, media: [] };
 
     const [reportIds, media] = await Promise.all([
       this.reportIdsOf(shift.meetingPointId),
       prisma.campaignShiftMedia.findMany({
-        where: { shiftId, deletedAt: null },
+        where: { shiftId, deletedAt: null, ...(canView ? {} : { includedInResult: true }) },
         orderBy: { createdAt: "asc" },
       }),
     ]);
@@ -329,7 +346,16 @@ export class ShiftResultService {
       const saved = await tx.campaignShiftResult.upsert({
         where: { shiftId },
         create: { campaignId, shiftId, description, wasteBags, wasteKg, submittedBy: userId, submittedAt: now },
-        update: { description, wasteBags, wasteKg, submittedBy: userId },
+        // Saving again answers the admin's request for more (spec 5.2): the shift is ended again.
+        update: {
+          description,
+          wasteBags,
+          wasteKg,
+          submittedBy: userId,
+          reopenedAt: null,
+          reopenReason: null,
+          reopenedBy: null,
+        },
       });
       await tx.campaignShiftResultReport.deleteMany({ where: { resultId: saved.id } });
       if (reports.length > 0) {
@@ -479,14 +505,24 @@ export class ShiftResultService {
     return { id: mediaId, removed: true };
   }
 
-  /** Spec 4.2: every shift's status and figures, with campaign totals (managers and admins). */
+  /**
+   * Spec 4.2: every shift's status and figures, with campaign totals. Anyone signed in once the
+   * campaign is public; managers and admins in every status.
+   */
   async overview(
     campaignId: string,
     viewer: { userId: string; role?: string | null },
     now = new Date(),
   ): Promise<ShiftOverview> {
     if (!isPlatformAdmin(viewer.role)) {
-      await campaignAccessService.assertCanManage(campaignId, viewer.userId);
+      const campaign = await prisma.campaign.findFirst({
+        where: { id: campaignId, deletedAt: null },
+        select: { status: true },
+      });
+      if (!campaign) throw new HttpError(HTTP_STATUS.NOT_FOUND.withMessage("Campaign not found"));
+      if (!CAMPAIGN_PUBLIC_STATUSES.includes(campaign.status)) {
+        await campaignAccessService.assertCanManage(campaignId, viewer.userId);
+      }
     }
     const shifts = await prisma.campaignShift.findMany({
       where: { campaignId, campaign: { deletedAt: null } },
@@ -520,11 +556,13 @@ export class ShiftResultService {
         startAt: s.startAt,
         endAt: s.endAt,
         endedAt: s.endedAt,
-        status: shiftStatusOf(s, s.result != null, now),
+        status: shiftStatusOf(s, s.result, now),
         registered: registered.get(s.id) ?? 0,
         present: atts.length,
         eligible: atts.filter((a) => isEligible(a, s)).length,
-        hasResult: s.result != null,
+        hasResult: hasLiveResult(s.result),
+        reopenedAt: s.result?.reopenedAt ?? null,
+        reopenReason: s.result?.reopenedAt ? (s.result.reopenReason ?? null) : null,
         wasteBags: s.result?.wasteBags ?? null,
         wasteKg: s.result?.wasteKg ?? null,
       };
@@ -573,11 +611,11 @@ export class ShiftResultService {
         endAt: true,
         endedAt: true,
         minVolunteers: true,
-        result: { select: { id: true } },
+        result: { select: { id: true, reopenedAt: true } },
       },
     });
     const notEnded = shifts
-      .filter((s) => shiftStatusOf(s, s.result != null, now) !== SHIFT_STATUS.ENDED)
+      .filter((s) => shiftStatusOf(s, s.result, now) !== SHIFT_STATUS.ENDED)
       .map((s) => s.id);
     if (notEnded.length > 0) {
       throw new HttpError(HTTP_STATUS.CAMPAIGN_SHIFTS_NOT_ENDED, { shiftIds: notEnded });

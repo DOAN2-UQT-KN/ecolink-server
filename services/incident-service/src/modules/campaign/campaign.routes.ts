@@ -77,9 +77,23 @@ router.get(
 router.get("/:id", authenticate, campaignController.getCampaignById);
 
 /**
+ * @route   GET /api/v1/campaigns/:id/completion-review
+ * @desc    Completion submission (or a preview before marking done), totals, residents' answers
+ *          and red flag, rejection count, shifts that may be reopened (spec 5.2)
+ * @access  Private (Admin or campaign manager)
+ */
+router.get(
+  "/:id/completion-review",
+  authenticate,
+  campaignController.getCompletionReview,
+);
+
+/**
  * @route   PUT /api/v1/campaigns/:id/completion-review
- * @desc    Admin approve or reject pending completion (WAITING_CONFIRMED)
+ * @desc    Admin decision on a campaign marked done: approve (optional difficulty), reject
+ *          (reason + shiftIds to reopen; at most 3 times) or cancel (reason)
  * @access  Private (Admin only)
+ * @body    { decision: approve|reject|cancel, rejectReason?, difficulty?, shiftIds? }
  */
 router.put(
   "/:id/completion-review",
@@ -126,8 +140,10 @@ router.put("/:id/verify", authenticate, campaignController.adminVerifyCampaign);
 
 /**
  * @route   PUT /api/v1/campaigns/:id/mark-done
- * @desc    Manager: submit for final admin completion approval.
- * @access  Private
+ * @desc    Manager: mark the campaign done (every shift ended); the submission is built from the
+ *          shifts' results; reports no shift handled need a reason (422 CAMPAIGN_REPORTS_UNHANDLED)
+ * @access  Private (Campaign manager)
+ * @body    { unhandled?: [{ reportId, reason }] }
  */
 router.put("/:id/mark-done", authenticate, campaignController.markCampaignDone);
 
@@ -235,14 +251,14 @@ router.get(
 
 /**
  * @route   GET /api/v1/campaigns/:id/shift-overview
- * @desc    Every shift's status, attendance and result figures, with campaign totals (managers, admins)
+ * @desc    Every shift's status, attendance and result figures, with campaign totals (anyone signed in on a public campaign; managers, admins always)
  * @access  Private
  */
 router.get("/:id/shift-overview", authenticate, campaignController.getShiftOverview);
 
 /**
  * @route   GET /api/v1/campaigns/:id/shifts/:shiftId/result
- * @desc    The shift's status; its result and photo pool for managers, admins, its leader and volunteers who attended
+ * @desc    The shift's status; its submitted result (with the photos chosen for it) for anyone on a public campaign; the full photo pool for managers, admins, its leader and volunteers who attended
  * @access  Private
  */
 router.get("/:id/shifts/:shiftId/result", authenticate, campaignController.getShiftResult);

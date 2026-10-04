@@ -173,16 +173,32 @@ describe("status", () => {
     expect((await svc.get(c.id, c.b.id, { userId: MGR }, at(start, HOUR))).status).toBe("off");
   });
 
-  it("shows the result only to those allowed; others see the status", async () => {
+  it("shows the submitted result to anyone on a public campaign; the full pool only to those allowed", async () => {
     const c = await seed(start);
-    await svc.save(c.id, c.a.id, LEADER, goodResult(c.reportId), at(start, HOUR));
-    const outsider = await svc.get(c.id, c.a.id, { userId: V2 }, at(start, HOUR));
-    expect(outsider).toMatchObject({ status: "running", canView: false, result: null, canContribute: false });
-    expect((await svc.get(c.id, c.a.id, { userId: V2, role: "ADMIN" }, at(start, HOUR))).result).not.toBeNull();
+    const now = at(start, HOUR);
     await checkIn(c.id, c.a.id, V1, at(start, 5 * MIN));
-    const volunteer = await svc.get(c.id, c.a.id, { userId: V1 }, at(start, HOUR));
+    const chosen = await svc.addMedia(c.id, c.a.id, V1, { url: IMG, kind: "image" }, now);
+    const left = await svc.addMedia(c.id, c.a.id, LEADER, { url: IMG, kind: "image" }, now);
+    await svc.save(c.id, c.a.id, LEADER, { ...goodResult(c.reportId), mediaIds: [chosen.id] }, now);
+
+    const outsider = await svc.get(c.id, c.a.id, { userId: V2 }, now);
+    expect(outsider).toMatchObject({ status: "running", canView: false, canEdit: false, canContribute: false });
+    expect(outsider.result?.reports).toHaveLength(1);
+    expect(outsider.reportIds).toEqual([c.reportId]);
+    expect(outsider.media.map((m) => m.id)).toEqual([chosen.id]);
+
+    const admin = await svc.get(c.id, c.a.id, { userId: V2, role: "ADMIN" }, now);
+    expect(admin.canView).toBe(true);
+    expect(admin.media.map((m) => m.id).sort()).toEqual([chosen.id, left.id].sort());
+    const volunteer = await svc.get(c.id, c.a.id, { userId: V1 }, now);
     expect(volunteer).toMatchObject({ canView: true, canEdit: false, canContribute: true });
     expect(volunteer.result?.reports).toHaveLength(1);
+    expect(volunteer.media).toHaveLength(2);
+
+    // Not public (back under review): outsiders see the status only.
+    await prisma.campaign.update({ where: { id: c.id }, data: { status: CampaignStatus.PENDING_REVIEW } });
+    const hidden = await svc.get(c.id, c.a.id, { userId: V2 }, now);
+    expect(hidden).toMatchObject({ canView: false, result: null, reportIds: [], media: [] });
   });
 });
 
@@ -305,7 +321,8 @@ describe("overview and marking done", () => {
   it("totals the shifts; mark-done waits for every shift that is on", async () => {
     // Both shifts are over by now.
     const c = await seed(new Date(Date.now() - 5 * HOUR));
-    await expect(svc.overview(c.id, { userId: V1 })).rejects.toMatchObject(code("CAMPAIGN_PERMISSION_DENIED"));
+    // Anyone signed in sees the overview of a public campaign.
+    expect((await svc.overview(c.id, { userId: V2 })).shifts).toHaveLength(2);
     await svc.save(c.id, c.a.id, LEADER, goodResult(c.reportId));
 
     let overview = await svc.overview(c.id, { userId: OWNER });
@@ -336,11 +353,23 @@ describe("overview and marking done", () => {
     expect(done.status).toBe(CampaignStatus.PENDING_COMPLETION);
   });
 
+  it("keeps the overview of a campaign that is not public to its managers and admins", async () => {
+    const c = await seed(new Date(Date.now() - 5 * HOUR));
+    await prisma.campaign.update({ where: { id: c.id }, data: { status: CampaignStatus.DRAFT } });
+    await expect(svc.overview(c.id, { userId: V2 })).rejects.toMatchObject(code("CAMPAIGN_PERMISSION_DENIED"));
+    expect((await svc.overview(c.id, { userId: OWNER })).shifts).toHaveLength(2);
+    expect((await svc.overview(c.id, { userId: V2, role: "ADMIN" })).shifts).toHaveLength(2);
+    await expect(svc.overview(randomUUID(), { userId: V2 })).rejects.toMatchObject(code("NOT_FOUND"));
+  });
+
   it("a shift that is off does not block mark-done", async () => {
     const c = await seed(new Date(Date.now() - 5 * HOUR));
     await svc.save(c.id, c.a.id, LEADER, goodResult(c.reportId));
     await prisma.campaignShift.update({ where: { id: c.b.id }, data: { minVolunteers: 0 } });
-    await campaignService.submitCampaignCompletionForAdminApproval(c.id, OWNER);
+    // Its report was handled by no shift: it needs a reason (spec 5.1).
+    await campaignService.submitCampaignCompletionForAdminApproval(c.id, OWNER, undefined, [
+      { reportId: c.otherReportId, reason: "Ca đã tắt" },
+    ]);
   });
 });
 

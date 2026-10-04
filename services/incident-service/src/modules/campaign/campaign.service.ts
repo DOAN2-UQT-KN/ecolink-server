@@ -10,7 +10,6 @@ import { backgroundJobDispatcher } from "../../queue/register";
 import {
   GlobalStatus,
   JoinRequestStatus,
-  ReportStatus,
   SavedResourceType,
   VoteResourceType,
 } from "../../constants/status.enum";
@@ -25,7 +24,6 @@ import { getCampaignAdminNotifyUserIds } from "./campaign-completion-admin-notif
 import { campaignManagerRepository } from "./campaign_manager/campaign_manager.repository";
 import { rewardServiceClient } from "../reward/reward-service.client";
 import { campaignRegistrationRepository } from "./campaign_registration/campaign_registration.repository";
-import { shiftAttendanceService } from "./campaign_attendance/shift-attendance.service";
 import { campaignRepository } from "./campaign.repository";
 import { campaignAccessService } from "./campaign-access.service";
 import { TeamCampaign, assertLeadersInTeam } from "./campaign_manager/campaign-team";
@@ -60,7 +58,6 @@ import {
 } from "./campaign.dto";
 import { CampaignWithReports, toCampaignResponse } from "./campaign.entity";
 import {
-  campaignNameNotificationPayload,
   campaignTitleNotificationPayload,
 } from "./campaign-i18n";
 import { savedResourceRepository } from "../saved_resource/saved_resource.repository";
@@ -79,9 +76,11 @@ import { toReportResponse } from "../report/report.entity";
 import type { ReportResponse } from "../report/report.dto";
 import { reportService } from "../report/report.service";
 import { findNearbyUserIds } from "./nearby-users";
-import { emitOutbox } from "../../outbox/outbox.writer";
-import { OutboxEventType } from "../../outbox/outbox.types";
 import { shiftResultService } from "./campaign_shift_result/shift-result.service";
+import {
+  campaignCompletionService,
+  type CompletionDecision,
+} from "./campaign_completion/completion.service";
 
 function assertDifficultyInRange(level: number): void {
   if (
@@ -622,20 +621,24 @@ export class CampaignService {
     };
     latitude?: number | null;
     longitude?: number | null;
+    /** Several points (meeting points); used instead of `latitude` / `longitude` when given. */
+    points?: Array<{ latitude: number; longitude: number }>;
     excludeUserIds: string[];
   }): Promise<void> {
-    if (args.latitude == null || args.longitude == null) {
+    const points =
+      args.points ??
+      (args.latitude != null && args.longitude != null
+        ? [{ latitude: args.latitude, longitude: args.longitude }]
+        : []);
+    if (points.length === 0) {
       console.warn(
-        "[campaign] nearby verify notify skipped: latitude/longitude required",
+        "[campaign] nearby verify notify skipped: a location is required",
         { campaignId: args.campaignId, kind: args.kind },
       );
       return;
     }
 
-    const recipientIds = await findNearbyUserIds(
-      [{ latitude: args.latitude, longitude: args.longitude }],
-      args.excludeUserIds,
-    );
+    const recipientIds = await findNearbyUserIds(points, args.excludeUserIds);
 
     if (recipientIds.length === 0) {
       return;
@@ -1299,89 +1302,45 @@ export class CampaignService {
     );
   }
 
-  /** Admin-only: approve or reject a pending completion submission. */
+  /**
+   * Admin decision on a campaign marked done (spec 5.2): approve (optionally settling the
+   * difficulty), reject (reopening shifts, at most 3 times) or cancel. See `campaignCompletionService`.
+   */
   async adminReviewCampaignCompletion(
     id: string,
     adminUserId: string,
-    decision: "approve" | "reject",
-    rejectReason: string | undefined,
+    input: {
+      decision: CompletionDecision;
+      rejectReason?: string | null;
+      difficulty?: number | null;
+      shiftIds?: string[];
+    },
     viewerUserId?: string | null,
   ): Promise<CampaignResponse> {
-    if (decision === "approve") {
-      return this.adminFinalizeCampaignCompletion(
-        id,
-        adminUserId,
-        viewerUserId,
-      );
+    await campaignCompletionService.review(id, adminUserId, {
+      decision: input.decision,
+      reason: input.rejectReason,
+      difficulty: input.difficulty,
+      shiftIds: input.shiftIds,
+    });
+    const updated = await campaignRepository.findById(id);
+    if (!updated) {
+      throw new HttpError(HTTP_STATUS.NOT_FOUND.withMessage("Campaign not found"));
     }
-    return this.adminRejectCampaign(
-      id,
-      adminUserId,
-      rejectReason ?? "",
-      viewerUserId,
-    );
-  }
-
-  /** Admin-only: reject completion submission → in review + notify org owner. */
-  async adminRejectCampaign(
-    id: string,
-    adminUserId: string,
-    rejectReason: string,
-    viewerUserId?: string | null,
-  ): Promise<CampaignResponse> {
-    const existing = await campaignRepository.findById(id);
-    if (!existing) {
-      throw new HttpError(
-        HTTP_STATUS.NOT_FOUND.withMessage("Campaign not found"),
-      );
-    }
-
-    if (existing.status === GlobalStatus._STATUS_WAITING_CONFIRMED) {
-      const trimmedReason = rejectReason.trim();
-      const updated = await prisma.$transaction(async (tx) => {
-        await transitionCampaign(tx, {
-          campaignId: id,
-          event: "reject_completion",
-          fromStatus: existing.status,
-          actor: "admin",
-          actorId: adminUserId,
-          reason: trimmedReason,
-          data: { rejectReason: trimmedReason },
-        });
-        return campaignLifecycleService.loadInTx(tx, id);
-      });
-
-      void this.notifyOrganizationOwnerOfCompletionReview({
-        organizationId: existing.organizationId,
-        campaignId: id,
-        campaign: existing,
-        outcome: "rejected",
-        rejectReason: trimmedReason,
-      }).catch((err) => {
-        console.warn(
-          "[campaign] failed to notify org owner of completion rejection",
-          err,
-        );
-      });
-
-      return this.toResponseWithVotes(updated, viewerUserId ?? adminUserId);
-    }
-
-    throw new HttpError(
-      HTTP_STATUS.BAD_REQUEST.withMessage(
-        "Reject only applies to a pending completion approval",
-      ),
-    );
+    return this.toResponseWithVotes(updated, viewerUserId ?? adminUserId);
   }
 
   /**
-   * Manager: active campaign (all shifts ended) → awaiting final admin approval.
-   * `INREVIEW` is accepted only for campaigns already in that legacy status.
+   * Manager marks the campaign done (spec 5.1): every shift that is on has ended; the submission is
+   * built from the shifts' results (reports no shift handled need a reason) and saved; the
+   * campaign then awaits the admin. `INREVIEW` is accepted only for that legacy status.
    */
   async submitCampaignCompletionForAdminApproval(
     id: string,
     userId: string,
     viewerUserId?: string | null,
+    unhandled?: Array<{ reportId: string; reason: string }>,
+    now = new Date(),
   ): Promise<CampaignResponse> {
     const existing = await campaignRepository.findById(id);
     if (!existing) {
@@ -1404,7 +1363,8 @@ export class CampaignService {
     }
 
     // Spec 5.1: every shift that is on must be ended (with its result) first.
-    await shiftResultService.assertAllShiftsEnded(id);
+    await shiftResultService.assertAllShiftsEnded(id, now);
+    const rows = await campaignCompletionService.prepareSubmission(id, unhandled);
 
     const updated = await prisma.$transaction(async (tx) => {
       await transitionCampaign(tx, {
@@ -1413,7 +1373,9 @@ export class CampaignService {
         fromStatus: existing.status,
         actor: "manager",
         actorId: userId,
+        data: { completionSubmittedAt: now },
       });
+      await campaignCompletionService.saveSubmission(tx, id, rows, now);
       return campaignLifecycleService.loadInTx(tx, id);
     });
 
@@ -1440,6 +1402,7 @@ export class CampaignService {
     return this.toResponseWithVotes(updated, viewerUserId ?? userId);
   }
 
+  /** Spec 5.1: residents within 5 km of any meeting point are invited to verify the cleanup. */
   private async notifyNearbyOnCampaignCompletionSubmitted(args: {
     campaign: {
       id: string;
@@ -1450,11 +1413,12 @@ export class CampaignService {
     };
     submitterUserId: string;
   }): Promise<void> {
-    const [managerRows, volunteerIds] = await Promise.all([
+    const [managerRows, volunteerIds, points] = await Promise.all([
       campaignManagerRepository.findManagersByCampaignId(args.campaign.id),
       campaignRegistrationRepository.findRegisteredUserIds(
         args.campaign.id,
       ),
+      campaignCompletionService.verifyPoints(args.campaign),
     ]);
     const excludeUserIds = [
       args.submitterUserId,
@@ -1467,182 +1431,8 @@ export class CampaignService {
       kind: "CAMPAIGN_COMPLETION_VERIFY_INVITE",
       campaignId: args.campaign.id,
       campaign: args.campaign,
-      latitude: args.campaign.latitude,
-      longitude: args.campaign.longitude,
+      points,
       excludeUserIds,
-    });
-  }
-
-  /** Admin-only: finalize completion (waiting admin confirmation → completed). */
-  async adminFinalizeCampaignCompletion(
-    id: string,
-    userId: string,
-    viewerUserId?: string | null,
-  ): Promise<CampaignResponse> {
-    const existing = await campaignRepository.findById(id);
-    if (!existing) {
-      throw new Error("Campaign not found");
-    }
-
-    if (existing.status === GlobalStatus._STATUS_COMPLETED) {
-      return this.toResponseWithVotes(existing, viewerUserId ?? userId);
-    }
-
-    if (existing.status !== GlobalStatus._STATUS_WAITING_CONFIRMED) {
-      throw new Error(
-        "Campaign must await admin completion approval before it can be finalized",
-      );
-    }
-
-    const tier = await rewardServiceClient.getDifficultyByLevel(
-      existing.difficulty,
-    );
-    if (!tier) {
-      throw new Error("Campaign difficulty missing in reward service");
-    }
-
-    /** Green points per shift attended long enough (spec 4.1, 5.3). */
-    const credits = await shiftAttendanceService.completionCredits(id, tier.greenPoints);
-    // Everyone registered or present hears the campaign is done (spec 5.4).
-    const approvedVolunteerIds = [
-      ...new Set([
-        ...(await campaignRegistrationRepository.findRegisteredUserIds(id)),
-        ...credits.map((c) => c.userId),
-      ]),
-    ];
-
-    // TODO: re-enable Facebook recognition outbox event.
-    // /** Facebook / AI thanks: all approved members (check-in is not required for public recognition). */
-    // let recognizedVolunteers: { name: string; email: string | null }[] = [];
-    // if (approvedVolunteerIds.length > 0) {
-    //   const contacts =
-    //     await fetchIdentityUsersWithContactByIds(approvedVolunteerIds);
-    //   recognizedVolunteers = approvedVolunteerIds
-    //     .map((vid) => {
-    //       const u = getIdentityUserContact(contacts, vid);
-    //       if (!u?.name?.trim()) return null;
-    //       return {
-    //         name: u.name.trim(),
-    //         email: u.email && u.email.length > 0 ? u.email : null,
-    //       };
-    //     })
-    //     .filter((x): x is { name: string; email: string | null } => x !== null);
-    // }
-    //
-    // const facebookRecognitionPayload: Prisma.InputJsonValue = {
-    //   campaignId: id,
-    //   campaignTitle: existing.title,
-    //   recognizedUserIds: approvedVolunteerIds,
-    //   completedAt: new Date().toISOString(),
-    //   bannerUrl: existing.banner ?? null,
-    //   description: existing.description ?? null,
-    //   ...(recognizedVolunteers.length > 0 ? { recognizedVolunteers } : {}),
-    // };
-
-    // Complete campaign + emit reward events atomically. The outbox relay
-    // delivers them to reward-service, so completion is never half-applied and
-    // there is no post-commit enqueue/rollback dance.
-    await prisma.$transaction(
-      async (tx) => {
-        await transitionCampaign(tx, {
-          campaignId: id,
-          event: "approve_completion",
-          fromStatus: existing.status,
-          actor: "admin",
-          actorId: userId,
-          data: { rejectReason: null },
-        });
-        await tx.report.updateMany({
-          where: { campaignId: id, deletedAt: null },
-          data: {
-            status: ReportStatus._STATUS_COMPLETED,
-            updatedBy: userId,
-          },
-        });
-        await tx.sos.updateMany({
-          where: {
-            campaignId: id,
-            deletedAt: null,
-            status: { not: GlobalStatus._STATUS_COMPLETED },
-          },
-          data: {
-            status: GlobalStatus._STATUS_COMPLETED,
-            updatedBy: userId,
-          },
-        });
-
-        if (credits.length > 0) {
-          await emitOutbox(tx, {
-            aggregateType: "campaign",
-            aggregateId: id,
-            eventType: OutboxEventType.CAMPAIGN_COMPLETION_GREEN_POINTS,
-            payload: { campaignId: id, credits },
-            dedupKey: `${OutboxEventType.CAMPAIGN_COMPLETION_GREEN_POINTS}:${id}`,
-          });
-        }
-        // TODO: re-enable Facebook recognition outbox event.
-        // await emitOutbox(tx, {
-        //   aggregateType: "campaign",
-        //   aggregateId: id,
-        //   eventType: OutboxEventType.CAMPAIGN_FACEBOOK_RECOGNITION,
-        //   payload: facebookRecognitionPayload,
-        //   dedupKey: `${OutboxEventType.CAMPAIGN_FACEBOOK_RECOGNITION}:${id}`,
-        // });
-      },
-      {
-        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-      },
-    );
-
-    void this.notifyApprovedVolunteersCampaignDone({
-      volunteerIds: approvedVolunteerIds,
-      campaignId: id,
-      campaign: existing,
-    }).catch((err) => {
-      console.warn(
-        "[campaign] failed to notify volunteers of campaign completion",
-        err,
-      );
-    });
-
-    void this.notifyOrganizationOwnerOfCompletionReview({
-      organizationId: existing.organizationId,
-      campaignId: id,
-      campaign: existing,
-      outcome: "approved",
-    }).catch((err) => {
-      console.warn(
-        "[campaign] failed to notify org owner of completion approval",
-        err,
-      );
-    });
-
-    const updated = await campaignRepository.findById(id);
-    if (!updated) {
-      throw new Error("Campaign not found");
-    }
-    return this.toResponseWithVotes(updated, viewerUserId ?? userId);
-  }
-
-  private async notifyApprovedVolunteersCampaignDone(args: {
-    volunteerIds: string[];
-    campaignId: string;
-    campaign: {
-      title: string;
-      titleVi?: string | null;
-      titleEn?: string | null;
-    };
-  }): Promise<void> {
-    if (args.volunteerIds.length === 0) {
-      return;
-    }
-    await enqueueWebsiteNotificationsToUsers({
-      kind: "CAMPAIGN_DONE",
-      userIds: args.volunteerIds,
-      payload: {
-        campaignId: args.campaignId,
-        ...campaignNameNotificationPayload(args.campaign),
-      },
     });
   }
 
@@ -1672,52 +1462,6 @@ export class CampaignService {
         }),
       ),
     );
-  }
-
-  private async resolveOrganizationOwnerIds(
-    organizationId: string,
-  ): Promise<string[]> {
-    return organizationMemberRepository.findOwnerUserIds(organizationId);
-  }
-
-  private async notifyOrganizationOwnerOfCompletionReview(args: {
-    organizationId: string;
-    campaignId: string;
-    campaign: {
-      title: string;
-      titleVi?: string | null;
-      titleEn?: string | null;
-    };
-    outcome: "approved" | "rejected";
-    rejectReason?: string;
-  }): Promise<void> {
-    const ownerIds = await this.resolveOrganizationOwnerIds(args.organizationId);
-    if (ownerIds.length === 0) {
-      return;
-    }
-
-    const titlePayload = campaignTitleNotificationPayload(args.campaign);
-    if (args.outcome === "approved") {
-      await enqueueWebsiteNotificationsToUsers({
-        kind: "CAMPAIGN_COMPLETION_APPROVED_BY_ADMIN",
-        userIds: ownerIds,
-        payload: {
-          campaignId: args.campaignId,
-          ...titlePayload,
-        },
-      });
-      return;
-    }
-
-    await enqueueWebsiteNotificationsToUsers({
-      kind: "CAMPAIGN_COMPLETION_REJECTED_BY_ADMIN",
-      userIds: ownerIds,
-      payload: {
-        campaignId: args.campaignId,
-        rejectReason: args.rejectReason ?? "",
-        ...titlePayload,
-      },
-    });
   }
 
   /** Spec 3.6: the creator or an owner cancels the campaign, with a reason. */

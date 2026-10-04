@@ -111,6 +111,9 @@ export interface CampaignShiftResponse {
   endedAt: Date | null;
   /** Derived status (spec 4.2): upcoming, running, awaiting_result, ended or off. */
   status: ShiftStatusValue;
+  /** Set when the admin rejected the completion and asked for more on this shift (spec 5.2). */
+  reopenedAt: Date | null;
+  reopenReason: string | null;
   /** Live registrations; only on responses that count them (campaign detail). */
   registeredCount?: number;
 }
@@ -158,9 +161,19 @@ export interface AdminVerifyCampaignBody {
 
 /** Body for PUT /api/v1/campaigns/:id/completion-review (admin). */
 export interface AdminCompletionReviewBody {
-  decision: "approve" | "reject";
-  /** Required when `decision` is `"reject"`. */
+  decision: "approve" | "reject" | "cancel";
+  /** Required when `decision` is `"reject"` or `"cancel"`. */
   rejectReason?: string | null;
+  /** Approve only: settle the difficulty (points follow it); defaults to the current one. */
+  difficulty?: number;
+  /** Reject only: the shifts (with a result) that must be completed again; at least one. */
+  shiftIds?: string[];
+}
+
+/** Body for PUT /api/v1/campaigns/:id/mark-done (manager). */
+export interface MarkCampaignDoneBody {
+  /** One entry per trash report no shift's result lists, with the reason (1–500 characters). */
+  unhandled?: Array<{ reportId: string; reason: string }>;
 }
 
 export interface UpdateCampaignRequest {
@@ -220,6 +233,10 @@ export interface CampaignResponse {
   submittedAt: Date | null;
   /** First admin approval; set while back under review after an edit (spec 3.5). */
   approvedAt: Date | null;
+  /** Last time a manager marked the campaign done (spec 5.1). */
+  completionSubmittedAt: Date | null;
+  /** Times the admin rejected the completion; at 3 only approve or cancel remain (spec 5.2). */
+  completionRejectionCount: number;
   /** Only on an update: the edit sent the campaign back for review (spec 3.5). */
   reReview?: boolean;
   /** Why a day's minimum volunteers is below the difficulty's suggestion. */

@@ -19,7 +19,8 @@ export type CampaignTransitionEvent =
   | "cancel"
   | "submit_completion"
   | "approve_completion"
-  | "reject_completion";
+  | "reject_completion"
+  | "cancel_by_admin";
 
 interface TransitionRule {
   event: CampaignTransitionEvent;
@@ -144,6 +145,14 @@ export const CAMPAIGN_TRANSITIONS: readonly TransitionRule[] = [
     event: "reject_completion",
     from: [CampaignStatus.PENDING_COMPLETION],
     to: CampaignStatus.ACTIVE,
+    actors: ["admin"],
+    reasonRequired: true,
+  },
+  {
+    // Spec 5.2: the admin cancels a campaign marked done (no points; reports go back to the list).
+    event: "cancel_by_admin",
+    from: [CampaignStatus.PENDING_COMPLETION],
+    to: CampaignStatus.CANCELLED,
     actors: ["admin"],
     reasonRequired: true,
   },

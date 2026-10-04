@@ -990,46 +990,62 @@ export class CampaignLifecycleService {
           data: { rejectReason: text, revisionDeadline: null },
         });
         await this.releaseAllReports(tx, campaignId, userId);
-
-        const [volunteers, owners] = await Promise.all([
-          tx.campaignShiftRegistration.findMany({
-            where: { campaignId, leftAt: null },
-            distinct: ["userId"],
-            select: { userId: true },
-          }),
-          organizationMemberRepository.findOwnerUserIds(campaign.organizationId),
-        ]);
-        const volunteerIds = volunteers.map((v) => v.userId);
-        const teamIds = [
-          ...new Set([
-            ...(campaign.createdBy ? [campaign.createdBy] : []),
-            ...campaign.campaignManagers.map((m) => m.userId),
-            ...owners,
-          ]),
-        ].filter((id) => id !== userId && !volunteerIds.includes(id));
-        const payload = {
-          campaignId,
-          reason: text,
-          byOrganizer: "1",
-          ...campaignTitleNotificationPayload(campaign),
-        };
-        for (const [audience, userIds] of [
-          ["volunteers", volunteerIds],
-          ["team", teamIds],
-        ] as const) {
-          if (userIds.length === 0) continue;
-          await emitOutbox(tx, {
-            aggregateType: "campaign",
-            aggregateId: campaignId,
-            eventType: OutboxEventType.WEBSITE_NOTIFICATION,
-            dedupKey: `CAMPAIGN_CANCELLED:${campaignId}:${audience}`,
-            payload: { kind: "CAMPAIGN_CANCELLED", userIds, payload },
-          });
-        }
+        await this.emitCancelledNotices(tx, campaign, { reason: text, actorId: userId, by: "organizer" });
         return this.loadInTx(tx, campaignId);
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     );
+  }
+
+  /**
+   * `CAMPAIGN_CANCELLED` through the outbox, inside the cancelling transaction: every registered
+   * volunteer, and the team (creator, managers, owners) but the one who cancelled. `by` picks the
+   * wording: the organizers (spec 3.6) or an admin rejecting the completion (spec 5.2).
+   */
+  async emitCancelledNotices(
+    tx: Tx,
+    campaign: Pick<
+      CampaignWithReports,
+      "id" | "organizationId" | "createdBy" | "campaignManagers" | "title" | "titleVi" | "titleEn"
+    >,
+    args: { reason: string; actorId: string; by: "organizer" | "admin" },
+  ): Promise<void> {
+    const campaignId = campaign.id;
+    const [volunteers, owners] = await Promise.all([
+      tx.campaignShiftRegistration.findMany({
+        where: { campaignId, leftAt: null },
+        distinct: ["userId"],
+        select: { userId: true },
+      }),
+      organizationMemberRepository.findOwnerUserIds(campaign.organizationId),
+    ]);
+    const volunteerIds = volunteers.map((v) => v.userId);
+    const teamIds = [
+      ...new Set([
+        ...(campaign.createdBy ? [campaign.createdBy] : []),
+        ...campaign.campaignManagers.map((m) => m.userId),
+        ...owners,
+      ]),
+    ].filter((id) => id !== args.actorId && !volunteerIds.includes(id));
+    const payload = {
+      campaignId,
+      reason: args.reason,
+      ...(args.by === "admin" ? { byAdmin: "1" } : { byOrganizer: "1" }),
+      ...campaignTitleNotificationPayload(campaign),
+    };
+    for (const [audience, userIds] of [
+      ["volunteers", volunteerIds],
+      ["team", teamIds],
+    ] as const) {
+      if (userIds.length === 0) continue;
+      await emitOutbox(tx, {
+        aggregateType: "campaign",
+        aggregateId: campaignId,
+        eventType: OutboxEventType.WEBSITE_NOTIFICATION,
+        dedupKey: `CAMPAIGN_CANCELLED:${campaignId}:${audience}`,
+        payload: { kind: "CAMPAIGN_CANCELLED", userIds, payload },
+      });
+    }
   }
 
   /** Creator and owners of each campaign cancelled because its organization was locked. */

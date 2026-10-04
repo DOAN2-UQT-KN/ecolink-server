@@ -5,6 +5,8 @@ export interface CampaignCompletionVerificationSummary {
   cleanCount: number;
   notCleanCount: number;
   myVerification: number | null;
+  /** Spec 5.1: ≥ 30% "not clean" out of ≥ 5 answers; the admin should look twice. */
+  flagged: boolean;
 }
 
 export function defaultCampaignCompletionVerificationSummary(
@@ -14,6 +16,7 @@ export function defaultCampaignCompletionVerificationSummary(
     cleanCount: 0,
     notCleanCount: 0,
     myVerification: viewerUserId != null ? 0 : null,
+    flagged: false,
   };
 }
 

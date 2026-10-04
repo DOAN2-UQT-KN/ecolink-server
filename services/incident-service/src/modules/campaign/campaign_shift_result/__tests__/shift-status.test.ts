@@ -18,6 +18,11 @@ describe("shiftStatusOf", () => {
     expect(shiftStatusOf(shift, false, at(4))).toBe("awaiting_result");
     expect(shiftStatusOf(shift, true, at(4))).toBe("ended");
   });
+  it("is awaiting_result again while the admin has reopened its result (spec 5.2)", () => {
+    expect(shiftStatusOf(shift, { reopenedAt: at(5) }, at(6))).toBe("awaiting_result");
+    expect(shiftStatusOf(shift, { reopenedAt: null }, at(6))).toBe("ended");
+    expect(shiftStatusOf(shift, null, at(6))).toBe("awaiting_result");
+  });
   it("ends at endedAt when ended early", () => {
     const early = { ...shift, endedAt: at(2) };
     expect(effectiveEnd(early)).toEqual(at(2));

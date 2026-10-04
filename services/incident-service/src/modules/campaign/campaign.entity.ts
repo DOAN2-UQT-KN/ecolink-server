@@ -34,7 +34,9 @@ export type CampaignWithReports = Campaign & {
 };
 
 /** A shift with whether it has a result, which its status needs (spec 4.2). */
-export type CampaignShiftWithResult = CampaignShift & { result?: { id: string } | null };
+export type CampaignShiftWithResult = CampaignShift & {
+  result?: { id: string; reopenedAt?: Date | null; reopenReason?: string | null } | null;
+};
 
 /** The relations every campaign read loads (managers, locked reports, meeting points). */
 export const CAMPAIGN_INCLUDE = {
@@ -52,7 +54,7 @@ export const CAMPAIGN_INCLUDE = {
     include: { reports: { select: { reportId: true } } },
   },
   days: { orderBy: { startAt: "asc" } },
-  shifts: { include: { result: { select: { id: true } } } },
+  shifts: { include: { result: { select: { id: true, reopenedAt: true, reopenReason: true } } } },
 } as const;
 
 export const toMeetingPointResponse = (
@@ -89,7 +91,9 @@ export const toCampaignShiftResponse = (
   maxVolunteers: shift.maxVolunteers,
   leaderUserId: shift.leaderUserId,
   endedAt: shift.endedAt,
-  status: shiftStatusOf(shift, shift.result != null, now),
+  status: shiftStatusOf(shift, shift.result, now),
+  reopenedAt: shift.result?.reopenedAt ?? null,
+  reopenReason: shift.result?.reopenedAt ? (shift.result.reopenReason ?? null) : null,
 });
 
 /** First start and last end of a campaign's days; null when it has none yet. */
@@ -154,6 +158,8 @@ export const toCampaignResponse = (
     revisionDeadline: entity.revisionDeadline ?? null,
     submittedAt: entity.submittedAt ?? null,
     approvedAt: entity.approvedAt ?? null,
+    completionSubmittedAt: entity.completionSubmittedAt ?? null,
+    completionRejectionCount: entity.completionRejectionCount ?? 0,
     minVolunteersReason: entity.minVolunteersReason ?? null,
     suggestedMinVolunteers,
     days: (entity.days ?? []).map(toCampaignDayResponse),
