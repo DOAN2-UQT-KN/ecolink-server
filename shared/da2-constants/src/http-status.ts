@@ -417,16 +417,6 @@ export const HTTP_STATUS = {
     "The QR code has expired; please scan again",
     "ATTENDANCE_QR_INVALID",
   ),
-  ATTENDANCE_OUTSIDE_AREA: createStatus(
-    422,
-    "You are not within the campaign area",
-    "ATTENDANCE_OUTSIDE_AREA",
-  ),
-  ATTENDANCE_GPS_INACCURATE: createStatus(
-    422,
-    "Your location is not precise enough; turn on precise location and scan again",
-    "ATTENDANCE_GPS_INACCURATE",
-  ),
   ATTENDANCE_NOT_OPEN: createStatus(
     409,
     "Attendance for this shift is not open",

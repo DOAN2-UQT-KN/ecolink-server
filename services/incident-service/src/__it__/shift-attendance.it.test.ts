@@ -2,7 +2,8 @@
  * Attendance per shift (Đặc tả luồng chiến dịch-8, 4.1), against a real Postgres.
  *
  *   - the leader opens a QR session; the code changes every period and an old one is refused
- *   - a scan needs GPS within 50 m and an accuracy of 50 m or better
+ *   - a scan farther than 50 m or with a poor GPS is recorded, flagged and logged; a manager may
+ *     exclude it from the points (and restore it)
  *   - the first scan checks in, a later one checks out; closing the session checks everyone out
  *   - whoever runs the shift cannot check in on it; someone not registered can, flagged
  *   - manual attendance is limited to 20% of those present; a late (offline) scan is flagged
@@ -142,21 +143,51 @@ describe("scanning", () => {
     const c = await seed(start);
     const t = at(start, 10 * MIN);
     const token = await codeAt(c.id, c.a.id, t);
-    await expect(scan(c.id, V1, token, at(t, 45_000))).rejects.toMatchObject(code("ATTENDANCE_QR_INVALID"));
+    await expect(scan(c.id, V1, token, at(t, 21 * MIN))).rejects.toMatchObject(code("ATTENDANCE_QR_INVALID"));
     await expect(scan(randomUUID(), V1, token, t)).rejects.toMatchObject(code("ATTENDANCE_QR_INVALID"));
     await expect(svc.issueQr(c.id, c.b.id, MGR, t)).rejects.toMatchObject(code("ATTENDANCE_NOT_OPEN"));
   });
 
-  it("needs a precise GPS within 50 m of the shift's meeting point", async () => {
+  it("a scan far away or with a poor GPS is recorded, flagged and logged", async () => {
     const c = await seed(start);
     const t = at(start, 10 * MIN);
     const token = await codeAt(c.id, c.a.id, t);
-    await expect(scan(c.id, V1, token, t, { accuracy: 80 })).rejects.toMatchObject(
-      code("ATTENDANCE_GPS_INACCURATE"),
-    );
+    const far = await scan(c.id, V1, token, t, { latitude: POINT.latitude + 0.001 });
+    expect(far).toMatchObject({ action: "check_in", flags: { outOfArea: true, lowAccuracy: false } });
+    expect(far.flags.distanceM).toBeGreaterThan(100);
+    const blurry = await scan(c.id, V2, token, t, { accuracy: 80 });
+    expect(blurry.flags).toMatchObject({ outOfArea: false, lowAccuracy: true });
+
+    const rows = await prisma.campaignShiftAttendance.findMany({ where: { shiftId: c.a.id } });
+    expect(rows.find((r) => r.userId === V1)).toMatchObject({ outOfArea: true });
+    expect(rows.find((r) => r.userId === V1)?.checkInDistanceM).toBeGreaterThan(100);
+    expect(await prisma.campaignStatusLog.count({ where: { campaignId: c.id, event: "attendance_flagged" } })).toBe(2);
+    const view = await svc.listForShift(c.id, c.a.id, { userId: LEADER }, t);
+    expect(view.flagged).toBe(2);
+  });
+
+  it("a manager excludes a flagged attendance from the points and may restore it", async () => {
+    const c = await seed(start);
+    const t = at(start, 10 * MIN);
+    await scan(c.id, V2, await codeAt(c.id, c.a.id, t), t, { latitude: POINT.latitude + 0.002 });
+    await svc.closeSession(c.id, c.a.id, LEADER, at(start, 3 * HOUR));
+    expect(await svc.completionCredits(c.id, 10)).toEqual([{ userId: V2, points: 10 }]);
+
     await expect(
-      scan(c.id, V1, token, t, { latitude: POINT.latitude + 0.001 }),
-    ).rejects.toMatchObject(code("ATTENDANCE_OUTSIDE_AREA"));
+      svc.setExcluded(c.id, c.a.id, V2, V1, { reason: "Không có mặt" }),
+    ).rejects.toMatchObject(code("CAMPAIGN_PERMISSION_DENIED"));
+    await svc.setExcluded(c.id, c.a.id, V2, LEADER, { reason: "Không có mặt" });
+    expect(await svc.completionCredits(c.id, 10)).toEqual([]);
+    const excluded = (await svc.listForShift(c.id, c.a.id, { userId: LEADER })).attendances[0];
+    expect(excluded).toMatchObject({ excluded: true, excludeReason: "Không có mặt", eligible: false });
+
+    await svc.setExcluded(c.id, c.a.id, V2, MGR, null);
+    expect(await svc.completionCredits(c.id, 10)).toEqual([{ userId: V2, points: 10 }]);
+    expect(
+      await prisma.campaignStatusLog.count({
+        where: { campaignId: c.id, event: { in: ["attendance_excluded", "attendance_restored"] } },
+      }),
+    ).toBe(2);
   });
 
   it("whoever runs the shift cannot check in on it; another manager and a walk-in can", async () => {

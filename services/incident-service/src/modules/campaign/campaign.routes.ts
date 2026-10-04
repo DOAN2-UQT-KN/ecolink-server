@@ -268,6 +268,29 @@ router.post(
 );
 
 /**
+ * @route   POST /api/v1/campaigns/:id/shifts/:shiftId/attendance/:userId/exclude
+ * @desc    Take an attendance out of the points (e.g. a flagged scan), with a reason (leader or managers)
+ * @access  Private
+ * @body    { reason }
+ */
+router.post(
+  "/:id/shifts/:shiftId/attendance/:userId/exclude",
+  authenticate,
+  campaignController.excludeAttendance,
+);
+
+/**
+ * @route   POST /api/v1/campaigns/:id/shifts/:shiftId/attendance/:userId/restore
+ * @desc    Put an excluded attendance back into the points (leader or managers)
+ * @access  Private
+ */
+router.post(
+  "/:id/shifts/:shiftId/attendance/:userId/restore",
+  authenticate,
+  campaignController.restoreAttendance,
+);
+
+/**
  * @route   GET /api/v1/campaigns/:id/shifts/:shiftId/attendance
  * @desc    Who is present on the shift, with eligibility (leader, managers, platform admins)
  * @access  Private

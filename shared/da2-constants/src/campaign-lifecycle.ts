@@ -125,12 +125,15 @@ export const CAMPAIGN_REGISTRATION_DIGEST_HOUR = 20;
 export const CAMPAIGN_REMINDER_HOURS = [24, 1] as const;
 
 /** Attendance per shift (spec 4.1). */
-/** A scan counts only within this distance of the shift's meeting point. */
+/** A scan farther than this from the shift's meeting point is recorded but flagged. */
 export const CAMPAIGN_ATTENDANCE_GEOFENCE_M = 50;
-/** Worse GPS accuracy than this is refused: turn on precise location and scan again. */
+/** A scan with a worse GPS accuracy than this is recorded but flagged. */
 export const CAMPAIGN_ATTENDANCE_MAX_ACCURACY_M = 50;
-/** The QR code changes every this many seconds; the previous code is still accepted. */
-export const CAMPAIGN_ATTENDANCE_QR_PERIOD_SEC = 20;
+/**
+ * The QR code changes every this many seconds; the previous code is still accepted. 10 minutes
+ * by product decision (spec -8 says 15–30 s).
+ */
+export const CAMPAIGN_ATTENDANCE_QR_PERIOD_SEC = 600;
 /** A QR session stays open at most this long; the leader may open another. */
 export const CAMPAIGN_ATTENDANCE_SESSION_MINUTES = 60;
 /** A session may open this long before the shift's gathering time (or start). */

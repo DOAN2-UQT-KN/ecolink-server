@@ -1422,6 +1422,17 @@ model CampaignShiftAttendance {
   checkOutLatitude  Float?    @map("check_out_latitude")
   checkOutLongitude Float?    @map("check_out_longitude")
   checkOutAccuracy  Float?    @map("check_out_accuracy")
+  /// Distance to the meeting point at each scan, in metres.
+  checkInDistanceM  Float?    @map("check_in_distance_m")
+  checkOutDistanceM Float?    @map("check_out_distance_m")
+  /// A scan was farther than CAMPAIGN_ATTENDANCE_GEOFENCE_M: recorded, for a manager to check.
+  outOfArea         Boolean   @default(false) @map("out_of_area")
+  /// A scan's GPS accuracy was worse than CAMPAIGN_ATTENDANCE_MAX_ACCURACY_M.
+  lowAccuracy       Boolean   @default(false) @map("low_accuracy")
+  /// A leader or manager took it out of the points (undone by restoring).
+  excludedAt        DateTime? @map("excluded_at")
+  excludedBy        String?   @map("excluded_by") @db.Uuid
+  excludeReason     String?   @map("exclude_reason")
   /// How the check-out happened: "scan", "session_close" or "manual".
   checkOutMethod    String?   @map("check_out_method") @db.VarChar(20)
   /// Added by a leader or manager (battery, broken phone); `manualReason` is required then.

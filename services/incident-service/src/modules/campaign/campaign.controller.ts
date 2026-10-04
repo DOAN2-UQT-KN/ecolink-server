@@ -1876,6 +1876,27 @@ export class CampaignController {
     ],
   );
 
+  /** POST /campaigns/:id/shifts/:shiftId/attendance/:userId/exclude — out of the points, with a reason. */
+  excludeAttendance = this.shiftAttendanceAction(
+    "Exclude attendance",
+    (req, userId) =>
+      shiftAttendanceService.setExcluded(req.params.id, req.params.shiftId, req.params.userId, userId, {
+        reason: req.body.reason,
+      }),
+    [
+      param("userId").isUUID().withMessage("userId must be a valid UUID"),
+      body("reason").isString().trim().isLength({ min: 1, max: 500 }).withMessage("reason is required"),
+    ],
+  );
+
+  /** POST /campaigns/:id/shifts/:shiftId/attendance/:userId/restore — back into the points. */
+  restoreAttendance = this.shiftAttendanceAction(
+    "Restore attendance",
+    (req, userId) =>
+      shiftAttendanceService.setExcluded(req.params.id, req.params.shiftId, req.params.userId, userId, null),
+    [param("userId").isUUID().withMessage("userId must be a valid UUID")],
+  );
+
   /** GET /campaigns/:id/shifts/:shiftId/attendance — who is present (leader, managers, admins). */
   getShiftAttendance = this.shiftAttendanceAction("Get shift attendance", (req, userId) =>
     shiftAttendanceService.listForShift(req.params.id, req.params.shiftId, {

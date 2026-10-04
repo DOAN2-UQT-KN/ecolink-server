@@ -50,11 +50,12 @@ export function presenceMs(
   return Math.max(0, to - from);
 }
 
-/** Spec 4.1: present at least 60% of the shift, with a check-out. */
+/** Spec 4.1: present at least 60% of the shift, with a check-out, and not excluded by a manager. */
 export function isEligible(
-  att: { checkInAt: Date; checkOutAt: Date | null },
+  att: { checkInAt: Date; checkOutAt: Date | null; excludedAt?: Date | null },
   shift: { startAt: Date; endAt: Date },
 ): boolean {
+  if (att.excludedAt) return false;
   const length = shift.endAt.getTime() - shift.startAt.getTime();
   return length > 0 && presenceMs(att, shift) >= CAMPAIGN_ATTENDANCE_MIN_PRESENCE_RATIO * length;
 }
@@ -77,6 +78,8 @@ export interface ScanResult {
   checkInAt: Date;
   checkOutAt: Date | null;
   eligible: boolean;
+  /** This scan was far from the meeting point or imprecise: recorded, a manager will check. */
+  flags: { outOfArea: boolean; lowAccuracy: boolean; distanceM: number };
 }
 
 export interface ShiftAttendanceRow {
@@ -89,6 +92,12 @@ export interface ShiftAttendanceRow {
   manualReason: string | null;
   preRegistered: boolean;
   offline: boolean;
+  outOfArea: boolean;
+  lowAccuracy: boolean;
+  checkInDistanceM: number | null;
+  checkOutDistanceM: number | null;
+  excluded: boolean;
+  excludeReason: string | null;
   presenceMinutes: number;
   eligible: boolean;
 }
@@ -103,6 +112,8 @@ export interface ShiftAttendanceView {
   present: number;
   manual: number;
   eligible: number;
+  /** Out of area or imprecise GPS, not excluded yet. */
+  flagged: number;
   attendances: ShiftAttendanceRow[];
 }
 
@@ -222,17 +233,40 @@ export class ShiftAttendanceService {
     if (userId === shift.leaderUserId || userId === session.openedBy) {
       throw new HttpError(HTTP_STATUS.ATTENDANCE_SELF_CHECK_IN);
     }
-    if (!(input.accuracy >= 0) || input.accuracy > CAMPAIGN_ATTENDANCE_MAX_ACCURACY_M) {
-      throw new HttpError(HTTP_STATUS.ATTENDANCE_GPS_INACCURATE);
-    }
-    const distanceM = haversineKm(input, shift.meetingPoint) * 1000;
-    if (distanceM > CAMPAIGN_ATTENDANCE_GEOFENCE_M) {
-      throw new HttpError(HTTP_STATUS.ATTENDANCE_OUTSIDE_AREA, { distanceM: Math.round(distanceM) });
-    }
+    // Far or imprecise: recorded anyway, flagged and logged for a manager to check (and exclude).
+    const distanceM = Math.round(haversineKm(input, shift.meetingPoint) * 1000);
+    const flags = {
+      outOfArea: distanceM > CAMPAIGN_ATTENDANCE_GEOFENCE_M,
+      lowAccuracy: !(input.accuracy >= 0) || input.accuracy > CAMPAIGN_ATTENDANCE_MAX_ACCURACY_M,
+      distanceM,
+    };
+    const logFlag = async (phase: "check_in" | "check_out") => {
+      if (!flags.outOfArea && !flags.lowAccuracy) return;
+      await prisma.campaignStatusLog.create({
+        data: {
+          campaignId,
+          type: "EDIT",
+          event: "attendance_flagged",
+          fromStatus: shift.campaign.status,
+          toStatus: shift.campaign.status,
+          actorId: userId,
+          actorRole: "volunteer",
+          changes: {
+            shiftId: shift.id,
+            userId,
+            phase,
+            distanceM,
+            accuracy: input.accuracy,
+            outOfArea: flags.outOfArea,
+            lowAccuracy: flags.lowAccuracy,
+          },
+        },
+      });
+    };
 
     const offline = now.getTime() - scannedAt.getTime() > CAMPAIGN_ATTENDANCE_QR_PERIOD_SEC * 1000;
     const result = (
-      row: { checkInAt: Date; checkOutAt: Date | null },
+      row: { checkInAt: Date; checkOutAt: Date | null; excludedAt?: Date | null },
       action: ScanAction,
     ): ScanResult => ({
       action,
@@ -240,6 +274,7 @@ export class ShiftAttendanceService {
       checkInAt: row.checkInAt,
       checkOutAt: row.checkOutAt,
       eligible: isEligible(row, shift),
+      flags,
     });
 
     const existing = await prisma.campaignShiftAttendance.findUnique({
@@ -262,11 +297,15 @@ export class ShiftAttendanceService {
             checkInLatitude: input.latitude,
             checkInLongitude: input.longitude,
             checkInAccuracy: input.accuracy,
+            checkInDistanceM: distanceM,
+            outOfArea: flags.outOfArea,
+            lowAccuracy: flags.lowAccuracy,
             preRegistered: registered > 0,
             offline,
             sessionId: session.id,
           },
         });
+        await logFlag("check_in");
         return result(created, "check_in");
       } catch (error) {
         // The same scan arrived twice at once: the first one checked in.
@@ -293,10 +332,14 @@ export class ShiftAttendanceService {
         checkOutLatitude: input.latitude,
         checkOutLongitude: input.longitude,
         checkOutAccuracy: input.accuracy,
+        checkOutDistanceM: distanceM,
         checkOutMethod: "scan",
         offline: existing.offline || offline,
+        outOfArea: existing.outOfArea || flags.outOfArea,
+        lowAccuracy: existing.lowAccuracy || flags.lowAccuracy,
       },
     });
+    await logFlag("check_out");
     return result(updated, "check_out");
   }
 
@@ -400,6 +443,54 @@ export class ShiftAttendanceService {
     );
   }
 
+  /**
+   * A leader or manager takes an attendance out of the points (a flagged scan that was not
+   * genuine), with a reason, or puts it back. Logged. Not once the campaign is completed.
+   */
+  async setExcluded(
+    campaignId: string,
+    shiftId: string,
+    targetUserId: string,
+    actorId: string,
+    exclude: { reason: string } | null,
+  ) {
+    const shift = await this.loadShift(campaignId, shiftId);
+    await this.assertCanRun(campaignId, shift.leaderUserId, actorId);
+    if (shift.campaign.status === CampaignStatus.COMPLETED) {
+      throw new HttpError(HTTP_STATUS.CAMPAIGN_NOT_EDITABLE);
+    }
+    const reason = exclude?.reason.trim() ?? null;
+    if (exclude && !reason) {
+      throw new HttpError(HTTP_STATUS.VALIDATION_ERROR.withMessage("A reason is required"));
+    }
+    const row = await prisma.campaignShiftAttendance.findUnique({
+      where: { shiftId_userId: { shiftId, userId: targetUserId } },
+    });
+    if (!row) throw new HttpError(HTTP_STATUS.NOT_FOUND.withMessage("No attendance for this person"));
+    return prisma.$transaction(async (tx) => {
+      const updated = await tx.campaignShiftAttendance.update({
+        where: { id: row.id },
+        data: exclude
+          ? { excludedAt: new Date(), excludedBy: actorId, excludeReason: reason }
+          : { excludedAt: null, excludedBy: null, excludeReason: null },
+      });
+      await tx.campaignStatusLog.create({
+        data: {
+          campaignId,
+          type: "EDIT",
+          event: exclude ? "attendance_excluded" : "attendance_restored",
+          fromStatus: shift.campaign.status,
+          toStatus: shift.campaign.status,
+          actorId,
+          actorRole: "manager",
+          reason,
+          changes: { shiftId, userId: targetUserId },
+        },
+      });
+      return { userId: targetUserId, excluded: updated.excludedAt != null };
+    });
+  }
+
   /** Who is present on a shift: its leader, campaign managers and platform admins. */
   async listForShift(
     campaignId: string,
@@ -427,6 +518,12 @@ export class ShiftAttendanceService {
       manualReason: r.manualReason,
       preRegistered: r.preRegistered,
       offline: r.offline,
+      outOfArea: r.outOfArea,
+      lowAccuracy: r.lowAccuracy,
+      checkInDistanceM: r.checkInDistanceM,
+      checkOutDistanceM: r.checkOutDistanceM,
+      excluded: r.excludedAt != null,
+      excludeReason: r.excludeReason,
       presenceMinutes: Math.round(presenceMs(r, shift) / MINUTE_MS),
       eligible: isEligible(r, shift),
     }));
@@ -440,7 +537,13 @@ export class ShiftAttendanceService {
       present: attendances.length,
       manual: attendances.filter((a) => a.manual).length,
       eligible: attendances.filter((a) => a.eligible).length,
-      attendances,
+      flagged: attendances.filter((a) => (a.outOfArea || a.lowAccuracy) && !a.excluded).length,
+      // Flagged first, for the leader to check.
+      attendances: [...attendances].sort(
+        (a, b) =>
+          Number(b.outOfArea || b.lowAccuracy) - Number(a.outOfArea || a.lowAccuracy) ||
+          a.checkInAt.getTime() - b.checkInAt.getTime(),
+      ),
     };
   }
 
