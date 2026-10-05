@@ -405,7 +405,7 @@ describe("Layer 1: uploading result photos", () => {
           up_count: 0,
           down_count: 0,
           score: null,
-          votes: null,
+          votes: [],
           trash_points: [
             { report_id: c.r1, status: "cleaned", is_mine: false, layer1: { level: "pass", issues: [] } },
             { report_id: c.r4, status: "partial", is_mine: false, layer1: null },
@@ -573,13 +573,15 @@ describe("voting", () => {
     const atTrash = randomUUID();
     expect((await vote(c, c.pa, atTrash, "up", onSite)).meetingPoint.myVote).toMatchObject({ weight: 3, weightReason: "on_site" });
 
-    // Managers see every vote, zero-weight ones too; residents see counts only.
+    // Managers see every vote with its weight, zero-weight ones too; residents see the voters, not weights.
     const managerView = await verification.getView(c.id, { userId: MGR });
     expect(managerView).toMatchObject({ canSeeVotes: true, cannotVoteReason: "campaign_manager" });
     expect(managerView.meetingPoints[0]).toMatchObject({ score: 7, upCount: 6, downCount: 0 });
     expect(managerView.meetingPoints[0].votes?.map((v) => v.weight).sort()).toEqual([0, 0, 0, 1, 3, 3]);
     const residentView = await verification.getView(c.id, { userId: randomUUID() });
-    expect(residentView.meetingPoints[0]).toMatchObject({ score: null, votes: null, upCount: 6, canVote: true });
+    expect(residentView.meetingPoints[0]).toMatchObject({ score: null, upCount: 6, canVote: true });
+    expect(residentView.meetingPoints[0].votes).toHaveLength(6);
+    expect(residentView.meetingPoints[0].votes.every((v) => v.weight === null && v.weightReason === null && v.distanceM === null)).toBe(true);
 
     // 20 new votes a day across the platform; changing one is free.
     const others = await Promise.all(

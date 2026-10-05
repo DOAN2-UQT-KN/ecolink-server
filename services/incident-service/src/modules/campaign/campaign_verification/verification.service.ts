@@ -82,8 +82,9 @@ export interface MeetingPointVoteView {
   userId: string;
   user: { id: string; name: string; avatar: string | null } | null;
   value: VoteValueInput;
-  weight: number;
-  weightReason: string;
+  /** Weight, its reason and the distance: admins and the campaign's managers only (null otherwise). */
+  weight: number | null;
+  weightReason: string | null;
   distanceM: number | null;
   note: string | null;
   photoUrl: string | null;
@@ -138,12 +139,18 @@ export interface MeetingPointView {
   downCount: number;
   /** The viewer reported a trash point of this meeting point (Layer 2: their vote weighs 10). */
   isReporter: boolean;
-  myVote: Omit<MeetingPointVoteView, "userId" | "user" | "distanceM"> | null;
+  myVote:
+    | (Omit<MeetingPointVoteView, "userId" | "user" | "distanceM" | "weight" | "weightReason"> & {
+        weight: number;
+        weightReason: string;
+      })
+    | null;
   canVote: boolean;
   cannotVoteReason: MeetingPointCannotVoteValue | null;
   /** Admins and the campaign's managers only (null otherwise). */
   score: number | null;
-  votes: MeetingPointVoteView[] | null;
+  /** Every vote with its voter; weights and distances only for admins and managers. */
+  votes: MeetingPointVoteView[];
 }
 
 /** GET /campaigns/:id/verification. */
@@ -791,9 +798,7 @@ export class CampaignVerificationService {
         ? this.voterBlock(campaign, viewer.userId)
         : Promise.resolve(null),
     ]);
-    const profiles = canSeeVotes
-      ? await fetchOrganizationOwnersByUserIds([...new Set(votes.map((v) => v.userId))])
-      : new Map();
+    const profiles = await fetchOrganizationOwnersByUserIds([...new Set(votes.map((v) => v.userId))]);
     const pointById = new Map(points.map((p) => [p.id, p]));
     const reportById = new Map(reports.map((r) => [r.id, r]));
     const snapshotOf = new Map(snapshot.map((s) => [s.reportId, s]));
@@ -885,24 +890,22 @@ export class CampaignVerificationService {
         canVote: cannotVoteReason == null,
         cannotVoteReason,
         score: canSeeVotes ? r.score : null,
-        votes: canSeeVotes
-          ? own.map((v) => {
-              const prof = getUserProfile(profiles, v.userId);
-              return {
-                userId: v.userId,
-                user: prof ? { id: prof.id, name: prof.name, avatar: prof.avatar } : null,
-                value: toValue(v.value),
-                weight: v.weight,
-                weightReason: v.weightReason,
-                distanceM: v.distanceM,
-                note: v.note,
-                photoUrl: v.photoUrl,
-                flaggedReportIds: v.flaggedReportIds,
-                createdAt: v.createdAt,
-                updatedAt: v.updatedAt,
-              };
-            })
-          : null,
+        votes: own.map((v) => {
+          const prof = getUserProfile(profiles, v.userId);
+          return {
+            userId: v.userId,
+            user: prof ? { id: prof.id, name: prof.name, avatar: prof.avatar } : null,
+            value: toValue(v.value),
+            weight: canSeeVotes ? v.weight : null,
+            weightReason: canSeeVotes ? v.weightReason : null,
+            distanceM: canSeeVotes ? v.distanceM : null,
+            note: v.note,
+            photoUrl: v.photoUrl,
+            flaggedReportIds: v.flaggedReportIds,
+            createdAt: v.createdAt,
+            updatedAt: v.updatedAt,
+          };
+        }),
       };
     };
 
