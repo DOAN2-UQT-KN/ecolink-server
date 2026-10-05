@@ -1,15 +1,16 @@
 /**
- * Marking a campaign done and the admin's decision (Đặc tả luồng chiến dịch-8, 5.1–5.3), against a
- * real Postgres.
+ * Marking a campaign done and what the admin still decides (Đặc tả luồng chiến dịch-8, 5.1–5.3,
+ * with result verification replacing the manual review), against a real Postgres.
  *
  *   - the submission is built from the shifts' results; a report no shift handled needs a reason
- *     (422 CAMPAIGN_REPORTS_UNHANDLED), then the snapshot is saved
+ *     (422 CAMPAIGN_REPORTS_UNHANDLED), then the snapshot is saved and a voting round opens per
+ *     trash point declared cleaned
  *   - residents are invited around every meeting point
- *   - the red flag: ≥ 30% "not clean" out of ≥ 5 answers
- *   - approve settles the difficulty: handled reports completed, unhandled back to the list, points
- *     at the settled difficulty
- *   - reject reopens shifts (awaiting result until saved again); a 4th rejection is refused (409)
+ *   - nothing declared cleaned: the admin decides (complete or cancel)
+ *   - approve only once handed over (409 otherwise); it settles the difficulty: cleaned reports
+ *     completed, partly done and unhandled back to the list, points at the settled difficulty
  *   - cancel: cancelled, reports released, no points
+ *   - the legacy campaign-level answers are gone (410)
  *
  * identity, reward and notification clients are mocked; the DB is real. Time is passed in.
  */
@@ -18,6 +19,7 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || "it-completion-secret";
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "./setup/test-db";
+import { allowResultPhotos } from "./setup/result-photos";
 
 jest.mock("../modules/organization/identity-user.client", () => ({
   fetchOrganizationOwnersByUserIds: async () => new Map(),
@@ -58,6 +60,7 @@ jest.mock("../modules/campaign/notification-jobs.client", () => ({
 import { CampaignStatus } from "@da2/constants";
 import { ReportStatus } from "../constants/status.enum";
 import { OutboxEventType } from "../outbox/outbox.types";
+import { campaignController } from "../modules/campaign/campaign.controller";
 import { campaignService } from "../modules/campaign/campaign.service";
 import { campaignCompletionService } from "../modules/campaign/campaign_completion/completion.service";
 import { shiftResultService } from "../modules/campaign/campaign_shift_result/shift-result.service";
@@ -157,6 +160,11 @@ async function seed() {
   await prisma.campaignShiftRegistration.createMany({
     data: [a, b].map((s) => ({ campaignId: campaign.id, shiftId: s.id, userId: V1 })),
   });
+  await allowResultPhotos([
+    { campaignId: campaign.id, shiftId: a.id, reportId: r1.id, url: IMG },
+    { campaignId: campaign.id, shiftId: b.id, reportId: r2.id, url: IMG },
+    { campaignId: campaign.id, shiftId: b.id, reportId: r2.id, url: IMG2 },
+  ]);
   await prisma.campaignShiftAttendance.createMany({
     data: [a, b].map((s) => ({
       campaignId: campaign.id,
@@ -187,7 +195,7 @@ async function saveResults(c: Seeded) {
 }
 
 const markDone = (c: Seeded, unhandled?: Array<{ reportId: string; reason: string }>) =>
-  campaignService.submitCampaignCompletionForAdminApproval(c.id, OWNER, undefined, unhandled);
+  campaignService.submitCampaignCompletion(c.id, OWNER, undefined, unhandled);
 
 async function submitted() {
   const c = await seed();
@@ -198,6 +206,10 @@ async function submitted() {
 
 const review = (c: Seeded, input: Parameters<typeof campaignService.adminReviewCampaignCompletion>[2]) =>
   campaignService.adminReviewCampaignCompletion(c.id, ADMIN, input);
+
+beforeAll(() => {
+  process.env.CAMPAIGN_ADMIN_NOTIFY_USER_IDS = ADMIN;
+});
 
 beforeEach(async () => {
   await prisma.$executeRaw(
@@ -235,8 +247,27 @@ describe("marking done (5.1)", () => {
 
     const view = await campaignCompletionService.getForReview(c.id, { userId: ADMIN, role: "ADMIN" });
     expect(view.submission).toMatchObject({ preview: false, counts: { cleaned: 1, partial: 1, unhandled: 1 } });
-    expect(view).toMatchObject({ rejectionCount: 0, canReject: true });
+    expect(view).toMatchObject({ rejectionCount: 0, awaitingAdmin: false, awaitingAdminReason: null, canApprove: false });
     expect(view.shifts).toHaveLength(2);
+    // Result verification: one round for meeting point A (its cleaned report), 72 h, Layer 1 from
+    // its photos; meeting point B (partly done, unhandled) opens none.
+    expect(view.verification.meetingPoints).toHaveLength(1);
+    expect(view.verification.meetingPoints[0]).toMatchObject({
+      meetingPointId: c.pa.id,
+      round: 1,
+      status: "voting",
+      score: 0,
+      votes: [],
+      // The same file before and after (one URL): Layer 1 fails it, and so the meeting point.
+      layer1Level: "fail",
+      trashPoints: [
+        {
+          reportId: c.r1,
+          status: "cleaned",
+          layer1: { level: "fail", issues: [{ code: "before_after_same", side: "before", url: IMG }] },
+        },
+      ],
+    });
   });
 
   it("invites residents around every meeting point", async () => {
@@ -264,37 +295,35 @@ describe("marking done (5.1)", () => {
   });
 });
 
-describe("residents' red flag", () => {
-  it("is raised at 30% not clean out of at least 5 answers", async () => {
-    const c = await submitted();
-    const vote = (value: number) =>
-      prisma.campaignCompletionVerification.create({ data: { campaignId: c.id, userId: randomUUID(), value } });
-    const flagged = async () =>
-      (await campaignCompletionService.getForReview(c.id, { userId: ADMIN, role: "ADMIN" })).verification.flagged;
-
-    await Promise.all([vote(1), vote(1), vote(-1), vote(-1)]);
-    expect(await flagged()).toBe(false); // 50% but only 4 answers
-    await vote(1);
-    expect(await flagged()).toBe(true); // 2 / 5 = 40%
-    await Promise.all([vote(1), vote(1)]);
-    expect(await flagged()).toBe(false); // 2 / 7 ≈ 29%
-    const res = await campaignService.getCampaignById(c.id, OWNER);
-    expect(res?.completionVerification).toMatchObject({ cleanCount: 5, notCleanCount: 2, flagged: false });
-  });
-});
-
 describe("admin decision (5.2)", () => {
-  it("approve settles the difficulty: handled done, unhandled released, points at the new level", async () => {
+  it("approve only once result verification handed the campaign over", async () => {
     const c = await submitted();
+    await expect(review(c, { decision: "approve" })).rejects.toMatchObject(
+      code("CAMPAIGN_COMPLETION_NOT_AWAITING_ADMIN"),
+    );
+    // Rejecting the whole campaign is gone: meeting points are rejected one by one.
+    await expect(review(c, { decision: "reject" as never, rejectReason: "x" })).rejects.toMatchObject(
+      code("VALIDATION_ERROR"),
+    );
+    expect((await prisma.campaign.findUniqueOrThrow({ where: { id: c.id } })).status).toBe(
+      CampaignStatus.PENDING_COMPLETION,
+    );
+  });
+
+  it("approve settles the difficulty: cleaned done, partly done and unhandled released, points at the new level", async () => {
+    const c = await submitted();
+    await prisma.campaign.update({ where: { id: c.id }, data: { completionAwaitingAdmin: true, completionRejectionCount: 3 } });
+    const view = await campaignCompletionService.getForReview(c.id, { userId: ADMIN, role: "ADMIN" });
+    expect(view).toMatchObject({ awaitingAdmin: true, awaitingAdminReason: "rejection_limit", canApprove: true });
     await expect(review(c, { decision: "approve", difficulty: 9 })).rejects.toMatchObject(code("VALIDATION_ERROR"));
 
     const res = await review(c, { decision: "approve", difficulty: 3 });
-    expect(res).toMatchObject({ status: CampaignStatus.COMPLETED, difficulty: 3 });
+    expect(res).toMatchObject({ status: CampaignStatus.COMPLETED, difficulty: 3, completionAwaitingAdmin: false });
 
     const reports = await prisma.report.findMany({ where: { id: { in: [c.r1, c.r2, c.r3] } } });
     const byId = Object.fromEntries(reports.map((r) => [r.id, r]));
     expect(byId[c.r1]).toMatchObject({ status: ReportStatus._STATUS_COMPLETED, campaignId: c.id });
-    expect(byId[c.r2]).toMatchObject({ status: ReportStatus._STATUS_COMPLETED, campaignId: c.id });
+    expect(byId[c.r2]).toMatchObject({ status: ReportStatus._STATUS_TODO, campaignId: null });
     expect(byId[c.r3]).toMatchObject({ status: ReportStatus._STATUS_TODO, campaignId: null });
 
     const outbox = await prisma.outboxEvent.findFirstOrThrow({
@@ -304,60 +333,42 @@ describe("admin decision (5.2)", () => {
     const log = await prisma.campaignStatusLog.findFirstOrThrow({
       where: { campaignId: c.id, event: "approve_completion" },
     });
+    expect(log).toMatchObject({ actorRole: "admin", actorId: ADMIN });
     expect(log.changes).toMatchObject({ difficulty: { from: 1, to: 3 } });
   });
 
-  it("reject reopens shifts until saved again; a 4th rejection is refused", async () => {
-    const c = await submitted();
-    await expect(review(c, { decision: "reject", rejectReason: "Thiếu ảnh" })).rejects.toMatchObject(
-      code("VALIDATION_ERROR"),
-    );
-    await expect(
-      review(c, { decision: "reject", rejectReason: "Thiếu ảnh", shiftIds: [randomUUID()] }),
-    ).rejects.toMatchObject(code("VALIDATION_ERROR"));
-
-    for (let round = 1; round <= 3; round++) {
-      const res = await review(c, { decision: "reject", rejectReason: "Thiếu ảnh sau", shiftIds: [c.b.id] });
-      expect(res).toMatchObject({ status: CampaignStatus.ACTIVE, completionRejectionCount: round, rejectReason: "Thiếu ảnh sau" });
-      expect(res.shifts.find((s) => s.id === c.b.id)).toMatchObject({
-        status: "awaiting_result",
-        reopenReason: "Thiếu ảnh sau",
-      });
-      expect(res.shifts.find((s) => s.id === c.a.id)?.status).toBe("ended");
-
-      // Marking done waits for the reopened shift.
-      await expect(markDone(c, [{ reportId: c.r3, reason: "x" }])).rejects.toMatchObject({
-        ...code("CAMPAIGN_SHIFTS_NOT_ENDED"),
-        data: { shiftIds: [c.b.id] },
-      });
-      if (round === 1) {
-        await eventually(() =>
-          expect(enqueueWebsiteNotificationsToUsers).toHaveBeenCalledWith(
-            expect.objectContaining({
-              kind: "CAMPAIGN_COMPLETION_REJECTED_BY_ADMIN",
-              userIds: expect.arrayContaining([OWNER, MGR]),
-              payload: expect.objectContaining({ rejectReason: "Thiếu ảnh sau", shifts: expect.stringContaining("#2") }),
-            }),
-          ),
-        );
-      }
-      await shiftResultService.save(c.id, c.b.id, MGR, {
-        description: "Bổ sung",
-        reports: [{ reportId: c.r2, status: "cleaned", beforeUrls: [IMG], afterUrls: [IMG2] }],
-        mediaIds: [],
-      });
-      const overview = await shiftResultService.overview(c.id, { userId: OWNER });
-      expect(overview.shifts.find((s) => s.shiftId === c.b.id)).toMatchObject({ status: "ended", reopenedAt: null });
-      await markDone(c, [{ reportId: c.r3, reason: "x" }]);
-    }
-
-    await expect(
-      review(c, { decision: "reject", rejectReason: "Lần 4", shiftIds: [c.b.id] }),
-    ).rejects.toMatchObject(code("CAMPAIGN_COMPLETION_REJECT_LIMIT"));
+  it("nothing declared cleaned: the admin is handed the campaign at once", async () => {
+    const c = await seed();
+    await shiftResultService.save(c.id, c.a.id, MGR, {
+      description: "Một phần điểm A",
+      reports: [{ reportId: c.r1, status: "partial", beforeUrls: [IMG], afterUrls: [IMG] }],
+      mediaIds: [],
+    });
+    await shiftResultService.save(c.id, c.b.id, MGR, {
+      description: "Một phần điểm B",
+      reports: [{ reportId: c.r2, status: "partial", beforeUrls: [IMG], afterUrls: [IMG2] }],
+      mediaIds: [],
+    });
+    const res = await markDone(c, [{ reportId: c.r3, reason: "x" }]);
+    expect(res).toMatchObject({ status: CampaignStatus.PENDING_COMPLETION, completionAwaitingAdmin: true });
+    expect(await prisma.meetingPointVerification.count({ where: { campaignId: c.id } })).toBe(0);
+    const notice = await prisma.outboxEvent.findFirstOrThrow({
+      where: { aggregateId: c.id, eventType: OutboxEventType.WEBSITE_NOTIFICATION },
+    });
+    expect(notice.payload).toMatchObject({ kind: "CAMPAIGN_COMPLETION_PENDING_ADMIN", payload: { reason: "no_cleaned_points" } });
     const view = await campaignCompletionService.getForReview(c.id, { userId: ADMIN, role: "ADMIN" });
-    expect(view).toMatchObject({ rejectionCount: 3, canReject: false });
-    expect(view.submission.reports.find((r) => r.reportId === c.r2)?.status).toBe("cleaned");
+    expect(view).toMatchObject({ awaitingAdminReason: "no_cleaned_points", canApprove: true });
+    // No resident is invited: there is nothing to vote on.
+    expect(findNearbyUserIds).not.toHaveBeenCalled();
     await review(c, { decision: "approve" });
+    expect((await prisma.campaign.findUniqueOrThrow({ where: { id: c.id } })).status).toBe(CampaignStatus.COMPLETED);
+  });
+
+  it("the legacy campaign-level answers are gone (410)", async () => {
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+    campaignController.completionVerificationGone({} as never, res as never);
+    expect(res.status).toHaveBeenCalledWith(410);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ code: "CAMPAIGN_COMPLETION_VERIFICATION_GONE" }));
   });
 
   it("cancel: cancelled, reports released, no points, everyone hears", async () => {

@@ -16,11 +16,7 @@ import {
 import { HttpError, HTTP_STATUS } from "../../constants/http-status";
 import { organizationRepository } from "../organization/organization.repository";
 import { organizationMemberRepository } from "../organization/organization_member.repository";
-import {
-  enqueueCampaignCompletionPendingAdminWebsiteNotification,
-  enqueueWebsiteNotificationsToUsers,
-} from "./notification-jobs.client";
-import { getCampaignAdminNotifyUserIds } from "./campaign-completion-admin-notify.config";
+import { enqueueWebsiteNotificationsToUsers } from "./notification-jobs.client";
 import { campaignManagerRepository } from "./campaign_manager/campaign_manager.repository";
 import { rewardServiceClient } from "../reward/reward-service.client";
 import { campaignRegistrationRepository } from "./campaign_registration/campaign_registration.repository";
@@ -64,10 +60,6 @@ import { savedResourceRepository } from "../saved_resource/saved_resource.reposi
 import { defaultResourceVoteSummary } from "../vote/vote.dto";
 import { voteService } from "../vote/vote.service";
 import {
-  defaultCampaignCompletionVerificationSummary,
-} from "./campaign_completion_verification/campaign_completion_verification.dto";
-import { campaignCompletionVerificationService } from "./campaign_completion_verification/campaign_completion_verification.service";
-import {
   fetchOrganizationOwnersByUserIds,
   getUserProfile,
 } from "../organization/identity-user.client";
@@ -81,6 +73,8 @@ import {
   campaignCompletionService,
   type CompletionDecision,
 } from "./campaign_completion/completion.service";
+import { campaignVerificationService } from "./campaign_verification/verification.service";
+import { verificationDecisionService } from "./campaign_verification/verification-decision.service";
 
 function assertDifficultyInRange(level: number): void {
   if (
@@ -385,13 +379,9 @@ export class CampaignService {
       return campaigns;
     }
     const ids = campaigns.map((c) => c.id);
-    const [map, verificationMap, savedIds] = await Promise.all([
+    const [map, savedIds] = await Promise.all([
       voteService.getVoteSummariesForResources(
         VoteResourceType.CAMPAIGN,
-        ids,
-        viewerUserId ?? null,
-      ),
-      campaignCompletionVerificationService.getSummariesForCampaigns(
         ids,
         viewerUserId ?? null,
       ),
@@ -406,9 +396,6 @@ export class CampaignService {
     return campaigns.map((c) => ({
       ...c,
       votes: map.get(c.id) ?? defaultResourceVoteSummary(viewerUserId ?? null),
-      completionVerification:
-        verificationMap.get(c.id) ??
-        defaultCampaignCompletionVerificationSummary(viewerUserId ?? null),
       saved: viewerUserId != null ? savedIds.has(c.id) : null,
     }));
   }
@@ -1303,8 +1290,9 @@ export class CampaignService {
   }
 
   /**
-   * Admin decision on a campaign marked done (spec 5.2): approve (optionally settling the
-   * difficulty), reject (reopening shifts, at most 3 times) or cancel. See `campaignCompletionService`.
+   * Admin decision on a campaign marked done: cancel at any time, approve (optionally settling the
+   * difficulty) only once result verification handed the campaign over. See
+   * `campaignCompletionService`; flagged trash points are decided per point.
    */
   async adminReviewCampaignCompletion(
     id: string,
@@ -1313,7 +1301,6 @@ export class CampaignService {
       decision: CompletionDecision;
       rejectReason?: string | null;
       difficulty?: number | null;
-      shiftIds?: string[];
     },
     viewerUserId?: string | null,
   ): Promise<CampaignResponse> {
@@ -1321,7 +1308,6 @@ export class CampaignService {
       decision: input.decision,
       reason: input.rejectReason,
       difficulty: input.difficulty,
-      shiftIds: input.shiftIds,
     });
     const updated = await campaignRepository.findById(id);
     if (!updated) {
@@ -1332,10 +1318,13 @@ export class CampaignService {
 
   /**
    * Manager marks the campaign done (spec 5.1): every shift that is on has ended; the submission is
-   * built from the shifts' results (reports no shift handled need a reason) and saved; the
-   * campaign then awaits the admin. `INREVIEW` is accepted only for that legacy status.
+   * built from the shifts' results (reports no shift handled need a reason) and saved. Result
+   * verification then opens a 72 h voting round for each meeting point holding a trash point
+   * declared cleaned (not yet verified) and asks the original reporters first; with nothing
+   * declared cleaned the admin decides. Residents nearby are invited to vote. `INREVIEW` is accepted only for that legacy
+   * status.
    */
-  async submitCampaignCompletionForAdminApproval(
+  async submitCampaignCompletion(
     id: string,
     userId: string,
     viewerUserId?: string | null,
@@ -1366,38 +1355,39 @@ export class CampaignService {
     await shiftResultService.assertAllShiftsEnded(id, now);
     const rows = await campaignCompletionService.prepareSubmission(id, unhandled);
 
-    const updated = await prisma.$transaction(async (tx) => {
+    const { updated, opened } = await prisma.$transaction(async (tx) => {
       await transitionCampaign(tx, {
         campaignId: id,
         event: "submit_completion",
         fromStatus: existing.status,
         actor: "manager",
         actorId: userId,
-        data: { completionSubmittedAt: now },
+        data: { completionSubmittedAt: now, completionAwaitingAdmin: false },
       });
       await campaignCompletionService.saveSubmission(tx, id, rows, now);
-      return campaignLifecycleService.loadInTx(tx, id);
+      const pending = await campaignLifecycleService.loadInTx(tx, id);
+      const rounds = await campaignVerificationService.openRounds(tx, pending, rows, now);
+      return { updated: await campaignLifecycleService.loadInTx(tx, id), opened: rounds.opened };
     });
 
-    void this.notifyAdminsCampaignCompletionPendingApproval({
-      campaignId: id,
-      campaign: existing,
-    }).catch((err) => {
-      console.warn(
-        "[campaign] failed to notify admins of pending campaign completion",
-        err,
+    if (opened > 0) {
+      void this.notifyNearbyOnCampaignCompletionSubmitted({
+        campaign: existing,
+        submitterUserId: userId,
+      }).catch((err) => {
+        console.warn(
+          "[campaign] failed to notify nearby citizens for completion verify",
+          err,
+        );
+      });
+    } else {
+      // Every meeting point with a trash point declared cleaned was verified in an earlier round: decide now.
+      await verificationDecisionService.decideCampaign(id, now).catch((err) =>
+        console.warn("[campaign] deciding a resubmitted campaign failed", err),
       );
-    });
-
-    void this.notifyNearbyOnCampaignCompletionSubmitted({
-      campaign: existing,
-      submitterUserId: userId,
-    }).catch((err) => {
-      console.warn(
-        "[campaign] failed to notify nearby citizens for completion verify",
-        err,
-      );
-    });
+      const decided = await campaignRepository.findById(id);
+      if (decided) return this.toResponseWithVotes(decided, viewerUserId ?? userId);
+    }
 
     return this.toResponseWithVotes(updated, viewerUserId ?? userId);
   }
@@ -1434,34 +1424,6 @@ export class CampaignService {
       points,
       excludeUserIds,
     });
-  }
-
-  private async notifyAdminsCampaignCompletionPendingApproval(args: {
-    campaignId: string;
-    campaign: {
-      title: string;
-      titleVi?: string | null;
-      titleEn?: string | null;
-    };
-  }): Promise<void> {
-    const adminIds = getCampaignAdminNotifyUserIds();
-    if (adminIds.length === 0) {
-      console.warn(
-        "[campaign] CAMPAIGN_ADMIN_NOTIFY_USER_IDS empty; skipping admin completion-pending notifications",
-        { campaignId: args.campaignId },
-      );
-      return;
-    }
-    const titlePayload = campaignTitleNotificationPayload(args.campaign);
-    await Promise.all(
-      adminIds.map((userId) =>
-        enqueueCampaignCompletionPendingAdminWebsiteNotification({
-          userId,
-          campaignId: args.campaignId,
-          campaignTitle: titlePayload.campaignTitle,
-        }),
-      ),
-    );
   }
 
   /** Spec 3.6: the creator or an owner cancels the campaign, with a reason. */

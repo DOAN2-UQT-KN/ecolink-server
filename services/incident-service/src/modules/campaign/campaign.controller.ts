@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { body, param, query, validationResult, type ValidationChain } from "express-validator";
 import {
   HTTP_STATUS,
+  HttpError,
   sendError,
   sendHttpErrorResponse,
   sendSuccess,
@@ -12,6 +13,10 @@ import { campaignRegistrationService } from "./campaign_registration/campaign_re
 import { shiftAttendanceService } from "./campaign_attendance/shift-attendance.service";
 import { shiftResultService } from "./campaign_shift_result/shift-result.service";
 import { campaignCompletionService } from "./campaign_completion/completion.service";
+import {
+  campaignVerificationService,
+  type VoteValueInput,
+} from "./campaign_verification/verification.service";
 import { GlobalStatus } from "../../constants/status.enum";
 import {
   CAMPAIGN_COMPLETION_UNHANDLED_REASON_MAX,
@@ -20,6 +25,7 @@ import {
   CAMPAIGN_DAY_MAX,
   CAMPAIGN_MEETING_POINT_MAX,
   CAMPAIGN_REVIEW_REASON_MAX_LENGTH,
+  MEETING_POINT_VOTE_NOTE_MAX,
 } from "@da2/constants";
 import { isPlatformAdmin } from "./campaign-access.service";
 import { campaignEligibilityService } from "./campaign-eligibility.service";
@@ -766,18 +772,19 @@ export class CampaignController {
   ];
 
   /**
-   * Admin decision on a campaign marked done (spec 5.2): approve (optional `difficulty`), reject
-   * (`rejectReason` + `shiftIds` to reopen; at most 3 times) or cancel (`rejectReason`).
+   * Admin decision on a campaign marked done: cancel (`rejectReason`) at any time, approve
+   * (optional `difficulty`) only once result verification handed it over (409
+   * CAMPAIGN_COMPLETION_NOT_AWAITING_ADMIN otherwise). Rejecting is decided per trash point now.
    */
   adminReviewCampaignCompletion = [
     param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
     body("decision")
-      .isIn(["approve", "reject", "cancel"])
-      .withMessage('decision must be "approve", "reject" or "cancel"'),
+      .isIn(["approve", "cancel"])
+      .withMessage('decision must be "approve" or "cancel"'),
     body("rejectReason").custom((value, { req }) => {
-      const needsReason = req.body?.decision === "reject" || req.body?.decision === "cancel";
+      const needsReason = req.body?.decision === "cancel";
       if (value === undefined || value === null) {
-        if (needsReason) throw new Error("rejectReason is required to reject or cancel");
+        if (needsReason) throw new Error("rejectReason is required to cancel");
         return true;
       }
       if (typeof value !== "string") {
@@ -785,7 +792,7 @@ export class CampaignController {
       }
       const trimmed = value.trim();
       if (needsReason && !trimmed) {
-        throw new Error("rejectReason is required to reject or cancel");
+        throw new Error("rejectReason is required to cancel");
       }
       if (trimmed.length > 5000) {
         throw new Error("rejectReason too long (max 5000 characters)");
@@ -793,11 +800,6 @@ export class CampaignController {
       return true;
     }),
     body("difficulty").optional({ values: "null" }).isInt().withMessage("difficulty must be a whole number"),
-    body("shiftIds")
-      .if(body("decision").equals("reject"))
-      .isArray({ min: 1, max: 200 })
-      .withMessage("Pick at least one shift to complete again"),
-    body("shiftIds.*").optional().isUUID().withMessage("shiftIds must be UUIDs"),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -823,7 +825,7 @@ export class CampaignController {
           );
         }
 
-        const { decision, rejectReason, difficulty, shiftIds } =
+        const { decision, rejectReason, difficulty } =
           req.body as AdminCompletionReviewBody;
         const campaign = await campaignService.adminReviewCampaignCompletion(
           req.params.id,
@@ -832,14 +834,12 @@ export class CampaignController {
             decision,
             rejectReason: typeof rejectReason === "string" ? rejectReason.trim() : undefined,
             difficulty: difficulty == null ? null : Number(difficulty),
-            shiftIds: decision === "reject" ? (shiftIds ?? []).map(String) : undefined,
           },
           userId,
         );
 
         const messages = {
           approve: "Campaign marked as done successfully",
-          reject: "Completion request rejected; campaign returned to active",
           cancel: "Campaign cancelled",
         } as const;
         sendSuccess(res, HTTP_STATUS.OK.withMessage(messages[decision]), { campaign });
@@ -916,7 +916,7 @@ export class CampaignController {
   ];
 
   /**
-   * Manager: submit campaign for final admin completion approval (in review → awaiting admin).
+   * Manager: mark the campaign done; result verification opens the voting rounds.
    */
   markCampaignDone = [
     param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
@@ -943,7 +943,7 @@ export class CampaignController {
         }
 
         const campaign =
-          await campaignService.submitCampaignCompletionForAdminApproval(
+          await campaignService.submitCampaignCompletion(
             req.params.id,
             userId,
             undefined,
@@ -955,7 +955,7 @@ export class CampaignController {
 
         sendSuccess(
           res,
-          HTTP_STATUS.OK.withMessage("Campaign submitted for admin approval"),
+          HTTP_STATUS.OK.withMessage("Campaign marked done; result verification started"),
           { campaign },
         );
       } catch (error) {
@@ -1447,6 +1447,11 @@ export class CampaignController {
     },
   ];
 
+  /** Legacy campaign-level "clean / not clean" answers: gone, residents vote per trash point. */
+  completionVerificationGone = (_req: Request, res: Response): void => {
+    sendError(res, HTTP_STATUS.CAMPAIGN_COMPLETION_VERIFICATION_GONE);
+  };
+
   /** Legacy per-campaign attendance (before spec 4.1): gone, attendance is per shift now. */
   legacyAttendanceGone = (_req: Request, res: Response): void => {
     sendError(res, HTTP_STATUS.ATTENDANCE_LEGACY_GONE);
@@ -1631,6 +1636,94 @@ export class CampaignController {
     (req, userId) =>
       shiftResultService.removeMedia(req.params.id, req.params.shiftId, req.params.mediaId, userId),
     [param("mediaId").isUUID().withMessage("mediaId must be a valid UUID")],
+  );
+
+  /**
+   * POST /campaigns/:id/shifts/:shiftId/result-photos — multipart `file` (original photo, ≤ 15 MB),
+   * `reportId`, `side` (before|after), `pinLat`, `pinLng`; graded at once (Layer 1).
+   */
+  uploadResultPhoto = this.shiftAttendanceAction("Upload result photo", (req, userId) => {
+    const field = (camel: string, snake: string) => {
+      const b = (req.body ?? {}) as Record<string, unknown>;
+      return b[camel] ?? b[snake];
+    };
+    const file = (req as Request & { file?: { buffer: Buffer; mimetype: string; size: number } }).file;
+    return shiftResultService.uploadPhoto(req.params.id, req.params.shiftId, userId, {
+      file: file ? { buffer: file.buffer, mimetype: file.mimetype, size: file.size } : null,
+      reportId: String(field("reportId", "report_id") ?? ""),
+      side: String(field("side", "side") ?? ""),
+      pinLat: Number(field("pinLat", "pin_lat")),
+      pinLng: Number(field("pinLng", "pin_lng")),
+    });
+  });
+
+  /** GET /campaigns/:id/verification — every meeting point under result verification. */
+  getVerification = this.shiftAttendanceAction("Get result verification", (req, userId) =>
+    campaignVerificationService.getView(req.params.id, { userId, role: req.user?.role }),
+  );
+
+  /** PUT /campaigns/:id/verification/:meetingPointId/vote — a resident's vote on a meeting point. */
+  voteMeetingPoint = this.shiftAttendanceAction(
+    "Vote on meeting point",
+    (req, userId) => {
+      const num = (v: unknown) => (v === undefined || v === null || v === "" ? null : Number(v));
+      return campaignVerificationService.vote(
+        req.params.id,
+        req.params.meetingPointId,
+        { userId, role: req.user?.role },
+        {
+          value: req.body.value as VoteValueInput,
+          note: typeof req.body.note === "string" ? req.body.note : null,
+          photoUrl: typeof req.body.photoUrl === "string" ? req.body.photoUrl : null,
+          reportIds: Array.isArray(req.body.reportIds) ? req.body.reportIds.map(String) : null,
+          latitude: num(req.body.latitude),
+          longitude: num(req.body.longitude),
+          accuracy: num(req.body.accuracy),
+        },
+      );
+    },
+    [
+      param("meetingPointId").isUUID().withMessage("meetingPointId must be a valid UUID"),
+      body("value").isIn(["up", "down"]).withMessage('value is "up" (clean) or "down" (not clean)'),
+      body("note").optional({ values: "null" }).isString().isLength({ max: MEETING_POINT_VOTE_NOTE_MAX }),
+      body("photoUrl").optional({ values: "null" }).isString().isLength({ max: 2000 }),
+      body("reportIds").optional({ values: "null" }).isArray({ max: 200 }).withMessage("report_ids is a list of trash report ids"),
+      body("latitude").optional({ values: "null" }).isFloat({ min: -90, max: 90 }),
+      body("longitude").optional({ values: "null" }).isFloat({ min: -180, max: 180 }),
+      body("accuracy").optional({ values: "null" }).isFloat({ min: 0 }),
+    ],
+  );
+
+  /** DELETE /campaigns/:id/verification/:meetingPointId/vote — take one's vote back. */
+  unvoteMeetingPoint = this.shiftAttendanceAction(
+    "Remove meeting point vote",
+    (req, userId) =>
+      campaignVerificationService.unvote(req.params.id, req.params.meetingPointId, {
+        userId,
+        role: req.user?.role,
+      }),
+    [param("meetingPointId").isUUID().withMessage("meetingPointId must be a valid UUID")],
+  );
+
+  /** PUT /campaigns/:id/verification/:meetingPointId/decision — admin: verify or reject a flagged meeting point. */
+  decideMeetingPoint = this.shiftAttendanceAction(
+    "Decide meeting point",
+    async (req, userId) => {
+      if (!isPlatformAdmin(req.user?.role)) {
+        throw new HttpError(HTTP_STATUS.FORBIDDEN.withMessage("Only admin can decide a flagged meeting point"));
+      }
+      return campaignVerificationService.decide(req.params.id, req.params.meetingPointId, userId, {
+        decision: req.body.decision,
+        reason: typeof req.body.reason === "string" ? req.body.reason : null,
+        reportIds: Array.isArray(req.body.reportIds) ? req.body.reportIds.map(String) : null,
+      });
+    },
+    [
+      param("meetingPointId").isUUID().withMessage("meetingPointId must be a valid UUID"),
+      body("decision").isIn(["verify", "reject"]).withMessage('decision is "verify" or "reject"'),
+      body("reason").optional({ values: "null" }).isString().isLength({ max: 5000 }),
+      body("reportIds").optional({ values: "null" }).isArray({ max: 200 }).withMessage("report_ids is a list of trash report ids"),
+    ],
   );
 
   /** GET /campaigns/:id/completion-review — the submission, totals and residents' answers (spec 5.2). */

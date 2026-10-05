@@ -135,17 +135,19 @@ export const CAMPAIGN_TRANSITIONS: readonly TransitionRule[] = [
     reasonRequired: false,
   },
   {
+    // Result verification completes it (system); the admin when it was handed over.
     event: "approve_completion",
     from: [CampaignStatus.PENDING_COMPLETION],
     to: CampaignStatus.COMPLETED,
-    actors: ["admin"],
+    actors: ["admin", "system"],
     reasonRequired: false,
   },
   {
+    // Result verification rejected a trash point and nothing is left to decide.
     event: "reject_completion",
     from: [CampaignStatus.PENDING_COMPLETION],
     to: CampaignStatus.ACTIVE,
-    actors: ["admin"],
+    actors: ["system"],
     reasonRequired: true,
   },
   {

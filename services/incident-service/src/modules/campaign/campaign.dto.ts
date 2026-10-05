@@ -1,7 +1,6 @@
 import type { CampaignRequirements, ShiftStatusValue } from "@da2/constants";
 import type { OrganizationOwnerResponse } from "../organization/organization.dto";
 import type { ResourceVoteSummary } from "../vote/vote.dto";
-import type { CampaignCompletionVerificationSummary } from "./campaign_completion_verification/campaign_completion_verification.dto";
 import type { ReportResponse } from "../report/report.dto";
 
 export interface CampaignOrganizationResponse {
@@ -161,13 +160,35 @@ export interface AdminVerifyCampaignBody {
 
 /** Body for PUT /api/v1/campaigns/:id/completion-review (admin). */
 export interface AdminCompletionReviewBody {
-  decision: "approve" | "reject" | "cancel";
-  /** Required when `decision` is `"reject"` or `"cancel"`. */
+  /** Approve only once result verification handed the campaign over (`completionAwaitingAdmin`). */
+  decision: "approve" | "cancel";
+  /** Required when `decision` is `"cancel"`. */
   rejectReason?: string | null;
   /** Approve only: settle the difficulty (points follow it); defaults to the current one. */
   difficulty?: number;
-  /** Reject only: the shifts (with a result) that must be completed again; at least one. */
-  shiftIds?: string[];
+}
+
+/** Body for PUT /api/v1/campaigns/:id/verification/:meetingPointId/vote (resident). */
+export interface MeetingPointVoteBody {
+  /** "up" = clean, "down" = not clean (needs `note` or `photoUrl`, and `reportIds`). */
+  value: "up" | "down";
+  note?: string | null;
+  photoUrl?: string | null;
+  /** Down only: the trash points of the round that are not clean (at least one). */
+  reportIds?: string[] | null;
+  /** Live GPS when voting; without it the vote counts as viewed online. */
+  latitude?: number | null;
+  longitude?: number | null;
+  accuracy?: number | null;
+}
+
+/** Body for PUT /api/v1/campaigns/:id/verification/:meetingPointId/decision (admin, flagged meeting point). */
+export interface MeetingPointDecisionBody {
+  decision: "verify" | "reject";
+  /** Required to reject. */
+  reason?: string | null;
+  /** Required to reject: the trash points of the round that did not pass (at least one). */
+  reportIds?: string[] | null;
 }
 
 /** Body for PUT /api/v1/campaigns/:id/mark-done (manager). */
@@ -235,8 +256,13 @@ export interface CampaignResponse {
   approvedAt: Date | null;
   /** Last time a manager marked the campaign done (spec 5.1). */
   completionSubmittedAt: Date | null;
-  /** Times the admin rejected the completion; at 3 only approve or cancel remain (spec 5.2). */
+  /** Times the completion was rejected; after 3 result verification hands it to the admin. */
   completionRejectionCount: number;
+  /**
+   * Result verification hands the campaign to the admin (complete or cancel): rejected 3 times
+   * already, or no trash point declared cleaned.
+   */
+  completionAwaitingAdmin: boolean;
   /** Only on an update: the edit sent the campaign back for review (spec 3.5). */
   reReview?: boolean;
   /** Why a day's minimum volunteers is below the difficulty's suggestion. */
@@ -261,8 +287,6 @@ export interface CampaignResponse {
   reports: ReportResponse[];
   managers: CampaignManagerBasicResponse[];
   votes: ResourceVoteSummary;
-  /** Community clean / not-clean verification after mark-done (separate from votes). */
-  completionVerification: CampaignCompletionVerificationSummary;
   /**
    * Whether the current user saved this campaign. Null when the viewer is unknown (unauthenticated).
    */

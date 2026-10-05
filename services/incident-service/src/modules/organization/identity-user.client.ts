@@ -480,3 +480,56 @@ export async function filterUserIdsForNotificationKind(params: {
     return unique;
   }
 }
+
+/** What a result-verification vote's weight depends on (identity `POST /users/vote-profile`). */
+export interface UserVoteProfile {
+  createdAt: Date;
+  emailVerified: boolean;
+  /** Metres from the saved location to the point; null without a saved location. */
+  savedLocationDistanceM: number | null;
+}
+
+/**
+ * The voter's account age, email verification and saved-location distance to a trash point.
+ * Null when identity is not configured, unreachable or does not know the user: the caller
+ * refuses the vote rather than guessing its weight.
+ */
+export async function fetchUserVoteProfile(params: {
+  userId: string;
+  latitude: number;
+  longitude: number;
+}): Promise<UserVoteProfile | null> {
+  const baseURL = process.env.IDENTITY_SERVICE_URL?.trim();
+  const key = process.env.INTERNAL_IDENTITY_API_KEY?.trim();
+  if (!baseURL || !key) {
+    console.warn("[identity-user.client] fetchUserVoteProfile: identity env not set");
+    return null;
+  }
+  try {
+    return await identityCircuit().run(async () => {
+      const client = axios.create({
+        baseURL: baseURL.replace(/\/$/, ""),
+        timeout: 10_000,
+        headers: { "x-internal-api-key": key },
+      });
+      const { data } = await client.post<SuccessEnvelope<Record<string, unknown>>>(
+        "/internal/v1/users/vote-profile",
+        { userId: params.userId, latitude: params.latitude, longitude: params.longitude },
+      );
+      const inner = data?.data;
+      if (!inner || typeof inner !== "object") return null;
+      const created = new Date(String(inner.createdAt ?? inner.created_at ?? ""));
+      if (Number.isNaN(created.getTime())) return null;
+      return {
+        createdAt: created,
+        emailVerified: (inner.emailVerified ?? inner.email_verified) === true,
+        savedLocationDistanceM: pickFiniteNumber(
+          inner.savedLocationDistanceM ?? inner.saved_location_distance_m,
+        ),
+      };
+    });
+  } catch (e) {
+    console.error("[identity-user.client] fetchUserVoteProfile:", e);
+    return null;
+  }
+}

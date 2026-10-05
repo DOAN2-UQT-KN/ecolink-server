@@ -2,10 +2,14 @@ import { Prisma } from "@prisma/client";
 import {
   CAMPAIGN_PUBLIC_STATUSES,
   CampaignStatus,
+  RESULT_PHOTO_MAX_BYTES,
+  RESULT_PHOTO_MIME_TYPES,
+  RESULT_PHOTO_SIDE,
   SHIFT_MEDIA_MAX_PER_SHIFT,
   SHIFT_RESULT_MAX_PHOTOS_PER_SIDE,
   SHIFT_RESULT_REPORT_STATUS,
   SHIFT_STATUS,
+  type ResultPhotoSideValue,
   type ShiftStatusValue,
 } from "@da2/constants";
 import prisma from "../../../config/prisma.client";
@@ -18,6 +22,17 @@ import type { OrganizationOwnerResponse } from "../../organization/organization.
 import { campaignAccessService, isPlatformAdmin } from "../campaign-access.service";
 import { isEligible, shiftAttendanceService } from "../campaign_attendance/shift-attendance.service";
 import { effectiveEnd, hasLiveResult, shiftStatusOf } from "./shift-status";
+import {
+  gradePhoto,
+  layer1ForPoints,
+  readPhotoExif,
+  sha256Hex,
+  sniffImageType,
+  toPhotoCheckView,
+  type PhotoCheckView,
+  type PointLayer1View,
+} from "./result-photo.service";
+import { resultPhotoStorage } from "./result-photo.storage";
 
 export type ShiftResultReportStatus =
   (typeof SHIFT_RESULT_REPORT_STATUS)[keyof typeof SHIFT_RESULT_REPORT_STATUS];
@@ -82,6 +97,8 @@ export interface ShiftResultView {
       status: string;
       beforeUrls: string[];
       afterUrls: string[];
+      /** Layer 1 of result verification, shown at once so the photos can be fixed before marking done. */
+      layer1: PointLayer1View | null;
     }>;
   } | null;
   /** The shift's pool for `canView`; only the photos chosen for the result for anyone else. */
@@ -125,6 +142,15 @@ export interface ShiftOverview {
   };
 }
 
+/** POST /campaigns/:id/shifts/:shiftId/result-photos: the original file and where it was pinned. */
+export interface UploadResultPhotoInput {
+  file: { buffer: Buffer; mimetype: string; size: number } | null;
+  reportId: string;
+  side: string;
+  pinLat: number;
+  pinLng: number;
+}
+
 const HTTP_URL = /^https?:\/\/\S+$/i;
 const REPORT_STATUSES = Object.values(SHIFT_RESULT_REPORT_STATUS) as string[];
 const MEDIA_KINDS = ["image", "video"];
@@ -138,7 +164,8 @@ function invalid(message: string, details?: Record<string, unknown>): HttpError 
  * started: the trash reports handled (photos after, optional photos before; cleaned or partial), photos from the
  * shift's pool, a description and the amount of waste. A shift past its end is "ended" only with a
  * result; it may be ended early once it has one. Volunteers who attended add photos to the pool.
- * Everything locks once the campaign is marked done. No GPS or time check of photos yet.
+ * Everything locks once the campaign is marked done. Photos before / after go through
+ * `uploadPhoto` (Layer 1 of result verification: EXIF time and GPS, pin, hash).
  */
 export class ShiftResultService {
   private async loadShift(campaignId: string, shiftId: string) {
@@ -243,6 +270,7 @@ export class ShiftResultService {
     ]);
     const profiles = await fetchOrganizationOwnersByUserIds([...new Set(media.map((m) => m.uploadedBy))]);
     const result = shift.result;
+    const layer1 = result ? await layer1ForPoints(campaignId, result.reports) : new Map<string, PointLayer1View>();
     return {
       ...base,
       reportIds,
@@ -259,6 +287,7 @@ export class ShiftResultService {
               status: r.status,
               beforeUrls: r.beforeUrls,
               afterUrls: r.afterUrls,
+              layer1: layer1.get(r.reportId) ?? null,
             })),
           }
         : null,
@@ -330,6 +359,8 @@ export class ShiftResultService {
       }
     }
 
+    await this.assertPhotosChecked(shift, reports);
+
     const mediaIds = [...new Set(input.mediaIds ?? [])];
     if (mediaIds.length > 0) {
       const found = await prisma.campaignShiftMedia.count({
@@ -400,6 +431,121 @@ export class ShiftResultService {
       });
     });
     return this.get(campaignId, shiftId, { userId }, now);
+  }
+
+  /**
+   * Result verification, Layer 1: every photo before / after must have been uploaded through
+   * `result-photos` for this shift, this report and this side, or already be in the saved result
+   * for this report (saved before photos were checked; graded as a warning).
+   */
+  private async assertPhotosChecked(
+    shift: { id: string; campaignId: string; result: { reports: Array<{ reportId: string; beforeUrls: string[]; afterUrls: string[] }> } | null },
+    reports: SaveShiftResultInput["reports"],
+  ) {
+    const wanted = reports.flatMap((r) => [
+      ...(r.beforeUrls ?? []).map((url) => ({ reportId: r.reportId, url, side: RESULT_PHOTO_SIDE.BEFORE })),
+      ...(r.afterUrls ?? []).map((url) => ({ reportId: r.reportId, url, side: RESULT_PHOTO_SIDE.AFTER })),
+    ]);
+    if (wanted.length === 0) return;
+    const checks = await prisma.resultPhotoCheck.findMany({
+      where: { shiftId: shift.id, url: { in: [...new Set(wanted.map((w) => w.url))] } },
+      select: { reportId: true, url: true, side: true },
+    });
+    const checked = new Set(checks.map((c) => `${c.reportId} ${c.side} ${c.url}`));
+    const saved = new Set(
+      (shift.result?.reports ?? []).flatMap((r) => [...r.beforeUrls, ...r.afterUrls].map((u) => `${r.reportId} ${u}`)),
+    );
+    for (const w of wanted) {
+      if (!checked.has(`${w.reportId} ${w.side} ${w.url}`) && !saved.has(`${w.reportId} ${w.url}`)) {
+        throw invalid("Upload each photo before / after through the result photo upload", {
+          reportId: w.reportId,
+          url: w.url,
+          side: w.side,
+        });
+      }
+    }
+  }
+
+  /**
+   * Result verification, Layer 1: a photo before / after of one of the shift's trash reports,
+   * uploaded as the original file with where it was taken pinned on the map. The server reads its
+   * EXIF (time, GPS, camera), hashes it, stores it on Cloudinary and grades it at once. Same rights
+   * as submitting the result.
+   */
+  async uploadPhoto(
+    campaignId: string,
+    shiftId: string,
+    userId: string,
+    input: UploadResultPhotoInput,
+    now = new Date(),
+  ): Promise<{ url: string; check: PhotoCheckView }> {
+    const shift = await this.loadShift(campaignId, shiftId);
+    await this.assertCanEdit(campaignId, shift.leaderUserId, userId);
+    this.assertOpen(shift);
+    this.assertStarted(shift, now);
+
+    const photoInvalid = (message: string, field: string) =>
+      new HttpError(HTTP_STATUS.RESULT_PHOTO_INVALID.withMessage(message), { field });
+    const file = input.file;
+    if (!file || file.size === 0) throw photoInvalid("A photo file is required", "file");
+    if (file.size > RESULT_PHOTO_MAX_BYTES) throw photoInvalid("The photo is larger than 15 MB", "file");
+    const sniffed = sniffImageType(file.buffer);
+    if (!sniffed || !(RESULT_PHOTO_MIME_TYPES as readonly string[]).includes(file.mimetype)) {
+      throw photoInvalid("Only JPEG, PNG, HEIC or WebP photos are accepted", "file");
+    }
+    const side = input.side as ResultPhotoSideValue;
+    if (side !== RESULT_PHOTO_SIDE.BEFORE && side !== RESULT_PHOTO_SIDE.AFTER) {
+      throw photoInvalid("side is before or after", "side");
+    }
+    const pin = { latitude: Number(input.pinLat), longitude: Number(input.pinLng) };
+    if (
+      !Number.isFinite(pin.latitude) ||
+      !Number.isFinite(pin.longitude) ||
+      Math.abs(pin.latitude) > 90 ||
+      Math.abs(pin.longitude) > 180
+    ) {
+      throw photoInvalid("Pin where the photo was taken on the map", "pin");
+    }
+    if (!(await this.reportIdsOf(shift.meetingPointId)).includes(input.reportId)) {
+      throw invalid("This trash report is not part of the shift's meeting point", { reportId: input.reportId });
+    }
+    const report = await prisma.report.findUnique({
+      where: { id: input.reportId },
+      select: { latitude: true, longitude: true },
+    });
+
+    const exif = await readPhotoExif(file.buffer);
+    const sha256 = sha256Hex(file.buffer);
+    const grade = gradePhoto({
+      uploadedAt: now,
+      exif,
+      pin,
+      point:
+        report?.latitude != null && report.longitude != null
+          ? { latitude: report.latitude, longitude: report.longitude }
+          : null,
+    });
+    const url = await resultPhotoStorage.upload(file.buffer, { campaignId, mimeType: sniffed });
+    const row = await prisma.resultPhotoCheck.create({
+      data: {
+        campaignId,
+        shiftId,
+        reportId: input.reportId,
+        side,
+        url,
+        uploadedBy: userId,
+        uploadedAt: now,
+        sha256,
+        exifTakenAt: exif.takenAt,
+        exifLat: exif.latitude,
+        exifLng: exif.longitude,
+        cameraModel: exif.cameraModel,
+        pinLat: pin.latitude,
+        pinLng: pin.longitude,
+        ...grade,
+      },
+    });
+    return { url, check: toPhotoCheckView(row) };
   }
 
   /**

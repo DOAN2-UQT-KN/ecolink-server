@@ -9,7 +9,6 @@ import {
 } from "@prisma/client";
 import type { AppLocale, CampaignRequirements } from "@da2/constants";
 import { pickLocalizedText, toLocalizedText } from "@da2/constants";
-import { defaultCampaignCompletionVerificationSummary } from "./campaign_completion_verification/campaign_completion_verification.dto";
 import { defaultResourceVoteSummary } from "../vote/vote.dto";
 import {
   CampaignDayResponse,
@@ -160,6 +159,7 @@ export const toCampaignResponse = (
     approvedAt: entity.approvedAt ?? null,
     completionSubmittedAt: entity.completionSubmittedAt ?? null,
     completionRejectionCount: entity.completionRejectionCount ?? 0,
+    completionAwaitingAdmin: entity.completionAwaitingAdmin ?? false,
     minVolunteersReason: entity.minVolunteersReason ?? null,
     suggestedMinVolunteers,
     days: (entity.days ?? []).map(toCampaignDayResponse),
@@ -175,7 +175,6 @@ export const toCampaignResponse = (
     reports: [],
     managers: managerIds.map((id) => ({ id, name: "", avatar: null })),
     votes: defaultResourceVoteSummary(null),
-    completionVerification: defaultCampaignCompletionVerificationSummary(null),
     saved: null,
   };
 };

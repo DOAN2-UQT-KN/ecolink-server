@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { authenticate } from "../../middleware/auth.middleware";
 import { campaignController } from "./campaign.controller";
-import { campaignCompletionVerificationController } from "./campaign_completion_verification/campaign_completion_verification.controller";
+import { resultPhotoUpload } from "./campaign_shift_result/result-photo-upload.middleware";
 import { campaignSubmissionController } from "./campaign_submission/campaign_submission.controller";
 
 const router = Router();
@@ -78,8 +78,9 @@ router.get("/:id", authenticate, campaignController.getCampaignById);
 
 /**
  * @route   GET /api/v1/campaigns/:id/completion-review
- * @desc    Completion submission (or a preview before marking done), totals, residents' answers
- *          and red flag, rejection count, shifts that may be reopened (spec 5.2)
+ * @desc    Completion submission (or a preview before marking done, with Layer 1 per report),
+ *          totals, shifts, rejection count, whether result verification handed the campaign to the
+ *          admin, and every trash point under verification with its votes
  * @access  Private (Admin or campaign manager)
  */
 router.get(
@@ -90,15 +91,64 @@ router.get(
 
 /**
  * @route   PUT /api/v1/campaigns/:id/completion-review
- * @desc    Admin decision on a campaign marked done: approve (optional difficulty), reject
- *          (reason + shiftIds to reopen; at most 3 times) or cancel (reason)
+ * @desc    Admin decision on a campaign marked done: cancel (reason) at any time, approve
+ *          (optional difficulty) only once result verification handed it over
  * @access  Private (Admin only)
- * @body    { decision: approve|reject|cancel, rejectReason?, difficulty?, shiftIds? }
+ * @body    { decision: approve|cancel, rejectReason?, difficulty? }
  */
 router.put(
   "/:id/completion-review",
   authenticate,
   campaignController.adminReviewCampaignCompletion,
+);
+
+/**
+ * @route   GET /api/v1/campaigns/:id/verification
+ * @desc    Result verification: each meeting point holding a trash point declared cleaned (latest
+ *          round) with its trash points (photos, Layer 1, the viewer's own first), status, window,
+ *          vote counts, the viewer's vote and whether they may vote; scores and every vote for
+ *          admins and the campaign's managers
+ * @access  Private (anyone signed in once waiting for completion or completed; managers, admins always)
+ */
+router.get("/:id/verification", authenticate, campaignController.getVerification);
+
+/**
+ * @route   PUT /api/v1/campaigns/:id/verification/:meetingPointId/vote
+ * @desc    Vote on a meeting point while its window is open (not the organization's members, the
+ *          campaign's managers or its volunteers); "down" needs a note or a photo and report_ids
+ *          (the trash points of the round not clean); 20 new votes a day
+ * @access  Private
+ * @body    { value: up|down, note?, photo_url?, report_ids?, latitude?, longitude?, accuracy? }
+ */
+router.put(
+  "/:id/verification/:meetingPointId/vote",
+  authenticate,
+  campaignController.voteMeetingPoint,
+);
+
+/**
+ * @route   DELETE /api/v1/campaigns/:id/verification/:meetingPointId/vote
+ * @desc    Take one's vote back while the window is open; the meeting point is re-scored (its
+ *          status never moves back)
+ * @access  Private
+ */
+router.delete(
+  "/:id/verification/:meetingPointId/vote",
+  authenticate,
+  campaignController.unvoteMeetingPoint,
+);
+
+/**
+ * @route   PUT /api/v1/campaigns/:id/verification/:meetingPointId/decision
+ * @desc    Admin: verify or reject a flagged meeting point (reject needs a reason and report_ids,
+ *          the trash points that did not pass); the campaign is then decided
+ * @access  Private (Admin only)
+ * @body    { decision: verify|reject, reason?, report_ids? }
+ */
+router.put(
+  "/:id/verification/:meetingPointId/decision",
+  authenticate,
+  campaignController.decideMeetingPoint,
 );
 
 /**
@@ -141,7 +191,8 @@ router.put("/:id/verify", authenticate, campaignController.adminVerifyCampaign);
 /**
  * @route   PUT /api/v1/campaigns/:id/mark-done
  * @desc    Manager: mark the campaign done (every shift ended); the submission is built from the
- *          shifts' results; reports no shift handled need a reason (422 CAMPAIGN_REPORTS_UNHANDLED)
+ *          shifts' results; reports no shift handled need a reason (422 CAMPAIGN_REPORTS_UNHANDLED);
+ *          result verification opens a 72 h voting round per trash point declared cleaned
  * @access  Private (Campaign manager)
  * @body    { unhandled?: [{ reportId, reason }] }
  */
@@ -149,13 +200,13 @@ router.put("/:id/mark-done", authenticate, campaignController.markCampaignDone);
 
 /**
  * @route   POST /api/v1/campaigns/:id/completion-verification
- * @desc    Submit community completion verification (clean / not clean)
+ * @desc    Legacy campaign-level clean / not clean: 410, residents vote per trash point
  * @access  Private
  */
 router.post(
   "/:id/completion-verification",
   authenticate,
-  campaignCompletionVerificationController.submit,
+  campaignController.completionVerificationGone,
 );
 
 /**
@@ -268,8 +319,23 @@ router.get("/:id/shifts/:shiftId/result", authenticate, campaignController.getSh
  * @desc    Submit or replace the shift's result, once started, while the campaign runs (leader or managers)
  * @access  Private
  * @body    { description, wasteBags?, wasteKg?, reports: [{ reportId, status, beforeUrls[], afterUrls[] }], mediaIds[] }
+ *          (photos before / after uploaded through result-photos, or already saved)
  */
 router.put("/:id/shifts/:shiftId/result", authenticate, campaignController.saveShiftResult);
+
+/**
+ * @route   POST /api/v1/campaigns/:id/shifts/:shiftId/result-photos
+ * @desc    Upload a photo before / after of one of the shift's trash reports (the original file,
+ *          ≤ 15 MB, JPEG/PNG/HEIC/WebP) with where it was taken pinned; graded at once (Layer 1)
+ * @access  Private (leader or managers)
+ * @body    multipart: file, reportId, side (before|after), pinLat, pinLng
+ */
+router.post(
+  "/:id/shifts/:shiftId/result-photos",
+  authenticate,
+  resultPhotoUpload,
+  campaignController.uploadResultPhoto,
+);
 
 /**
  * @route   POST /api/v1/campaigns/:id/shifts/:shiftId/end

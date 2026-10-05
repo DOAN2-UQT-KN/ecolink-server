@@ -20,7 +20,6 @@ DELETE FROM campaign_tasks;
 DELETE FROM campaign_result_files;
 DELETE FROM campaign_results;
 DELETE FROM campaign_submissions;
-DELETE FROM campaign_completion_verifications;
 DELETE FROM campaign_attendance_check_ins;
 DELETE FROM campaign_joining_requests;
 DELETE FROM campaign_shift_registrations;

@@ -16,6 +16,7 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || "it-shift-result-secret";
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "./setup/test-db";
+import { allowResultPhotos } from "./setup/result-photos";
 
 jest.mock("../modules/organization/identity-user.client", () => ({
   fetchOrganizationOwnersByUserIds: async () => new Map(),
@@ -128,6 +129,10 @@ async function seed(start: Date) {
   await prisma.campaignShiftRegistration.createMany({
     data: [a, b].map((s) => ({ campaignId: campaign.id, shiftId: s.id, userId: V1 })),
   });
+  await allowResultPhotos([
+    { campaignId: campaign.id, shiftId: a.id, reportId: report.id, url: IMG },
+    { campaignId: campaign.id, shiftId: b.id, reportId: other.id, url: IMG },
+  ]);
   return { id: campaign.id, a, b, reportId: report.id, otherReportId: other.id };
 }
 
@@ -228,6 +233,35 @@ describe("submitting a result", () => {
     await expect(svc.save(c.id, c.a.id, V1, goodResult(c.reportId), now)).rejects.toMatchObject(
       code("CAMPAIGN_PERMISSION_DENIED"),
     );
+  });
+
+  it("takes only photos uploaded through result-photos for that report and side, or already saved", async () => {
+    const c = await seed(start);
+    const now = at(start, HOUR);
+    const other = "https://res.cloudinary.com/demo/image/upload/not-checked.jpg";
+    const withPhoto = (beforeUrls: string[], afterUrls: string[]) => ({
+      ...goodResult(c.reportId),
+      reports: [{ reportId: c.reportId, status: "cleaned" as const, beforeUrls, afterUrls }],
+    });
+    await expect(svc.save(c.id, c.a.id, LEADER, withPhoto([], [other]), now)).rejects.toMatchObject({
+      ...code("SHIFT_RESULT_INVALID"),
+      data: { url: other, side: "after" },
+    });
+    // Uploaded as "after" only: not usable as "before".
+    await allowResultPhotos([{ campaignId: c.id, shiftId: c.a.id, reportId: c.reportId, url: other, sides: ["after"] }]);
+    await expect(svc.save(c.id, c.a.id, LEADER, withPhoto([other], [IMG]), now)).rejects.toMatchObject(
+      code("SHIFT_RESULT_INVALID"),
+    );
+    await svc.save(c.id, c.a.id, LEADER, withPhoto([IMG], [other]), now);
+    // A photo saved before photos were checked stays usable (Layer 1: warning).
+    const legacy = "https://res.cloudinary.com/demo/image/upload/legacy.jpg";
+    await prisma.campaignShiftResultReport.updateMany({ data: { afterUrls: [legacy] } });
+    const saved = await svc.save(c.id, c.a.id, LEADER, withPhoto([], [legacy]), at(now, MIN));
+    expect(saved.result?.reports[0].layer1).toMatchObject({
+      level: "warn",
+      issues: [{ code: "legacy_photo", side: "after", url: legacy }],
+      photos: [{ url: legacy, side: "after", check: null }],
+    });
   });
 
   it("saves, replaces and logs; picks photos from the pool; locks after mark-done", async () => {
@@ -336,7 +370,7 @@ describe("overview and marking done", () => {
       reports: { cleaned: 1, partial: 0, untouched: 1 },
     });
 
-    await expect(campaignService.submitCampaignCompletionForAdminApproval(c.id, OWNER)).rejects.toMatchObject({
+    await expect(campaignService.submitCampaignCompletion(c.id, OWNER)).rejects.toMatchObject({
       ...code("CAMPAIGN_SHIFTS_NOT_ENDED"),
       data: { shiftIds: [c.b.id] },
     });
@@ -348,7 +382,7 @@ describe("overview and marking done", () => {
     });
     overview = await svc.overview(c.id, { userId: OWNER, role: "ADMIN" });
     expect(overview.totals).toMatchObject({ endedShifts: 2, reports: { cleaned: 1, partial: 1, untouched: 0 } });
-    await campaignService.submitCampaignCompletionForAdminApproval(c.id, OWNER);
+    await campaignService.submitCampaignCompletion(c.id, OWNER);
     const done = await prisma.campaign.findUniqueOrThrow({ where: { id: c.id } });
     expect(done.status).toBe(CampaignStatus.PENDING_COMPLETION);
   });
@@ -367,7 +401,7 @@ describe("overview and marking done", () => {
     await svc.save(c.id, c.a.id, LEADER, goodResult(c.reportId));
     await prisma.campaignShift.update({ where: { id: c.b.id }, data: { minVolunteers: 0 } });
     // Its report was handled by no shift: it needs a reason (spec 5.1).
-    await campaignService.submitCampaignCompletionForAdminApproval(c.id, OWNER, undefined, [
+    await campaignService.submitCampaignCompletion(c.id, OWNER, undefined, [
       { reportId: c.otherReportId, reason: "Ca đã tắt" },
     ]);
   });
