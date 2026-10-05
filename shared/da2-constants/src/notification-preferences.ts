@@ -38,6 +38,10 @@ const ADMIN_ONLY_NOTIFICATION_KINDS = new Set([
   "CAMPAIGN_UPDATED_NEEDS_REVIEW",
   "CAMPAIGN_REREVIEW_EXPIRED",
   "CAMPAIGN_SHIFT_RESULT_MISSING",
+  // Result verification: the reporter's confirmation is a priority notice; admins' work queue.
+  "CAMPAIGN_MEETING_POINT_CONFIRM_REQUEST",
+  "CAMPAIGN_MEETING_POINT_CONFIRM_REMINDER",
+  "CAMPAIGN_MEETING_POINT_FLAGGED",
   "ORGANIZATION_CONTACT_VERIFY",
   "ORGANIZATION_APPROVED",
   "ORGANIZATION_REJECTED",
@@ -84,8 +88,11 @@ export function notificationKindToPreferenceKey(
     case "CAMPAIGN_DONE":
       return "campaignDone";
     case "CAMPAIGN_COMPLETION_APPROVED_BY_ADMIN":
+    case "CAMPAIGN_RESULT_VERIFIED":
       return "campaignDone";
     case "CAMPAIGN_COMPLETION_REJECTED_BY_ADMIN":
+    case "CAMPAIGN_RESULT_REJECTED":
+    case "CAMPAIGN_MEETING_POINT_REJECTED":
       return "campaignCompletionRejected";
     case "VOLUNTEER_REQUEST":
     case "CAMPAIGN_REGISTRATION_DIGEST":

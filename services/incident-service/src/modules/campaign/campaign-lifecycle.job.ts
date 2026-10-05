@@ -3,6 +3,7 @@ import { sendRegistrationDigests } from "./campaign_registration/registration-di
 import { sendShiftReminders } from "./campaign_registration/shift-reminders";
 import { sendOverMaxAlerts, sendUnderstaffedAlerts } from "./campaign_registration/staffing-alerts";
 import { sendShiftResultReminders } from "./campaign_shift_result/shift-result-reminders";
+import { runResultVerificationSweep } from "./campaign_verification/verification-jobs";
 
 const INTERVAL_MS = Number(
   process.env.CAMPAIGN_LIFECYCLE_INTERVAL_MS ?? 15 * 60 * 1000,
@@ -42,6 +43,12 @@ async function tick(): Promise<void> {
     if (resultReminders > 0) {
       console.log(`[CampaignLifecycle] ${resultReminders} shift(s) reminded of a missing result`);
     }
+    const verification = await runResultVerificationSweep();
+    if (verification.closed + verification.expiredFlags + verification.reminded + verification.decided > 0) {
+      console.log(
+        `[CampaignLifecycle] result verification: ${verification.closed} window(s) closed, ${verification.expiredFlags} flag(s) expired, ${verification.reminded} reporter(s) reminded, ${verification.decided} campaign(s) decided`,
+      );
+    }
     const digests = await sendRegistrationDigests();
     if (digests > 0) {
       console.log(`[CampaignLifecycle] registration digest sent for ${digests} campaign(s)`);
@@ -60,7 +67,9 @@ async function tick(): Promise<void> {
  * digest hour it also sends managers the day's registration digest; it also tells managers about
  * shifts short of volunteers 72 h before their day, and shifts over their expected maximum; and
  * reminds volunteers 24 h and 1 h before each day's gathering time, and reminds leaders and
- * managers daily of shifts still waiting for their result 24 h after their end. Every 15 minutes by default, so a campaign expires close to its start.
+ * managers daily of shifts still waiting for their result 24 h after their end. It also runs result
+ * verification: closes 72 h voting windows, rejects flagged trash points the admin left for 48 h,
+ * reminds original reporters once, and decides the campaigns. Every 15 minutes by default, so a campaign expires close to its start.
  */
 export function startCampaignLifecycleJob(): void {
   if (process.env.CAMPAIGN_LIFECYCLE_ENABLED === "false") {

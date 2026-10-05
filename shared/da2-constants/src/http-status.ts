@@ -477,6 +477,56 @@ export const HTTP_STATUS = {
     "This completion was already rejected 3 times; approve or cancel the campaign",
     "CAMPAIGN_COMPLETION_REJECT_LIMIT",
   ),
+  CAMPAIGN_COMPLETION_NOT_AWAITING_ADMIN: createStatus(
+    409,
+    "Result verification decides this campaign; the admin approves only once it waits for them",
+    "CAMPAIGN_COMPLETION_NOT_AWAITING_ADMIN",
+  ),
+  CAMPAIGN_COMPLETION_VERIFICATION_GONE: createStatus(
+    410,
+    "Residents now verify each meeting point; use PUT /campaigns/:id/verification/:meetingPointId/vote",
+    "CAMPAIGN_COMPLETION_VERIFICATION_GONE",
+  ),
+  RESULT_PHOTO_INVALID: createStatus(
+    422,
+    "The result photo is missing, too large or not an image",
+    "RESULT_PHOTO_INVALID",
+  ),
+  MEETING_POINT_VOTE_CLOSED: createStatus(
+    409,
+    "Voting on this meeting point is closed",
+    "MEETING_POINT_VOTE_CLOSED",
+  ),
+  MEETING_POINT_VOTE_NOT_ALLOWED: createStatus(
+    403,
+    "Members of the organization, the campaign's managers and its volunteers cannot vote",
+    "MEETING_POINT_VOTE_NOT_ALLOWED",
+  ),
+  MEETING_POINT_VOTE_REASON_REQUIRED: createStatus(
+    422,
+    "Saying a meeting point is not clean needs a note or a photo",
+    "MEETING_POINT_VOTE_REASON_REQUIRED",
+  ),
+  MEETING_POINT_VOTE_REPORTS_REQUIRED: createStatus(
+    422,
+    "Saying a meeting point is not clean needs the trash points that are not clean (report_ids of this round)",
+    "MEETING_POINT_VOTE_REPORTS_REQUIRED",
+  ),
+  MEETING_POINT_REJECT_REPORTS_REQUIRED: createStatus(
+    422,
+    "Rejecting a meeting point needs the trash points that did not pass (report_ids of this round)",
+    "MEETING_POINT_REJECT_REPORTS_REQUIRED",
+  ),
+  MEETING_POINT_VOTE_LIMIT: createStatus(
+    429,
+    "You have reached the number of votes allowed per day",
+    "MEETING_POINT_VOTE_LIMIT",
+  ),
+  MEETING_POINT_NOT_FLAGGED: createStatus(
+    409,
+    "Only a flagged meeting point can be decided by the admin",
+    "MEETING_POINT_NOT_FLAGGED",
+  ),
   CAMPAIGN_MANAGER_LEADS_SHIFTS: createStatus(
     409,
     "This manager still leads upcoming shifts; assign another leader first",

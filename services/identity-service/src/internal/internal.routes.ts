@@ -308,6 +308,68 @@ router.post(
   },
 );
 
+/** Metres between two WGS84 points (Haversine). */
+function distanceMeters(
+  a: { latitude: number; longitude: number },
+  b: { latitude: number; longitude: number },
+): number {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(b.latitude - a.latitude);
+  const dLng = toRad(b.longitude - a.longitude);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(a.latitude)) * Math.cos(toRad(b.latitude)) * Math.sin(dLng / 2) ** 2;
+  return 2 * 6_371_000 * Math.asin(Math.sqrt(h));
+}
+
+/**
+ * Incident-service, result verification: what a vote's weight depends on. The account's age,
+ * whether its email is verified, and how far its saved location is from the trash point
+ * (null without a saved location).
+ */
+router.post(
+  "/users/vote-profile",
+  body("userId").isUUID(),
+  body("latitude").isFloat({ min: -90, max: 90 }),
+  body("longitude").isFloat({ min: -180, max: 180 }),
+  async (req, res): Promise<void> => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
+      return;
+    }
+    const { userId, latitude, longitude } = req.body as {
+      userId: string;
+      latitude: number;
+      longitude: number;
+    };
+    try {
+      const user = await userRepository.findById(userId);
+      if (!user) {
+        sendError(res, HTTP_STATUS.NOT_FOUND.withMessage("User not found"));
+        return;
+      }
+      const savedLocationDistanceM =
+        user.latitude != null && user.longitude != null
+          ? Math.round(
+              distanceMeters(
+                { latitude: Number(latitude), longitude: Number(longitude) },
+                { latitude: user.latitude, longitude: user.longitude },
+              ),
+            )
+          : null;
+      sendSuccess(res, HTTP_STATUS.OK, {
+        createdAt: user.createdAt,
+        emailVerified: user.emailVerified,
+        savedLocationDistanceM,
+      });
+    } catch (error) {
+      console.error("Internal users vote-profile error:", error);
+      sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+    }
+  },
+);
+
 router.post(
   "/users/by-ids",
   body("ids").isArray({ min: 1, max: 100 }),
