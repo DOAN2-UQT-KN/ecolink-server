@@ -18,17 +18,20 @@ import {
   startCampaignLifecycleJob,
   stopCampaignLifecycleJob,
 } from "./modules/campaign/campaign-lifecycle.job";
+import { startSosJob, stopSosJob } from "./modules/sos/sos.job";
 
 console.log("Worker started");
 startAllQueues();
 startOutboxRelay();
 startOwnerConfirmationExpiryJob();
 startCampaignLifecycleJob();
+startSosJob();
 
 const shutdown = async (signal: string): Promise<void> => {
   console.log(`[Worker] received ${signal}, shutting down`);
   stopOwnerConfirmationExpiryJob();
   stopCampaignLifecycleJob();
+  stopSosJob();
   await stopOutboxRelay();
   await prisma.$disconnect();
   process.exit(0);

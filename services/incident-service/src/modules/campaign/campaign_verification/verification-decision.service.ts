@@ -3,6 +3,10 @@ import {
   CAMPAIGN_COMPLETION_REPORT_STATUS,
   CampaignStatus,
   MEETING_POINT_STATUS,
+  SOS_LIVE_STATES,
+  SOS_RESOLUTION_CODE,
+  SOS_RESPONDER_STATUS,
+  SOS_STATE,
 } from "@da2/constants";
 import prisma from "../../../config/prisma.client";
 import { HttpError } from "../../../constants/http-status";
@@ -109,7 +113,7 @@ export async function prepareCompletionPayout(campaignId: string, difficulty: nu
 /**
  * Completes a campaign waiting for completion, by result verification (system) or the admin:
  * trash points declared cleaned are done; partly done, unhandled and anything else the campaign
- * held go back to the waiting list; SOS closed; green points emitted. Runs inside `tx`.
+ * held go back to the waiting list; live SOS resolved (handled); green points emitted. Runs inside `tx`.
  */
 export async function completeCampaign(
   tx: Tx,
@@ -154,10 +158,29 @@ export async function completeCampaign(
       data: { campaignId: null, status: ReportStatus._STATUS_TODO, ...by },
     });
   }
-  await tx.sos.updateMany({
-    where: { campaignId: id, deletedAt: null, status: { not: GlobalStatus._STATUS_COMPLETED } },
-    data: { status: GlobalStatus._STATUS_COMPLETED, ...by },
+  // SOS still open close as handled; the people on their way stop (they may respond elsewhere).
+  const now = new Date();
+  const liveSos = await tx.sos.findMany({
+    where: { campaignId: id, deletedAt: null, state: { in: SOS_LIVE_STATES } },
+    select: { id: true },
   });
+  if (liveSos.length > 0) {
+    await tx.sos.updateMany({
+      where: { id: { in: liveSos.map((s) => s.id) } },
+      data: {
+        state: SOS_STATE.RESOLVED,
+        status: GlobalStatus._STATUS_COMPLETED,
+        resolutionCode: SOS_RESOLUTION_CODE.HANDLED,
+        resolvedAt: now,
+        resolvedBy: args.actorId,
+        ...by,
+      },
+    });
+    await tx.sosResponder.updateMany({
+      where: { sosId: { in: liveSos.map((s) => s.id) }, status: SOS_RESPONDER_STATUS.ON_THE_WAY },
+      data: { status: SOS_RESPONDER_STATUS.CANCELLED, cancelledAt: now },
+    });
+  }
   if (credits.length > 0) {
     await emitOutbox(tx, {
       aggregateType: "campaign",

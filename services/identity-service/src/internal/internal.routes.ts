@@ -325,7 +325,7 @@ function distanceMeters(
 /**
  * Incident-service, result verification: what a vote's weight depends on. The account's age,
  * whether its email is verified, and how far its saved location is from the trash point
- * (null without a saved location).
+ * (null without a saved location). SOS uses the same profile: verified email and phone number.
  */
 router.post(
   "/users/vote-profile",
@@ -362,6 +362,7 @@ router.post(
         createdAt: user.createdAt,
         emailVerified: user.emailVerified,
         savedLocationDistanceM,
+        phoneNumber: user.phoneNumber ?? null,
       });
     } catch (error) {
       console.error("Internal users vote-profile error:", error);
