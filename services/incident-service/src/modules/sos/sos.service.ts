@@ -119,11 +119,13 @@ export function normalizeSosDetails(
     return { peopleNeeded: people, tools: [...new Set(tools as string[])], toolsNote: note || null };
   }
   if (type === SOS_TYPE.HAZARD) {
-    if (!(SOS_HAZARD_KINDS as readonly unknown[]).includes(d.hazardKind)) {
-      throw invalid(`hazard_kind must be among ${SOS_HAZARD_KINDS.join(", ")}`);
+    // `hazard_kind` (a single string) is still accepted from older clients.
+    const kinds = Array.isArray(d.hazardKinds) ? d.hazardKinds : d.hazardKind != null ? [d.hazardKind] : [];
+    if (kinds.length === 0 || kinds.some((k) => !(SOS_HAZARD_KINDS as readonly unknown[]).includes(k))) {
+      throw invalid(`hazard_kinds must be one or more of ${SOS_HAZARD_KINDS.join(", ")}`);
     }
     if (photoUrls.length === 0) throw new HttpError(HTTP_STATUS.SOS_PHOTO_REQUIRED);
-    return { hazardKind: d.hazardKind };
+    return { hazardKinds: [...new Set(kinds as string[])] };
   }
   if (!(SOS_MEDICAL_CONSCIOUSNESS as readonly unknown[]).includes(d.consciousness)) {
     throw invalid("consciousness must be conscious or unconscious");
@@ -196,6 +198,11 @@ export class SosService {
       ...(seeResponders ? active.map((r) => r.userId) : []),
     ]);
     const details = { ...((row.details ?? {}) as Record<string, unknown>) };
+    // SOS raised before hazard kinds became a list.
+    if (typeof details.hazardKind === "string") {
+      details.hazardKinds ??= [details.hazardKind];
+      delete details.hazardKind;
+    }
     if (row.type === SOS_TYPE.MEDICAL && !(privileged || responding || isCreator)) {
       details.consciousness = null;
       details.affected = null;

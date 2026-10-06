@@ -178,7 +178,7 @@ const medical = (s: Seed): CreateSosRequest => ({
 const hazard = (s: Seed): CreateSosRequest => ({
   campaignId: s.campaign.id,
   type: "hazard",
-  details: { hazardKind: "needles" },
+  details: { hazardKinds: ["needles"] },
   photoUrls: ["https://res.cloudinary.com/demo/image/upload/needles.jpg"],
 });
 
@@ -305,6 +305,23 @@ describe("details by type", () => {
       NOW,
     );
     expect(ok.details).toEqual({ peopleNeeded: null, tools: ["bags", "shovel"], toolsNote: "20 bao" });
+  });
+
+  it("hazard takes one or more kinds; the old single kind still works", async () => {
+    const s = await seed();
+    const two = await sosService.create(
+      { ...hazard(s), details: { hazardKinds: ["needles", "chemicals", "needles"] } },
+      { userId: s.V },
+      NOW,
+    );
+    expect(two.details).toEqual({ hazardKinds: ["needles", "chemicals"] });
+    for (const details of [{ hazardKinds: [] }, { hazardKinds: ["needles", "lava"] }, {}]) {
+      await expect(sosService.create({ ...hazard(s), details }, { userId: s.V }, NOW)).rejects.toMatchObject(
+        code("SOS_DETAILS_INVALID"),
+      );
+    }
+    const legacy = await sosService.create({ ...hazard(s), details: { hazardKind: "chemicals" } }, { userId: s.V }, NOW);
+    expect(legacy.details).toEqual({ hazardKinds: ["chemicals"] });
   });
 });
 

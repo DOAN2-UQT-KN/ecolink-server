@@ -14,7 +14,8 @@ export interface SosManpowerDetails {
   toolsNote: string | null;
 }
 export interface SosHazardDetails {
-  hazardKind: string;
+  /** One or more of `SOS_HAZARD_KINDS`. */
+  hazardKinds: string[];
 }
 export interface SosMedicalDetails {
   consciousness: "conscious" | "unconscious" | null;
