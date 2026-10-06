@@ -248,8 +248,6 @@ export class SosService {
           })
         : [],
       expiresAt: row.expiresAt,
-      claimedBy: row.claimedBy,
-      claimedAt: row.claimedAt,
       escalatedAt: row.escalatedAt,
       radiusKm: row.radiusKm,
       resolvedAt: row.resolvedAt,
@@ -260,7 +258,6 @@ export class SosService {
       permissions: {
         canRespond: respondable && !isCreator && !responding,
         canCancelResponse: live && responding,
-        canClaim: live && privileged && row.claimedAt == null,
         canUpdateLocation: live && isCreator,
         canResolve: live && (isCreator || privileged),
       },
@@ -499,20 +496,6 @@ export class SosService {
         distanceM,
         ...(arrives ? { status: SOS_RESPONDER_STATUS.ARRIVED, arrivedAt: now } : {}),
       },
-    });
-    return this.getDetail(id, actor);
-  }
-
-  /** "Nhận xử lý" by the team or an admin: no owner escalation, no hand-over to the admins. */
-  async claim(id: number, actor: SosActor, now = new Date()): Promise<SosDetail> {
-    const sos = await this.load(id);
-    if (!isPlatformAdmin(actor.role) && !(await this.isTeam(sos, actor.userId))) {
-      throw new HttpError(HTTP_STATUS.SOS_PERMISSION_DENIED);
-    }
-    if (!isLive(sos.state)) throw new HttpError(HTTP_STATUS.SOS_CLOSED);
-    await prisma.sos.updateMany({
-      where: { id, claimedAt: null },
-      data: { claimedBy: actor.userId, claimedAt: now, updatedBy: actor.userId },
     });
     return this.getDetail(id, actor);
   }

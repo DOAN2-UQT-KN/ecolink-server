@@ -206,11 +206,6 @@ export class SosController {
     }),
   );
 
-  /** PUT /api/v1/sos/:id/claim — "Nhận xử lý". */
-  claim = this.action("Claim SOS", [sosIdParam], (req, actor) =>
-    sosService.claim(Number(req.params.id), actor),
-  );
-
   /** PUT /api/v1/sos/:id/location — the reporter moves the SOS. */
   updateLocation = this.action("Update SOS location", [sosIdParam, ...latLngBody], (req, actor) =>
     sosService.updateLocation(Number(req.params.id), actor, {

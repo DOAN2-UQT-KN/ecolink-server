@@ -270,7 +270,6 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
   "POST /api/v1/sos/:id/respond": { responseData: "SosDetail" },
   "DELETE /api/v1/sos/:id/respond": { responseData: "SosDetail" },
   "PUT /api/v1/sos/:id/respond/location": { responseData: "SosDetail" },
-  "PUT /api/v1/sos/:id/claim": { responseData: "SosDetail" },
   "PUT /api/v1/sos/:id/location": { responseData: "SosDetail" },
   "PUT /api/v1/sos/:id/resolve": { responseData: "SosDetail" },
   "PUT /api/v1/sos/:id/solved": { responseData: "SosDetail" },

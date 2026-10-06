@@ -94,13 +94,13 @@ export const SOS_NEARBY_ORG_RADIUS_KM = 5;
 
 /** Manpower: widen the radius and ask nearby organizations when still short after this. */
 export const SOS_EXPAND_AFTER_MIN = 15;
-/** Manpower / hazard: tell the owners when nobody responded or claimed it after this. */
+/** Manpower / hazard: tell the owners when nobody responded (still open) after this. */
 export const SOS_OWNER_ESCALATE_MIN = 10;
 /** Manpower: expires this long after creation (env SOS_MANPOWER_TTL_H, 3–6) or at its shift's end. */
 export const SOS_MANPOWER_TTL_H = 4;
 export const SOS_MANPOWER_TTL_H_MIN = 3;
 export const SOS_MANPOWER_TTL_H_MAX = 6;
-/** Hazard: handed to the admins when nobody claimed it after this. */
+/** Hazard: handed to the admins when still not resolved after this. */
 export const SOS_HAZARD_ESCALATE_H = 2;
 
 /** SOS notifications an available volunteer gets per day from other campaigns (medical not counted). */

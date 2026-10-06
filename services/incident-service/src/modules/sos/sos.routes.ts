@@ -31,9 +31,6 @@ router.post("/:id/respond", authenticate, sosController.respond);
 router.delete("/:id/respond", authenticate, sosController.cancelResponse);
 router.put("/:id/respond/location", authenticate, sosController.responderLocation);
 
-/** @route PUT /api/v1/sos/:id/claim — "Nhận xử lý" (team or admin). */
-router.put("/:id/claim", authenticate, sosController.claim);
-
 /** @route PUT /api/v1/sos/:id/location — the reporter moves the SOS. */
 router.put("/:id/location", authenticate, sosController.updateLocation);
 

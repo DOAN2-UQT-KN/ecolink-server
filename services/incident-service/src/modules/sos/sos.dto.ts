@@ -91,7 +91,6 @@ export interface SosResponderView {
 export interface SosPermissions {
   canRespond: boolean;
   canCancelResponse: boolean;
-  canClaim: boolean;
   canUpdateLocation: boolean;
   canResolve: boolean;
 }
@@ -115,8 +114,6 @@ export interface SosDetail extends SosSummary {
   reporter: { id: string; name: string | null; avatar: string | null } | null;
   responders: SosResponderView[];
   expiresAt: Date | null;
-  claimedBy: string | null;
-  claimedAt: Date | null;
   escalatedAt: Date | null;
   radiusKm: number;
   resolvedAt: Date | null;

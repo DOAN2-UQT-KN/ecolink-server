@@ -34,13 +34,13 @@ export interface SosSweepResult {
 }
 
 /**
- * One pass of the SOS job; each step claims its SOS with a compare-and-set update, so two workers
+ * One pass of the SOS job; each step takes its SOS with a compare-and-set update, so two workers
  * never send the same step twice:
- *   1. manpower / hazard still open (nobody coming) and unclaimed after 10 min: the owners hear
+ *   1. manpower / hazard still open (nobody coming) after 10 min: the owners hear
  *   2. manpower short of people after 15 min: radius 5 km, new "available" volunteers invited,
  *      then priority 2 (nearby organizations and admins)
  *   3. manpower past `expires_at`: expired; the people on the way hear
- *   4. hazard unclaimed after 2 h: escalated to the admins
+ *   4. hazard not resolved after 2 h: escalated to the admins
  */
 export async function runSosSweep(now = new Date()): Promise<SosSweepResult> {
   const result: SosSweepResult = { ownersNotified: 0, expanded: 0, expired: 0, escalated: 0 };
@@ -50,7 +50,6 @@ export async function runSosSweep(now = new Date()): Promise<SosSweepResult> {
       deletedAt: null,
       type: { in: [SOS_TYPE.MANPOWER, SOS_TYPE.HAZARD] },
       state: SOS_STATE.OPEN,
-      claimedAt: null,
       ownerNotifiedAt: null,
       createdAt: { lte: new Date(now.getTime() - SOS_OWNER_ESCALATE_MIN * MIN_MS) },
     },
@@ -59,7 +58,7 @@ export async function runSosSweep(now = new Date()): Promise<SosSweepResult> {
   for (const { id } of toOwners) {
     await prisma.$transaction(async (tx) => {
       const won = await tx.sos.updateMany({
-        where: { id, state: SOS_STATE.OPEN, claimedAt: null, ownerNotifiedAt: null },
+        where: { id, state: SOS_STATE.OPEN, ownerNotifiedAt: null },
         data: { ownerNotifiedAt: now },
       });
       if (won.count === 0) return;
@@ -127,7 +126,6 @@ export async function runSosSweep(now = new Date()): Promise<SosSweepResult> {
       deletedAt: null,
       type: SOS_TYPE.HAZARD,
       state: { in: SOS_LIVE_STATES.filter((s) => s !== SOS_STATE.ESCALATED) },
-      claimedAt: null,
       escalatedAt: null,
       createdAt: { lte: new Date(now.getTime() - SOS_HAZARD_ESCALATE_H * 60 * MIN_MS) },
     },
@@ -136,7 +134,7 @@ export async function runSosSweep(now = new Date()): Promise<SosSweepResult> {
   for (const { id } of toEscalate) {
     await prisma.$transaction(async (tx) => {
       const won = await tx.sos.updateMany({
-        where: { id, claimedAt: null, escalatedAt: null, state: { in: [SOS_STATE.OPEN, SOS_STATE.HELPING] } },
+        where: { id, escalatedAt: null, state: { in: [SOS_STATE.OPEN, SOS_STATE.HELPING] } },
         data: { state: SOS_STATE.ESCALATED, escalatedAt: now },
       });
       if (won.count === 0) return;

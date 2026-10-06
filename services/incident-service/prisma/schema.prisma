@@ -713,9 +713,6 @@ model Sos {
 
   /// Manpower only: the earlier of creation + SOS_MANPOWER_TTL_H and its shift's end.
   expiresAt       DateTime? @map("expires_at")
-  /// "Nhận xử lý" by the team or an admin: stops the owner escalation and the hazard hand-over.
-  claimedBy       String?   @map("claimed_by") @db.Uuid
-  claimedAt       DateTime? @map("claimed_at")
   /// Owners told nobody responded after SOS_OWNER_ESCALATE_MIN (or at creation for medical).
   ownerNotifiedAt DateTime? @map("owner_notified_at")
   /// Priority 2 (nearby organizations and admins) sent.

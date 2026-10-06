@@ -8,7 +8,7 @@
  *     "available" volunteers in the radius and their hours under the daily cap (medical not
  *     counted), hazard only warns, nearby organizations and admins at once for hazard / medical
  *   - the job: owners after 10 min, 5 km + priority 2 after 15 min, expiry, hazard to the admins
- *     after 2 h; claiming stops it
+ *     after 2 h unless resolved
  *   - responders: helping / open, one SOS at a time, arrived within 50 m, no more invites once enough
  *   - resolve: the people on the way hear; 3 false alarms in 30 days go to the admins
  *   - privacy of the detail; a completed campaign resolves its live SOS
@@ -427,24 +427,25 @@ describe("the SOS job", () => {
     expect((await prisma.sos.findUniqueOrThrow({ where: { id: sos.id } })).state).toBe("expired");
   });
 
-  it("hazard goes to the admins after 2 h unless claimed; claiming also stops the owner escalation", async () => {
+  it("hazard goes to the admins after 2 h unless resolved; someone coming stops the owner escalation", async () => {
     const s = await seed();
     const left = await sosService.create(hazard(s), { userId: s.V }, NOW);
-    const claimed = await sosService.create(hazard(s), { userId: s.V2 }, NOW);
-    await expect(sosService.claim(claimed.id, { userId: s.V })).rejects.toMatchObject(code("SOS_PERMISSION_DENIED"));
-    const c = await sosService.claim(claimed.id, { userId: s.LEADER }, at(MIN));
-    expect(c.claimedBy).toBe(s.LEADER);
+    const resolved = await sosService.create(hazard(s), { userId: s.V2 }, NOW);
+    await sosService.resolve(resolved.id, { userId: s.V2 }, { code: "handled" }, at(MIN));
+    const helped = await sosService.create(manpower(s), { userId: s.V2 }, NOW);
+    await sosService.respond(helped.id, { userId: randomUUID() }, at(2 * MIN));
 
     await runSosSweep(at(11 * MIN));
     expect(await usersOf(left.id, "SOS_OWNER_ESCALATION")).toEqual([s.OWNER]);
-    expect(await usersOf(claimed.id, "SOS_OWNER_ESCALATION")).toEqual([]);
+    expect(await usersOf(resolved.id, "SOS_OWNER_ESCALATION")).toEqual([]);
+    expect(await usersOf(helped.id, "SOS_OWNER_ESCALATION")).toEqual([]);
 
     await runSosSweep(at(2 * HOUR + MIN));
     const row = await prisma.sos.findUniqueOrThrow({ where: { id: left.id } });
     expect(row.state).toBe("escalated");
     expect(row.escalatedAt).not.toBeNull();
     expect(await usersOf(left.id, "SOS_ESCALATED")).toEqual([ADMIN]);
-    expect((await prisma.sos.findUniqueOrThrow({ where: { id: claimed.id } })).state).toBe("open");
+    expect((await prisma.sos.findUniqueOrThrow({ where: { id: resolved.id } })).state).toBe("resolved");
   });
 });
 
