@@ -59,6 +59,8 @@ import { completeCampaign } from "../modules/campaign/campaign_verification/veri
 import { resolveSosEligibility } from "../modules/sos/sos-eligibility";
 import { sosAvailabilityService } from "../modules/sos/sos-availability.service";
 import { runSosSweep } from "../modules/sos/sos.job";
+import { sosController } from "../modules/sos/sos.controller";
+import type { ValidationChain } from "express-validator";
 import { sosService } from "../modules/sos/sos.service";
 import type { CreateSosRequest } from "../modules/sos/sos.dto";
 
@@ -561,7 +563,7 @@ describe("privacy", () => {
       { campaignId: s.campaign.id, states: ["open", "helping", "escalated"], page: 1, limit: 20 },
       { userId: randomUUID() },
     );
-    expect(list.items[0]).not.toHaveProperty("phone");
+    expect(list.items[0]).toMatchObject({ phone: null, reporter: null });
     expect(list.items[0]).not.toHaveProperty("details");
   });
 
@@ -575,6 +577,124 @@ describe("privacy", () => {
     );
     expect(list.items.map((i) => i.id)).toEqual([med.id, m.id]);
     expect(list.total).toBe(2);
+  });
+});
+
+/** Runs `GET /sos` through the controller (validation + query parsing) as `actor`. */
+async function listViaController(query: Record<string, string>, actor: { userId: string; role?: string }) {
+  const chain = sosController.listSos;
+  const req = { query, body: {}, params: {}, user: actor } as never;
+  for (const v of chain.slice(0, -1)) await (v as ValidationChain).run(req);
+  let status = 0;
+  let body: { data?: { items: Array<{ id: number; state: string }>; total: number } } = {};
+  const res = {
+    status(code: number) {
+      status = code;
+      return this;
+    },
+    json(payload: typeof body) {
+      body = payload;
+      return this;
+    },
+  };
+  await (chain[chain.length - 1] as (req: never, res: never) => Promise<void>)(req, res as never);
+  return { status, data: body.data };
+}
+
+describe("the SOS list", () => {
+  const ALL = ["open", "helping", "escalated", "resolved", "expired"] as never[];
+
+  it("filters by type, by states (all), and by search on the title or the id", async () => {
+    const s = await seed();
+    const title = `Nhặt rác ${randomUUID().slice(0, 8)}`;
+    await prisma.campaign.update({ where: { id: s.campaign.id }, data: { title } });
+    const m = await sosService.create(manpower(s), { userId: s.V }, NOW);
+    const hz = await sosService.create(hazard(s), { userId: s.V }, at(MIN));
+    const closed = await sosService.create(manpower(s), { userId: s.V2 }, at(2 * MIN));
+    await sosService.resolve(closed.id, { userId: s.MGR }, { code: "false_alarm" }, at(3 * MIN));
+    const base = { campaignId: s.campaign.id, page: 1, limit: 20 };
+    const viewer = { userId: randomUUID() };
+
+    const hazards = await sosService.list({ ...base, states: ["open", "helping", "escalated"], type: "hazard" }, viewer);
+    expect(hazards.items.map((i) => i.id)).toEqual([hz.id]);
+
+    const live = await sosService.list({ ...base, states: ["open", "helping", "escalated"] }, viewer);
+    expect(live.items.map((i) => i.id).sort()).toEqual([m.id, hz.id].sort());
+    const every = await sosService.list({ ...base, states: ALL }, viewer);
+    expect(every.total).toBe(3);
+    // Public fields on every row.
+    expect(every.items.find((i) => i.id === closed.id)).toMatchObject({
+      campaignTitle: title,
+      reporterRole: "volunteer",
+      state: "resolved",
+      resolutionCode: "false_alarm",
+      resolvedAt: at(3 * MIN),
+    });
+
+    // Title, case-insensitive, without the campaign filter; LIKE wildcards are literal.
+    const byTitle = await sosService.list({ states: ALL, page: 1, limit: 20, search: title.toUpperCase() }, viewer);
+    expect(byTitle.items.map((i) => i.id).sort()).toEqual([m.id, hz.id, closed.id].sort());
+    const wildcard = await sosService.list({ ...base, states: ALL, search: "%" }, viewer);
+    expect(wildcard.total).toBe(0);
+    const byId = await sosService.list({ ...base, states: ALL, search: String(hz.id) }, viewer);
+    expect(byId.items.map((i) => i.id)).toEqual([hz.id]);
+
+    // Through the controller: `states=all`, `type`, `search`; an unknown type is refused.
+    const viaAll = await listViaController({ campaign_id: s.campaign.id, states: "all" }, viewer);
+    expect(viaAll.status).toBe(200);
+    expect(viaAll.data?.total).toBe(3);
+    const viaDefault = await listViaController({ campaign_id: s.campaign.id }, viewer);
+    expect(viaDefault.data?.items.map((i) => i.id).sort()).toEqual([m.id, hz.id].sort());
+    const viaType = await listViaController(
+      { campaign_id: s.campaign.id, states: "all", type: "manpower", search: title.slice(3) },
+      viewer,
+    );
+    expect(viaType.data?.items.map((i) => i.id).sort()).toEqual([m.id, closed.id].sort());
+    expect((await listViaController({ type: "fire" }, viewer)).status).toBe(400);
+  });
+
+  it("escalated first, then medical, then newest", async () => {
+    const s = await seed();
+    const old = await sosService.create(hazard(s), { userId: s.V }, at(-10 * MIN));
+    const m = await sosService.create(manpower(s), { userId: s.V }, NOW);
+    const med = await sosService.create(medical(s), { userId: s.V2 }, at(-5 * MIN));
+    await prisma.sos.update({ where: { id: old.id }, data: { state: "escalated", escalatedAt: NOW } });
+    const list = await sosService.list(
+      { campaignId: s.campaign.id, states: ["open", "helping", "escalated"], page: 1, limit: 20 },
+      null,
+    );
+    expect(list.items.map((i) => i.id)).toEqual([old.id, med.id, m.id]);
+  });
+
+  it("the reporter and the phone only for the team and admins", async () => {
+    const s = await seed();
+    const a = await sosService.create(manpower(s), { userId: s.V }, NOW);
+    const b = await sosService.create(medical(s), { userId: s.V2 }, NOW);
+    const query = { campaignId: s.campaign.id, states: ["open", "helping", "escalated"] as never[], page: 1, limit: 20 };
+    const reporterOf = (id: string) => ({ id, name: expect.any(String), avatar: null });
+
+    for (const viewer of [{ userId: randomUUID() }, null, { userId: s.OTHER_OWNER }]) {
+      const list = await sosService.list(query, viewer);
+      expect(list.items).toHaveLength(2);
+      for (const item of list.items) expect(item).toMatchObject({ reporter: null, phone: null });
+    }
+    // The reporter sees their own row's public fields, not their own phone.
+    expect((await sosService.list(query, { userId: s.V })).items.every((i) => i.phone === null)).toBe(true);
+
+    for (const viewer of [{ userId: s.MGR }, { userId: s.OWNER }, { userId: s.LEADER }, { userId: randomUUID(), role: "admin" }]) {
+      const list = await sosService.list(query, viewer);
+      const byId = new Map(list.items.map((i) => [i.id, i]));
+      expect(byId.get(a.id)).toMatchObject({ phone: "0901234567", reporter: reporterOf(s.V) });
+      expect(byId.get(b.id)).toMatchObject({ phone: "0901234567", reporter: reporterOf(s.V2) });
+    }
+
+    // The team of another campaign is an outsider here.
+    const t = await seed();
+    const list = await sosService.list(
+      { states: ["open", "helping", "escalated"] as never[], page: 1, limit: 100, search: String(a.id) },
+      { userId: t.MGR },
+    );
+    expect(list.items.find((i) => i.id === a.id)).toMatchObject({ reporter: null, phone: null });
   });
 });
 

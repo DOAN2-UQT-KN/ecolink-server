@@ -76,7 +76,14 @@ const SOS_INCLUDE = {
 } satisfies Prisma.SosInclude;
 
 type SosRow = Prisma.SosGetPayload<{ include: typeof SOS_INCLUDE }>;
-type SummaryRow = Prisma.SosGetPayload<{ include: { responders: true } }>;
+const SUMMARY_INCLUDE = {
+  responders: true,
+  campaign: { select: { id: true, title: true, organizationId: true, createdBy: true } },
+  shift: { select: { leaderUserId: true } },
+} satisfies Prisma.SosInclude;
+
+type SummaryRow = Prisma.SosGetPayload<{ include: { responders: true } }> & { campaign: { title: string } };
+type ReporterProfile = { name?: string | null; avatar?: string | null } | undefined;
 
 const isLive = (state: string) => (SOS_LIVE_STATES as string[]).includes(state);
 
@@ -141,11 +148,20 @@ const peopleNeededOf = (details: unknown): number | null => {
   return typeof v === "number" ? v : null;
 };
 
-function toSummary(row: SummaryRow, viewerId: string | null): SosSummary {
+/**
+ * `privileged` (admin or the SOS's team) adds the reporter and the phone; everyone else gets null.
+ */
+function toSummary(
+  row: SummaryRow,
+  viewerId: string | null,
+  privileged = false,
+  reporterProfile?: ReporterProfile,
+): SosSummary {
   const mine = viewerId ? row.responders.find((r) => r.userId === viewerId) : undefined;
   return {
     id: row.id,
     campaignId: row.campaignId,
+    campaignTitle: row.campaign.title,
     shiftId: row.shiftId,
     meetingPointId: row.meetingPointId,
     type: row.type as SosTypeValue,
@@ -160,6 +176,14 @@ function toSummary(row: SummaryRow, viewerId: string | null): SosSummary {
     isMine: viewerId != null && row.createdBy === viewerId,
     myResponse:
       mine && ACTIVE_RESPONSES.includes(mine.status) ? (mine.status as "on_the_way" | "arrived") : null,
+    reporterRole: row.reporterRole as SosReporterRoleValue | null,
+    resolvedAt: row.resolvedAt,
+    resolutionCode: row.resolutionCode as SosResolutionCodeValue | null,
+    phone: privileged ? row.phone : null,
+    reporter:
+      privileged && row.createdBy
+        ? { id: row.createdBy, name: reporterProfile?.name ?? null, avatar: reporterProfile?.avatar ?? null }
+        : null,
   };
 }
 
@@ -212,7 +236,7 @@ export class SosService {
     const respondable = row.type !== SOS_TYPE.HAZARD && (row.state === SOS_STATE.OPEN || row.state === SOS_STATE.HELPING);
 
     return {
-      ...toSummary(row, userId),
+      ...toSummary(row, userId, privileged, reporterProfile),
       campaign: {
         id: row.campaign.id,
         title: row.campaign.title,
@@ -226,15 +250,9 @@ export class SosService {
       meetingPoint: point
         ? { id: point.id, name: point.name, latitude: point.latitude, longitude: point.longitude }
         : null,
-      reporterRole: row.reporterRole as SosReporterRoleValue | null,
       details,
       description: row.content,
       photoUrls: row.photoUrls,
-      phone: privileged ? row.phone : null,
-      reporter:
-        privileged && row.createdBy
-          ? { id: row.createdBy, name: reporterProfile?.name ?? null, avatar: reporterProfile?.avatar ?? null }
-          : null,
       responders: seeResponders
         ? active.map((r) => {
             const p = getUserProfile(profiles, r.userId);
@@ -250,9 +268,7 @@ export class SosService {
       expiresAt: row.expiresAt,
       escalatedAt: row.escalatedAt,
       radiusKm: row.radiusKm,
-      resolvedAt: row.resolvedAt,
       resolvedBy: row.resolvedBy,
-      resolutionCode: row.resolutionCode as SosResolutionCodeValue | null,
       resolutionNote: row.resolutionNote,
       locationUpdatedAt: row.locationUpdatedAt,
       permissions: {
@@ -373,31 +389,74 @@ export class SosService {
         )
       ORDER BY created_at DESC
       LIMIT 10`;
-    return this.summaries(rows.map((r) => r.id), actor.userId);
+    return this.summaries(rows.map((r) => r.id), actor);
   }
 
-  private async summaries(ids: number[], viewerId: string | null): Promise<SosSummary[]> {
+  /**
+   * Rows in the order of `ids`. The reporter and the phone only for an admin or the SOS's team
+   * (same rule as `isTeam`): one `canManage` per campaign and one profile batch per call.
+   */
+  private async summaries(ids: number[], actor: SosActor | null): Promise<SosSummary[]> {
     if (ids.length === 0) return [];
     const rows = await prisma.sos.findMany({
       where: { id: { in: ids } },
-      include: { responders: true },
+      include: SUMMARY_INCLUDE,
     });
+    const viewerId = actor?.userId ?? null;
+    const isAdmin = isPlatformAdmin(actor?.role);
+    const manages = new Map<string, Promise<boolean>>();
+    const privileged = new Map<number, boolean>();
+    if (viewerId) {
+      await Promise.all(
+        rows.map(async (row) => {
+          let team = isAdmin || row.shift?.leaderUserId === viewerId;
+          if (!team) {
+            let check = manages.get(row.campaignId);
+            if (!check) {
+              check = campaignAccessService.canManage(row.campaign, viewerId);
+              manages.set(row.campaignId, check);
+            }
+            team = await check;
+          }
+          privileged.set(row.id, team);
+        }),
+      );
+    }
+    const reporterIds = [
+      ...new Set(rows.filter((r) => privileged.get(r.id) && r.createdBy).map((r) => r.createdBy as string)),
+    ];
+    const profiles = reporterIds.length > 0 ? await fetchOrganizationOwnersByUserIds(reporterIds) : null;
     const byId = new Map(rows.map((r) => [r.id, r]));
     return ids.flatMap((id) => {
       const row = byId.get(id);
-      return row ? [toSummary(row, viewerId)] : [];
+      if (!row) return [];
+      const priv = privileged.get(id) ?? false;
+      const profile = priv && profiles && row.createdBy ? getUserProfile(profiles, row.createdBy) : undefined;
+      return [toSummary(row, viewerId, priv, profile)];
     });
   }
 
   /**
-   * Map / list: live SOS by default, medical first, then newest. Only position, type, state and
-   * the counter: no phone, no names, no details (fixes ISSUE-S14).
+   * Map / list: live SOS by default; escalated first, then medical, then newest. Filters: type,
+   * `search` (campaign title, or the SOS id when it is a whole number). Position, type, state, the
+   * counter and the public closing fields for anyone; the reporter and the phone only for an admin
+   * or the SOS's team (ISSUE-S14).
    */
   async list(query: SosListQuery, actor: SosActor | null): Promise<SosListResult> {
     const { page, limit } = query;
     const conds: Prisma.Sql[] = [Prisma.sql`deleted_at IS NULL`];
     if (query.states.length > 0) conds.push(Prisma.sql`state IN (${Prisma.join(query.states)})`);
     if (query.campaignId) conds.push(Prisma.sql`campaign_id = ${query.campaignId}::uuid`);
+    if (query.type) conds.push(Prisma.sql`type = ${query.type}`);
+    const search = query.search?.trim();
+    if (search) {
+      const pattern = `%${search.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+      const byTitle = Prisma.sql`EXISTS (
+        SELECT 1 FROM campaigns c WHERE c.id = sos.campaign_id AND c.title ILIKE ${pattern}
+      )`;
+      const asId = /^\d{1,9}$/.test(search) ? Number(search) : null;
+      conds.push(asId !== null ? Prisma.sql`(${byTitle} OR sos.id = ${asId})` : byTitle);
+    }
     if (query.latitude !== undefined && query.longitude !== undefined) {
       conds.push(Prisma.sql`ST_DWithin(
         ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography,
@@ -409,11 +468,12 @@ export class SosService {
     const [rows, count] = await Promise.all([
       prisma.$queryRaw<Array<{ id: number }>>`
         SELECT id FROM sos WHERE ${where}
-        ORDER BY (type = ${SOS_TYPE.MEDICAL}) DESC, created_at DESC
+        ORDER BY (state = ${SOS_STATE.ESCALATED}) DESC, (type = ${SOS_TYPE.MEDICAL}) DESC,
+          created_at DESC, id DESC
         LIMIT ${limit} OFFSET ${(page - 1) * limit}`,
       prisma.$queryRaw<Array<{ count: number }>>`SELECT COUNT(*)::int AS count FROM sos WHERE ${where}`,
     ]);
-    const items = await this.summaries(rows.map((r) => r.id), actor?.userId ?? null);
+    const items = await this.summaries(rows.map((r) => r.id), actor);
     const total = Number(count[0]?.count ?? 0);
     return { items, sos: items, total, page, limit, totalPages: Math.ceil(total / limit) };
   }

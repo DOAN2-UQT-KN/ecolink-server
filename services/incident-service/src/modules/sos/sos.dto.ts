@@ -60,10 +60,14 @@ export interface SosEligibility {
   hourlyRemaining: number | null;
 }
 
-/** What anyone may see: position, type, state and the counter. */
+/**
+ * One row of the map / list: position, type, state, the counter and the closing fields for
+ * anyone; `reporter` and `phone` only for an admin or the SOS's team (null for everyone else).
+ */
 export interface SosSummary {
   id: number;
   campaignId: string;
+  campaignTitle: string;
   shiftId: string | null;
   meetingPointId: string | null;
   type: SosTypeValue;
@@ -78,6 +82,13 @@ export interface SosSummary {
   arrivedCount: number;
   isMine: boolean;
   myResponse: "on_the_way" | "arrived" | null;
+  reporterRole: SosReporterRoleValue | null;
+  resolvedAt: Date | null;
+  resolutionCode: SosResolutionCodeValue | null;
+  /** Admin or the SOS's team only. */
+  phone: string | null;
+  /** Admin or the SOS's team only. */
+  reporter: { id: string; name: string | null; avatar: string | null } | null;
 }
 
 export interface SosResponderView {
@@ -106,19 +117,14 @@ export interface SosDetail extends SosSummary {
   };
   shift: { id: string; name: string; startAt: Date; endAt: Date } | null;
   meetingPoint: { id: string; name: string | null; latitude: number; longitude: number } | null;
-  reporterRole: SosReporterRoleValue | null;
   details: Record<string, unknown>;
   description: string | null;
   photoUrls: string[];
-  phone: string | null;
-  reporter: { id: string; name: string | null; avatar: string | null } | null;
   responders: SosResponderView[];
   expiresAt: Date | null;
   escalatedAt: Date | null;
   radiusKm: number;
-  resolvedAt: Date | null;
   resolvedBy: string | null;
-  resolutionCode: SosResolutionCodeValue | null;
   resolutionNote: string | null;
   locationUpdatedAt: Date | null;
   permissions: SosPermissions;
@@ -127,7 +133,11 @@ export interface SosDetail extends SosSummary {
 
 export interface SosListQuery {
   campaignId?: string;
+  /** `states=all` arrives here as every state. */
   states: SosStateValue[];
+  type?: SosTypeValue;
+  /** Campaign title (case-insensitive), or the SOS id when it is a whole number. */
+  search?: string;
   latitude?: number;
   longitude?: number;
   /** Metres; only with latitude and longitude. */

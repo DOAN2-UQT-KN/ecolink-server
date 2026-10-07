@@ -152,26 +152,33 @@ export class SosController {
     },
   );
 
-  /** GET /api/v1/sos — live SOS by default, medical first. */
+  /**
+   * GET /api/v1/sos — live SOS by default (`states=all` for every state); `type`, `search`.
+   * Escalated first, then medical, then newest.
+   */
   listSos = this.action(
     "List SOS",
     [
       query(["campaign_id", "campaignId"]).optional().isUUID().withMessage("campaign_id must be a valid UUID"),
       query("states").optional().isString(),
+      query("type").optional().isIn(SOS_TYPES).withMessage(`type must be one of ${SOS_TYPES.join(", ")}`),
+      query("search").optional().isString().isLength({ max: 200 }),
       ...latLngQuery(false),
       query(["max_distance", "maxDistance"]).optional().isInt({ min: 1 }),
       query("page").optional().isInt({ min: 1 }),
       query("limit").optional().isInt({ min: 1, max: 100 }),
     ],
     async (req, actor) => {
-      const states = (q(req, "states", "states") ?? "")
-        .split(",")
-        .map((s) => s.trim())
-        .filter((s) => STATES.includes(s)) as SosStateValue[];
+      const requested = (q(req, "states", "states") ?? "").split(",").map((s) => s.trim());
+      const states = requested.includes("all")
+        ? (STATES as SosStateValue[])
+        : (requested.filter((s) => STATES.includes(s)) as SosStateValue[]);
       return sosService.list(
         {
           campaignId: q(req, "campaign_id", "campaignId"),
           states: states.length > 0 ? states : SOS_LIVE_STATES,
+          type: q(req, "type", "type") as SosTypeValue | undefined,
+          search: q(req, "search", "search")?.trim() || undefined,
           latitude: num(q(req, "latitude", "latitude")),
           longitude: num(q(req, "longitude", "longitude")),
           maxDistance: num(q(req, "max_distance", "maxDistance")),
