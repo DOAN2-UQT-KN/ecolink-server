@@ -679,22 +679,55 @@ model OrganizationInvitation {
   @@map("organization_invitations")
 }
 
-/// Emergency request created under a specific campaign.
+/// Emergency request raised at a running shift of a campaign (spec "Cải tiến tính năng SOS"):
+/// one of three types, sent to the team and then by priority further out; see `SOS_STATE`.
 model Sos {
   id         Int    @id @default(autoincrement())
   campaignId String @map("campaign_id") @db.Uuid
 
-  content       String
-  contentVi     String? @map("content_vi")
-  contentEn     String? @map("content_en")
-  phone         String  @db.VarChar(20)
-  address       String  @db.VarChar(500)
-  detailAddress String? @map("detail_address") @db.VarChar(255)
+  /// `SOS_TYPE`: manpower | hazard | medical.
+  type          String   @default("manpower") @db.VarChar(16)
+  /// Per type: { peopleNeeded?, tools?, toolsNote? } | { hazardKind } | { consciousness, affected }.
+  details       Json     @default("{}")
+  /// `SOS_STATE`: open | helping | resolved | expired | escalated.
+  state         String   @default("open") @db.VarChar(16)
+  /// Optional short description (the old free text).
+  content       String?
+  contentVi     String?  @map("content_vi")
+  contentEn     String?  @map("content_en")
+  /// The reporter's phone from their profile; shown to the team and the admins only.
+  phone         String?  @db.VarChar(20)
+  address       String   @db.VarChar(500)
+  detailAddress String?  @map("detail_address") @db.VarChar(255)
+  photoUrls     String[] @default([]) @map("photo_urls")
 
-  latitude  Float
-  longitude Float
+  shiftId        String? @map("shift_id") @db.Uuid
+  meetingPointId String? @map("meeting_point_id") @db.Uuid
+  /// `SOS_REPORTER_ROLE`: volunteer | leader | manager | resident.
+  reporterRole   String? @map("reporter_role") @db.VarChar(16)
 
-  status Int @default(12)
+  /// GPS of the reporter, or the shift's meeting point without one; the reporter may move it.
+  latitude          Float
+  longitude         Float
+  locationUpdatedAt DateTime? @map("location_updated_at")
+
+  /// Manpower only: the earlier of creation + SOS_MANPOWER_TTL_H and its shift's end.
+  expiresAt       DateTime? @map("expires_at")
+  /// Owners told nobody responded after SOS_OWNER_ESCALATE_MIN (or at creation for medical).
+  ownerNotifiedAt DateTime? @map("owner_notified_at")
+  /// Priority 2 (nearby organizations and admins) sent.
+  tier2SentAt     DateTime? @map("tier2_sent_at")
+  /// Radius of the invites to "available" volunteers: 3 km, widened to 5 km.
+  radiusKm        Float     @default(3) @map("radius_km")
+  escalatedAt     DateTime? @map("escalated_at")
+  resolvedBy      String?   @map("resolved_by") @db.Uuid
+  resolvedAt      DateTime? @map("resolved_at")
+  /// `SOS_RESOLUTION_CODE`: handled | false_alarm | not_real.
+  resolutionCode  String?   @map("resolution_code") @db.VarChar(20)
+  resolutionNote  String?   @map("resolution_note")
+
+  /// Kept for older clients: 1 while open, helping or escalated; 17 once closed.
+  status Int @default(1)
 
   createdBy String? @map("created_by") @db.Uuid
   updatedBy String? @map("updated_by") @db.Uuid
@@ -703,12 +736,75 @@ model Sos {
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
-  campaign Campaign @relation(fields: [campaignId], references: [id])
+  campaign     Campaign              @relation(fields: [campaignId], references: [id])
+  shift        CampaignShift?        @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+  meetingPoint CampaignMeetingPoint? @relation(fields: [meetingPointId], references: [id], onDelete: SetNull)
+  responders   SosResponder[]
+  deliveries   SosDelivery[]
 
   @@index([campaignId])
   @@index([status])
+  @@index([state])
+  @@index([createdBy, createdAt])
   @@index([deletedAt])
   @@map("sos")
+}
+
+/// Someone who pressed "Tôi tới giúp ngay". At most one `on_the_way` row per user (partial unique
+/// index in SQL).
+model SosResponder {
+  id          String    @id @default(uuid()) @db.Uuid
+  sosId       Int       @map("sos_id")
+  userId      String    @map("user_id") @db.Uuid
+  /// `SOS_RESPONDER_STATUS`: on_the_way | arrived | cancelled.
+  status      String    @db.VarChar(16)
+  /// Last known distance to the SOS, in metres.
+  distanceM   Float?    @map("distance_m")
+  arrivedAt   DateTime? @map("arrived_at")
+  cancelledAt DateTime? @map("cancelled_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  sos Sos @relation(fields: [sosId], references: [id], onDelete: Cascade)
+
+  @@unique([sosId, userId])
+  @@index([userId, status])
+  @@map("sos_responders")
+}
+
+/// One SOS notification sent to one user: no duplicates, and the daily cap of "available"
+/// volunteers (SOS_DAILY_INVITES, medical not counted).
+model SosDelivery {
+  id        String   @id @default(uuid()) @db.Uuid
+  sosId     Int      @map("sos_id")
+  userId    String   @map("user_id") @db.Uuid
+  /// 0 the campaign's team, 1 "available" volunteers, 2 nearby organizations, 3 admins.
+  tier      Int
+  kind      String   @db.VarChar(40)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  sos Sos @relation(fields: [sosId], references: [id], onDelete: Cascade)
+
+  @@unique([sosId, userId, kind])
+  @@index([userId, createdAt])
+  @@map("sos_deliveries")
+}
+
+/// "Sẵn sàng hỗ trợ SOS" of a volunteer: on/off, weekly hours (Asia/Ho_Chi_Minh; empty = always),
+/// and an approximate location (~500 m) used only for the radius, overwritten, never shown.
+model VolunteerAvailability {
+  userId            String    @id @map("user_id") @db.Uuid
+  enabled           Boolean   @default(false)
+  /// [{ days: [0..6] (0 = Sunday), from: "07:00", to: "17:00" }]
+  schedule          Json      @default("[]")
+  approxLat         Float?    @map("approx_lat")
+  approxLng         Float?    @map("approx_lng")
+  locationUpdatedAt DateTime? @map("location_updated_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  @@index([enabled])
+  @@map("volunteer_availabilities")
 }
 
 model OrganizationJoiningRequest {
@@ -1156,6 +1252,7 @@ model CampaignMeetingPoint {
   reports       CampaignMeetingPointReport[]
   shifts        CampaignShift[]
   verifications MeetingPointVerification[]
+  sosList       Sos[]
 
   @@index([campaignId])
   @@map("campaign_meeting_points")
@@ -1212,6 +1309,7 @@ model CampaignShift {
   attendanceSessions CampaignShiftAttendanceSession[]
   result             CampaignShiftResult?
   media              CampaignShiftMedia[]
+  sosList            Sos[]
 
   @@unique([dayId, meetingPointId])
   @@index([campaignId])

@@ -255,15 +255,25 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
     omitData: true,
   },
 
+  "GET /api/v1/sos/eligibility": {
+    responseData: "SosEligibility",
+  },
   "POST /api/v1/sos": {
     requestBody: "CreateSosRequest",
-    responseData: "SosOneEnvelopeData",
+    responseData: "SosDetail",
   },
   "GET /api/v1/sos": {
     query: "SosListQuery",
-    responseData: "PaginatedSosEnvelopeData",
+    responseData: "SosListResult",
   },
-  "PUT /api/v1/sos/:id/solved": {
-    responseData: "SosOneEnvelopeData",
-  },
+  "GET /api/v1/sos/:id": { responseData: "SosDetail" },
+  "POST /api/v1/sos/:id/respond": { responseData: "SosDetail" },
+  "DELETE /api/v1/sos/:id/respond": { responseData: "SosDetail" },
+  "PUT /api/v1/sos/:id/respond/location": { responseData: "SosDetail" },
+  "PUT /api/v1/sos/:id/location": { responseData: "SosDetail" },
+  "PUT /api/v1/sos/:id/resolve": { responseData: "SosDetail" },
+  "PUT /api/v1/sos/:id/solved": { responseData: "SosDetail" },
+  "GET /api/v1/sos/me/availability": { responseData: "AvailabilityView" },
+  "PUT /api/v1/sos/me/availability": { responseData: "AvailabilityView" },
+  "PUT /api/v1/sos/me/availability/location": { responseData: "AvailabilityView" },
 };

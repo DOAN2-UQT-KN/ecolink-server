@@ -209,12 +209,13 @@ describe("SOS and volunteers", () => {
         address: "Somewhere",
         latitude: 10.77,
         longitude: 106.7,
-        createdBy: OUTSIDER,
+        // Someone else: the reporter may close their own SOS.
+        createdBy: randomUUID(),
       },
     });
   }
 
-  it("only the campaign's managers or a platform admin resolve an SOS", async () => {
+  it("only the reporter, the campaign's managers or a platform admin resolve an SOS", async () => {
     const campaign = await seedCampaign(CM);
     const sos = await seedSos(campaign.id);
     await expect(sosService.solveSos(sos.id, { userId: OUTSIDER })).rejects.toMatchObject(
@@ -225,6 +226,7 @@ describe("SOS and volunteers", () => {
     );
     const solved = await sosService.solveSos(sos.id, { userId: CM });
     expect(solved.status).toBe(GlobalStatus._STATUS_COMPLETED);
+    expect(solved.state).toBe("resolved");
 
     const other = await seedSos(campaign.id);
     await sosService.solveSos(other.id, { userId: randomUUID(), role: "admin" });

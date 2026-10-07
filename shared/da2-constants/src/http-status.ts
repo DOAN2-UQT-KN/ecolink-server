@@ -387,6 +387,37 @@ export const HTTP_STATUS = {
     "Only the campaign's managers or a platform admin can resolve this SOS",
     "SOS_PERMISSION_DENIED",
   ),
+  SOS_NOT_ELIGIBLE: createStatus(
+    403,
+    "You cannot raise an SOS for this campaign right now",
+    "SOS_NOT_ELIGIBLE",
+  ),
+  SOS_RATE_LIMIT: createStatus(
+    429,
+    "At most 3 SOS per hour",
+    "SOS_RATE_LIMIT",
+  ),
+  SOS_DETAILS_INVALID: createStatus(
+    422,
+    "The SOS details do not match its type",
+    "SOS_DETAILS_INVALID",
+  ),
+  SOS_PHOTO_REQUIRED: createStatus(
+    422,
+    "A hazardous-waste SOS needs at least one photo",
+    "SOS_PHOTO_REQUIRED",
+  ),
+  SOS_ALREADY_RESPONDING: createStatus(
+    409,
+    "You are already on the way to another SOS",
+    "SOS_ALREADY_RESPONDING",
+  ),
+  SOS_CLOSED: createStatus(409, "This SOS is closed", "SOS_CLOSED"),
+  SOS_RESPOND_NOT_ALLOWED: createStatus(
+    403,
+    "You cannot respond to this SOS",
+    "SOS_RESPOND_NOT_ALLOWED",
+  ),
   CAMPAIGN_MANAGER_NOT_MEMBER: createStatus(
     422,
     "Campaign managers must be active members of the campaign's organization",

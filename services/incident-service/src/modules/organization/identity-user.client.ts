@@ -487,6 +487,8 @@ export interface UserVoteProfile {
   emailVerified: boolean;
   /** Metres from the saved location to the point; null without a saved location. */
   savedLocationDistanceM: number | null;
+  /** Phone number of the profile (SOS: shown to the campaign's team); null when not set. */
+  phoneNumber: string | null;
 }
 
 /**
@@ -526,6 +528,7 @@ export async function fetchUserVoteProfile(params: {
         savedLocationDistanceM: pickFiniteNumber(
           inner.savedLocationDistanceM ?? inner.saved_location_distance_m,
         ),
+        phoneNumber: pickNullableString(inner.phoneNumber ?? inner.phone_number)?.trim() || null,
       };
     });
   } catch (e) {

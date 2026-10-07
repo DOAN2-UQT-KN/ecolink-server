@@ -42,6 +42,17 @@ const ADMIN_ONLY_NOTIFICATION_KINDS = new Set([
   "CAMPAIGN_MEETING_POINT_CONFIRM_REQUEST",
   "CAMPAIGN_MEETING_POINT_CONFIRM_REMINDER",
   "CAMPAIGN_MEETING_POINT_FLAGGED",
+  // SOS: the campaign's team, the admins and the people on their way cannot turn these off.
+  "SOS_TEAM_ALERT",
+  "SOS_MEDICAL_ALERT",
+  "SOS_NEARBY_ORG_REQUEST",
+  "SOS_ADMIN_ALERT",
+  "SOS_OWNER_ESCALATION",
+  "SOS_ESCALATED",
+  "SOS_LOCATION_CHANGED",
+  "SOS_EXPIRED",
+  "SOS_NO_LONGER_NEEDED",
+  "SOS_ABUSE_REVIEW",
   "ORGANIZATION_CONTACT_VERIFY",
   "ORGANIZATION_APPROVED",
   "ORGANIZATION_REJECTED",
@@ -84,6 +95,9 @@ export function notificationKindToPreferenceKey(
     case "CAMPAIGN_VERIFY_INVITE":
     case "CAMPAIGN_COMPLETION_VERIFY_INVITE":
     case "CAMPAIGN_JOIN_INVITE":
+    // SOS sent to "available" volunteers of other campaigns.
+    case "SOS_HELP_INVITE":
+    case "SOS_HAZARD_WARNING":
       return "campaignNearbyVerify";
     case "CAMPAIGN_DONE":
       return "campaignDone";
