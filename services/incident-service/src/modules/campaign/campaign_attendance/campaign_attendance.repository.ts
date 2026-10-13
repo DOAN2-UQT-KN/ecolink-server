@@ -1,40 +1,31 @@
 import prisma from "../../../config/prisma.client";
 
+/** Reads of attendance per shift (spec 4.1) for the volunteer lists. */
 export class CampaignAttendanceRepository {
-  async createCheckIn(campaignId: string, userId: string) {
-    return prisma.campaignAttendanceCheckIn.create({
-      data: { campaignId, userId },
+  /** Check-in time per `shiftId:userId`. */
+  async findCheckInsByShift(campaignId: string, userIds: string[]): Promise<Map<string, Date>> {
+    if (userIds.length === 0) return new Map();
+    const rows = await prisma.campaignShiftAttendance.findMany({
+      where: { campaignId, userId: { in: userIds } },
+      select: { shiftId: true, userId: true, checkInAt: true },
     });
+    return new Map(rows.map((r) => [`${r.shiftId}:${r.userId}`, r.checkInAt]));
   }
 
-  async findByCampaignAndUser(campaignId: string, userId: string) {
-    return prisma.campaignAttendanceCheckIn.findUnique({
-      where: {
-        campaignId_userId: { campaignId, userId },
-      },
-    });
-  }
-
-  async findUserIdsByCampaignId(campaignId: string): Promise<string[]> {
-    const rows = await prisma.campaignAttendanceCheckIn.findMany({
-      where: { campaignId },
-      select: { userId: true },
-    });
-    return rows.map((r) => r.userId);
-  }
-
+  /** Each person's first check-in in the campaign, any shift. */
   async findCheckedInAtByCampaignAndUserIds(
     campaignId: string,
     userIds: string[],
   ): Promise<Map<string, Date>> {
-    if (userIds.length === 0) {
-      return new Map();
-    }
-    const rows = await prisma.campaignAttendanceCheckIn.findMany({
+    if (userIds.length === 0) return new Map();
+    const rows = await prisma.campaignShiftAttendance.groupBy({
+      by: ["userId"],
       where: { campaignId, userId: { in: userIds } },
-      select: { userId: true, checkedInAt: true },
+      _min: { checkInAt: true },
     });
-    return new Map(rows.map((r) => [r.userId, r.checkedInAt]));
+    return new Map(
+      rows.filter((r) => r._min.checkInAt).map((r) => [r.userId, r._min.checkInAt as Date]),
+    );
   }
 }
 

@@ -57,36 +57,21 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
   "GET /api/v1/campaigns/all": {
     responseData: "CampaignsListEnvelopeData",
   },
-  "GET /api/v1/campaigns/tasks/my-assigned": {
-    responseData: "TasksListEnvelopeData",
-  },
-  "GET /api/v1/campaigns/tasks/:taskId": {
-    responseData: "TaskOneEnvelopeData",
-  },
-  "PUT /api/v1/campaigns/tasks/:taskId": {
-    requestBody: "UpdateCampaignTaskBody",
-    responseData: "TaskOneEnvelopeData",
-  },
-  "DELETE /api/v1/campaigns/tasks/:taskId": {
-    omitData: true,
-  },
-  "POST /api/v1/campaigns/tasks/:taskId/assign": {
-    requestBody: "AssignVolunteerBody",
-    responseData: "TaskAssignmentEnvelopeData",
-  },
-  "POST /api/v1/campaigns/tasks/:taskId/unassign": {
-    requestBody: "AssignVolunteerBody",
-    omitData: true,
-  },
-  "PUT /api/v1/campaigns/tasks/:taskId/status": {
-    requestBody: "TaskStatusUpdateBody",
-    responseData: "TaskOneEnvelopeData",
-  },
   "GET /api/v1/campaigns/:id": {
     responseData: "CampaignOneEnvelopeData",
   },
   "PUT /api/v1/campaigns/:id/completion-review": {
     requestBody: "AdminCompletionReviewBody",
+    responseData: "CampaignOneEnvelopeData",
+  },
+  "PUT /api/v1/campaigns/:id/verification/:meetingPointId/vote": {
+    requestBody: "MeetingPointVoteBody",
+  },
+  "PUT /api/v1/campaigns/:id/verification/:meetingPointId/decision": {
+    requestBody: "MeetingPointDecisionBody",
+  },
+  "PUT /api/v1/campaigns/:id/mark-done": {
+    requestBody: "MarkCampaignDoneBody",
     responseData: "CampaignOneEnvelopeData",
   },
   "PUT /api/v1/campaigns/:id/verify": {
@@ -112,32 +97,12 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
     query: "CampaignManagersListQuery",
     responseData: "PaginatedManagersEnvelopeData",
   },
-  "POST /api/v1/campaigns/:id/tasks": {
-    requestBody: "CreateCampaignTaskBody",
-    responseData: "TaskOneEnvelopeData",
+  "GET /api/v1/campaigns/:id/registration-options": {
+    responseData: "RegistrationOptions",
   },
-  "GET /api/v1/campaigns/:id/tasks": {
-    responseData: "TasksListEnvelopeData",
-  },
-  "POST /api/v1/campaigns/volunteers/join-requests": {
-    requestBody: "CreateJoinRequestBody",
-    responseData: "JoinRequestOneEnvelopeData",
-  },
-  "GET /api/v1/campaigns/volunteers/join-requests": {
-    query: "GetJoinRequestsQuery",
-    responseData: "PaginatedJoinRequestsEnvelopeData",
-  },
-  "GET /api/v1/campaigns/volunteers/join-requests/my": {
-    query: "MyJoinRequestsQuery",
-    responseData: "PaginatedJoinRequestsEnvelopeData",
-  },
-  "PUT /api/v1/campaigns/volunteers/join-requests/process": {
-    requestBody: "ProcessJoinRequestBody",
-    responseData: "JoinRequestOneEnvelopeData",
-  },
-  "DELETE /api/v1/campaigns/volunteers/join-requests/cancel": {
-    requestBody: "CancelJoinRequestBody",
-    omitData: true,
+  "PUT /api/v1/campaigns/:id/registrations/me": {
+    requestBody: "UpdateMyRegistrationsBody",
+    responseData: "MyRegistrationResult",
   },
   "GET /api/v1/campaigns/volunteers/approved": {
     query: "GetApprovedVolunteersQuery",
@@ -182,6 +147,55 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
   "POST /incident/saved-resources/save": {
     requestBody: "SaveResourceBody",
     responseData: "SaveResourceEnvelopeData",
+  },
+
+  "POST /api/v1/organization-applications/email-otp": {
+    requestBody: "RequestApplicationOtpBody",
+    responseData: "RequestApplicationOtpResponse",
+  },
+  "POST /api/v1/organization-applications/email-otp/verify": {
+    requestBody: "VerifyApplicationOtpBody",
+    responseData: "VerifyApplicationOtpResponse",
+  },
+  "POST /api/v1/organization-applications/documents/presign": {
+    requestBody: "PresignApplicationDocumentBody",
+    responseData: "PresignApplicationDocumentResponse",
+  },
+  "POST /api/v1/organization-applications": {
+    requestBody: "CreateApplicationBody",
+    responseData: "ApplicationOneEnvelopeData",
+  },
+  "GET /api/v1/organization-applications/:id": {
+    responseData: "ApplicationOneEnvelopeData",
+  },
+  "PUT /api/v1/organization-applications/:id": {
+    requestBody: "UpdateApplicationBody",
+    responseData: "ApplicationOneEnvelopeData",
+  },
+  "POST /api/v1/organization-applications/:id/withdraw": {
+    responseData: "ApplicationOneEnvelopeData",
+  },
+
+  "GET /api/v1/admin/organization-applications": {
+    query: "AdminApplicationListQuery",
+    responseData: "PaginatedApplicationsEnvelopeData",
+  },
+  "GET /api/v1/admin/organization-applications/:id": {
+    responseData: "ApplicationAdminOneEnvelopeData",
+  },
+  "GET /api/v1/admin/organization-applications/:id/documents/:docId/file": {
+    omitData: true,
+  },
+  "PUT /api/v1/admin/organization-applications/:id/claim": {
+    responseData: "ApplicationAdminOneEnvelopeData",
+  },
+  "PUT /api/v1/admin/organization-applications/:id/request-info": {
+    requestBody: "RequestMoreInfoBody",
+    responseData: "ApplicationAdminOneEnvelopeData",
+  },
+  "PUT /api/v1/admin/organization-applications/:id/decision": {
+    requestBody: "ApplicationDecisionBody",
+    responseData: "ApplicationAdminOneEnvelopeData",
   },
 
   "POST /api/v1/organizations": {
@@ -244,15 +258,25 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
     omitData: true,
   },
 
+  "GET /api/v1/sos/eligibility": {
+    responseData: "SosEligibility",
+  },
   "POST /api/v1/sos": {
     requestBody: "CreateSosRequest",
-    responseData: "SosOneEnvelopeData",
+    responseData: "SosDetail",
   },
   "GET /api/v1/sos": {
     query: "SosListQuery",
-    responseData: "PaginatedSosEnvelopeData",
+    responseData: "SosListResult",
   },
-  "PUT /api/v1/sos/:id/solved": {
-    responseData: "SosOneEnvelopeData",
-  },
+  "GET /api/v1/sos/:id": { responseData: "SosDetail" },
+  "POST /api/v1/sos/:id/respond": { responseData: "SosDetail" },
+  "DELETE /api/v1/sos/:id/respond": { responseData: "SosDetail" },
+  "PUT /api/v1/sos/:id/respond/location": { responseData: "SosDetail" },
+  "PUT /api/v1/sos/:id/location": { responseData: "SosDetail" },
+  "PUT /api/v1/sos/:id/resolve": { responseData: "SosDetail" },
+  "PUT /api/v1/sos/:id/solved": { responseData: "SosDetail" },
+  "GET /api/v1/sos/me/availability": { responseData: "AvailabilityView" },
+  "PUT /api/v1/sos/me/availability": { responseData: "AvailabilityView" },
+  "PUT /api/v1/sos/me/availability/location": { responseData: "AvailabilityView" },
 };

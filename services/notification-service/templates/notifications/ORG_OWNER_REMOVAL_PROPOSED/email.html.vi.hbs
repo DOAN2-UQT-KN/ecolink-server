@@ -1,0 +1,10 @@
+<!DOCTYPE html>
+<html>
+  <body style="font-family: system-ui, sans-serif; line-height: 1.5; color: #111">
+    <p>Xin chào,</p>
+    <p>{{proposerName}} đề xuất thu hồi vai owner của bạn trong "{{organizationName}}"{{#if demoteTo}}; bạn sẽ giữ vai {{demoteTo}}{{else}}; bạn sẽ rời tổ chức{{/if}}. {{#if needsApproval}}Đề xuất có hiệu lực khi các owner còn lại đồng ý.{{else}}Đề xuất đã có hiệu lực.{{/if}}</p>
+    <p>{{#if reason}}Lý do: {{reason}}{{/if}}</p>
+    <p><a href="{{manageUrl}}" style="display: inline-block; padding: 10px 18px; background: #0b57d0; color: #fff; border-radius: 6px; text-decoration: none">Mở trang tổ chức</a></p>
+    <p style="font-size: 0.875rem; color: #444">{{manageUrl}}</p>
+  </body>
+</html>

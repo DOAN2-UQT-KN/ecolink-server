@@ -63,6 +63,10 @@ router.put(
     .optional({ values: "null" })
     .custom((v) => v === null || (Number.isInteger(v) && v >= 1))
     .withMessage("maxVolunteers must be null or an integer >= 1"),
+  body("suggestedMinVolunteers")
+    .optional({ values: "null" })
+    .custom((v) => v === null || (Number.isInteger(v) && v >= 1))
+    .withMessage("suggestedMinVolunteers must be null or an integer >= 1"),
   body("greenPoints")
     .optional()
     .isInt({ min: 0 })
@@ -91,6 +95,7 @@ router.put(
           req.body.maxVolunteers === undefined
             ? undefined
             : req.body.maxVolunteers,
+        suggestedMinVolunteers: req.body.suggestedMinVolunteers,
         greenPoints: req.body.greenPoints,
       }, req.headers.authorization);
       if (!updated) {

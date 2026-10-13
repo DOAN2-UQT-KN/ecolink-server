@@ -1,8 +1,8 @@
 import { campaignSubmissionRepository } from "./campaign_submission.repository";
-import { campaignManagerRepository } from "../campaign_manager/campaign_manager.repository";
 import { ResultStatus } from "../../../constants/status.enum";
 import prisma from "../../../config/prisma.client";
 import type { CampaignSubmissionsListQuery } from "./campaign_submission.dto";
+import { campaignAccessService } from "../campaign-access.service";
 
 // ─── Request DTOs ────────────────────────────────────────────────────────────
 
@@ -67,13 +67,7 @@ export class CampaignSubmissionService {
     managerId: string,
     request: CreateSubmissionRequest,
   ): Promise<SubmissionResponse> {
-    const isManager = await campaignManagerRepository.isManager(
-      campaignId,
-      managerId,
-    );
-    if (!isManager) {
-      throw new Error("Only campaign managers can create submissions");
-    }
+    await campaignAccessService.assertCanManage(campaignId, managerId);
 
     const submission = await campaignSubmissionRepository.create({
       campaignId,
@@ -228,13 +222,7 @@ export class CampaignSubmissionService {
       await campaignSubmissionRepository.findById(submissionId);
     if (!submission) throw new Error("Submission not found");
 
-    const isManager = await campaignManagerRepository.isManager(
-      submission.campaignId,
-      managerId,
-    );
-    if (!isManager) {
-      throw new Error("Only campaign managers can process submissions");
-    }
+    await campaignAccessService.assertCanManage(submission.campaignId, managerId);
 
     const awaitingStatuses: number[] = [
       ResultStatus._STATUS_INREVIEW,

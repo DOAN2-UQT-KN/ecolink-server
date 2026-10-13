@@ -23,6 +23,9 @@ model Difficulty {
   /// Maximum approved volunteers; null means no limit (very hard).
   maxVolunteers Int? @map("max_volunteers")
 
+  /// Suggested minimum volunteers per campaign day; lower needs a reason from the creator.
+  suggestedMinVolunteers Int? @map("suggested_min_volunteers")
+
   greenPoints Int @map("green_points")
 
   createdAt DateTime  @default(now()) @map("created_at")

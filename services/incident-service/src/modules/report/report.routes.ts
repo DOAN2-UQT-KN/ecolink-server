@@ -129,7 +129,7 @@ router.put(
  */
 router.delete("/:id", authenticate, reportController.deleteReport);
 
-// Managers and tasks live under /api/v1/campaigns — see campaign.routes.ts
+// Campaign managers live under /api/v1/campaigns — see campaign.routes.ts
 
 export default router;
 

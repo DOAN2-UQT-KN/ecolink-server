@@ -1,4 +1,7 @@
+import { CAMPAIGN_ENDED_STATUSES, OWNER_ROLES } from "@da2/constants";
+import prisma from "../../../config/prisma.client";
 import { campaignManagerRepository } from "./campaign_manager.repository";
+import { assertLeadersInTeam } from "./campaign-team";
 import { reportRepository } from "../../report/report.repository";
 import {
   AddCampaignManagersRequest,
@@ -7,6 +10,8 @@ import {
 } from "../campaign.dto";
 import { campaignRepository } from "../campaign.repository";
 import { HttpError, HTTP_STATUS } from "../../../constants/http-status";
+import { organizationMemberRepository } from "../../organization/organization_member.repository";
+import { campaignAccessService } from "../campaign-access.service";
 import {
   fetchOrganizationOwnersByUserIds,
   getUserProfile,
@@ -15,24 +20,124 @@ import {
 export class CampaignManagerService {
   constructor() {}
 
-  /**
-   * Campaign creator or a campaign manager may manage the campaign (tasks,
-   * manager roster, assignments, etc.).
-   */
+  /** See `campaignAccessService`: creator, campaign manager or organization owner. */
   async canManageCampaign(
     campaignId: string,
     userId: string,
   ): Promise<boolean> {
+    return campaignAccessService.canManage(campaignId, userId);
+  }
+
+  /** Managers must be active members of the organization that runs the campaign. */
+  async assertAllMembers(organizationId: string, userIds: string[]): Promise<void> {
+    const unique = [...new Set(userIds)];
+    const members = await organizationMemberRepository.findActiveMemberUserIds(
+      organizationId,
+      unique,
+    );
+    if (members.size !== unique.length) {
+      throw new HttpError(HTTP_STATUS.CAMPAIGN_MANAGER_NOT_MEMBER);
+    }
+  }
+
+  /**
+   * Spec 3.4: a manager leading shifts that have not ended is reassigned before being removed.
+   * Owners stay on the team without a manager row, so they are never blocked.
+   */
+  async assertLeadsNoShifts(
+    campaign: { id: string; organizationId: string; status: number },
+    userIds: string[],
+    now = new Date(),
+  ): Promise<void> {
+    if (userIds.length === 0 || CAMPAIGN_ENDED_STATUSES.includes(campaign.status)) return;
+    const owners = await prisma.organizationMember.findMany({
+      where: {
+        organizationId: campaign.organizationId,
+        userId: { in: userIds },
+        deletedAt: null,
+        role: { in: [...OWNER_ROLES] },
+      },
+      select: { userId: true },
+    });
+    const ownerIds = new Set(owners.map((o) => o.userId));
+    const blocked = userIds.filter((id) => !ownerIds.has(id));
+    if (blocked.length === 0) return;
+    const shifts = await prisma.campaignShift.findMany({
+      where: {
+        campaignId: campaign.id,
+        leaderUserId: { in: blocked },
+        minVolunteers: { gt: 0 },
+        endAt: { gt: now },
+      },
+      orderBy: { startAt: "asc" },
+      select: {
+        id: true,
+        leaderUserId: true,
+        startAt: true,
+        meetingPoint: { select: { name: true, sortOrder: true } },
+      },
+    });
+    if (shifts.length > 0) {
+      throw new HttpError(HTTP_STATUS.CAMPAIGN_MANAGER_LEADS_SHIFTS, {
+        details: {
+          shifts: shifts.map((s) => ({
+            shiftId: s.id,
+            leaderUserId: s.leaderUserId,
+            startAt: s.startAt,
+            meetingPoint: s.meetingPoint.name || `#${s.meetingPoint.sortOrder + 1}`,
+          })),
+        },
+      });
+    }
+  }
+
+  /**
+   * Spec 3.4: choose who leads a shift that has not ended. The leader must be on the campaign's
+   * team; saved at once, with a log (spec 3.5).
+   */
+  async setShiftLeader(
+    campaignId: string,
+    shiftId: string,
+    leaderUserId: string,
+    actorId: string,
+    now = new Date(),
+  ): Promise<{ shiftId: string; leaderUserId: string }> {
     const campaign = await campaignRepository.findById(campaignId);
     if (!campaign) {
-      return false;
+      throw new HttpError(HTTP_STATUS.NOT_FOUND.withMessage("Campaign not found"));
     }
-
-    if (campaign.createdBy === userId) {
-      return true;
+    await campaignAccessService.assertCanManage(campaign, actorId);
+    if (CAMPAIGN_ENDED_STATUSES.includes(campaign.status)) {
+      throw new HttpError(HTTP_STATUS.CAMPAIGN_NOT_EDITABLE);
     }
-
-    return campaignManagerRepository.isManager(campaignId, userId);
+    const shift = await prisma.campaignShift.findFirst({
+      where: { id: shiftId, campaignId },
+      select: { id: true, endAt: true, leaderUserId: true },
+    });
+    if (!shift) {
+      throw new HttpError(HTTP_STATUS.NOT_FOUND.withMessage("Shift not found"));
+    }
+    if (shift.endAt.getTime() <= now.getTime()) {
+      throw new HttpError(HTTP_STATUS.SHIFT_ALREADY_STARTED);
+    }
+    await assertLeadersInTeam(prisma, campaign, [leaderUserId]);
+    if (shift.leaderUserId !== leaderUserId) {
+      await prisma.$transaction([
+        prisma.campaignShift.update({ where: { id: shiftId }, data: { leaderUserId } }),
+        prisma.campaignStatusLog.create({
+          data: {
+            campaignId,
+            type: "EDIT",
+            event: "set_shift_leader",
+            actorId,
+            actorRole: "manager",
+            reason: null,
+            changes: { shiftId, leaderUserId: { from: shift.leaderUserId, to: leaderUserId } },
+          },
+        }),
+      ]);
+    }
+    return { shiftId, leaderUserId };
   }
 
   /**
@@ -51,14 +156,8 @@ export class CampaignManagerService {
       );
     }
 
-    const canManage = await this.canManageCampaign(campaignId, assignedBy);
-    if (!canManage) {
-      throw new HttpError(
-        HTTP_STATUS.FORBIDDEN.withMessage(
-          "Only the campaign creator or campaign managers can assign managers",
-        ),
-      );
-    }
+    await campaignAccessService.assertCanManage(campaign, assignedBy);
+    await this.assertAllMembers(campaign.organizationId, request.userIds);
 
     const addedManagers: CampaignManagerAssignmentResponse[] = [];
 
@@ -118,13 +217,9 @@ export class CampaignManagerService {
       );
     }
 
-    const canRemove = await this.canManageCampaign(campaignId, removedBy);
-    if (!canRemove) {
-      throw new HttpError(
-        HTTP_STATUS.FORBIDDEN.withMessage(
-          "Only the campaign creator or campaign managers can remove managers",
-        ),
-      );
+    await campaignAccessService.assertCanManage(campaign, removedBy);
+    if (campaign.createdBy === userId) {
+      throw new HttpError(HTTP_STATUS.CANNOT_REMOVE_CAMPAIGN_CREATOR);
     }
 
     const existing = await campaignManagerRepository.findByCampaignIdAndUserId(
@@ -134,6 +229,7 @@ export class CampaignManagerService {
     if (!existing) {
       throw new HttpError(HTTP_STATUS.NOT_A_MANAGER);
     }
+    await this.assertLeadsNoShifts(campaign, [userId]);
 
     await campaignManagerRepository.removeManager(
       campaignId,

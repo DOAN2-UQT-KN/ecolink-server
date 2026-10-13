@@ -1,77 +1,170 @@
+import type {
+  SosIneligibleReasonValue,
+  SosReporterRoleValue,
+  SosResolutionCodeValue,
+  SosResponderStatusValue,
+  SosStateValue,
+  SosTypeValue,
+} from "@da2/constants";
+
+/** Per type; stored as JSON on the SOS (keys snake_cased on the way out). */
+export interface SosManpowerDetails {
+  peopleNeeded: number | null;
+  tools: string[];
+  toolsNote: string | null;
+}
+export interface SosHazardDetails {
+  /** One or more of `SOS_HAZARD_KINDS`. */
+  hazardKinds: string[];
+}
+export interface SosMedicalDetails {
+  consciousness: "conscious" | "unconscious" | null;
+  affected: number | null;
+}
+export type SosDetails = SosManpowerDetails | SosHazardDetails | SosMedicalDetails;
+
+/** Body of `POST /sos` (camelCased by `camelCaseRequestBody`). */
 export interface CreateSosRequest {
-  /** ID of the campaign this SOS belongs to. Mapped from campaign_id. */
   campaignId: string;
-  content: string;
-  phone: string;
+  shiftId?: string;
+  type: SosTypeValue;
+  details: Record<string, unknown>;
+  description?: string;
+  photoUrls?: string[];
+  latitude?: number;
+  longitude?: number;
+  accuracy?: number;
 }
 
-export interface SosResponse {
+export interface SosActor {
+  userId: string;
+  role?: string | null;
+}
+
+/** A running shift someone may raise an SOS for. */
+export interface SosShiftOption {
+  id: string;
+  name: string;
+  meetingPointId: string;
+  meetingPointName: string | null;
+  startAt: Date;
+  endAt: Date;
+}
+
+export interface SosEligibility {
+  canRaise: boolean;
+  role: SosReporterRoleValue | null;
+  reason: SosIneligibleReasonValue | null;
+  shifts: SosShiftOption[];
+  /** null: no hourly limit. */
+  hourlyRemaining: number | null;
+}
+
+/**
+ * One row of the map / list: position, type, state, the counter and the closing fields for
+ * anyone; `reporter` and `phone` only for an admin or the SOS's team (null for everyone else).
+ */
+export interface SosSummary {
   id: number;
   campaignId: string;
-  campaign?: SosCampaignResponse | null;
-  content: string;
-  phone: string;
-  address: string;
-  detailAddress: string | null;
+  campaignTitle: string;
+  shiftId: string | null;
+  meetingPointId: string | null;
+  type: SosTypeValue;
+  state: SosStateValue;
+  /** Legacy numeric status: 1 while live, 17 once closed. */
+  status: number;
   latitude: number;
   longitude: number;
-  status: number;
-  createdBy: string | null;
-  updatedBy: string | null;
   createdAt: Date;
+  peopleNeeded: number | null;
+  onTheWayCount: number;
+  arrivedCount: number;
+  isMine: boolean;
+  myResponse: "on_the_way" | "arrived" | null;
+  reporterRole: SosReporterRoleValue | null;
+  resolvedAt: Date | null;
+  resolutionCode: SosResolutionCodeValue | null;
+  /** Admin or the SOS's team only. */
+  phone: string | null;
+  /** Admin or the SOS's team only. */
+  reporter: { id: string; name: string | null; avatar: string | null } | null;
+}
+
+export interface SosResponderView {
+  userId: string;
+  name: string | null;
+  avatar: string | null;
+  status: SosResponderStatusValue;
   updatedAt: Date;
 }
 
-export interface SosCampaignResponse {
-  id: string;
-  title: string;
-  banner: string | null;
+export interface SosPermissions {
+  canRespond: boolean;
+  canCancelResponse: boolean;
+  canUpdateLocation: boolean;
+  canResolve: boolean;
+}
+
+/** `GET /sos/:id`, filtered by who is looking (spec "Quyền riêng tư"). */
+export interface SosDetail extends SosSummary {
+  campaign: {
+    id: string;
+    title: string;
+    contactName: string | null;
+    contactPhone: string | null;
+    safetyNotes: string | null;
+  };
+  shift: { id: string; name: string; startAt: Date; endAt: Date } | null;
+  meetingPoint: { id: string; name: string | null; latitude: number; longitude: number } | null;
+  details: Record<string, unknown>;
   description: string | null;
-  status: number;
-  startDate: Date | null;
-  endDate: Date | null;
-  detailAddress: string | null;
-  latitude: number | null;
-  longitude: number | null;
-  radiusKm: number | null;
-  difficulty: number;
-  organizationId: string;
-  createdBy: string | null;
-  updatedBy: string | null;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface SosWithDistance extends SosResponse {
-  /** Distance from query point in metres. */
-  distanceMetres: number;
-}
-
-export interface SosOneEnvelopeData {
-  sos: SosResponse;
-}
-
-export interface SosListEnvelopeData {
-  sos: SosResponse[];
+  photoUrls: string[];
+  responders: SosResponderView[];
+  expiresAt: Date | null;
+  escalatedAt: Date | null;
+  radiusKm: number;
+  resolvedBy: string | null;
+  resolutionNote: string | null;
+  locationUpdatedAt: Date | null;
+  permissions: SosPermissions;
+  viewerIsTeam: boolean;
 }
 
 export interface SosListQuery {
   campaignId?: string;
-  status?: number;
-  /** Viewer latitude for distance sorting / filtering. */
+  /** `states=all` arrives here as every state. */
+  states: SosStateValue[];
+  type?: SosTypeValue;
+  /** Campaign title (case-insensitive), or the SOS id when it is a whole number. */
+  search?: string;
   latitude?: number;
-  /** Viewer longitude for distance sorting / filtering. */
   longitude?: number;
-  /** Max distance in metres (requires latitude & longitude). */
+  /** Metres; only with latitude and longitude. */
   maxDistance?: number;
-  page?: number;
-  limit?: number;
+  page: number;
+  limit: number;
 }
 
-export interface PaginatedSosEnvelopeData {
-  sos: SosResponse[];
+export interface SosListResult {
+  items: SosSummary[];
+  /** Same rows as `items`, under the key the map used before SOS v2. */
+  sos: SosSummary[];
   total: number;
   page: number;
   limit: number;
   totalPages: number;
+}
+
+/** One weekly window of "Sẵn sàng"; days 0 = Sunday … 6, times local "HH:mm". */
+export interface AvailabilityWindow {
+  days: number[];
+  from: string;
+  to: string;
+}
+
+export interface AvailabilityView {
+  enabled: boolean;
+  schedule: AvailabilityWindow[];
+  locationUpdatedAt: Date | null;
 }

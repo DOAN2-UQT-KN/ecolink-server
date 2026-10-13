@@ -4,6 +4,7 @@ import { HTTP_STATUS, sendError, sendSuccess } from "../constants/http-status";
 import { requireInternalIdentityApiKey } from "../middleware/internal-identity-auth.middleware";
 import { authService } from "../modules/auth/auth.service";
 import { userService } from "../modules/user/user.service";
+import { userRepository } from "../modules/user/user.repository";
 
 const router = Router();
 
@@ -44,6 +45,156 @@ router.post(
         return;
       }
       console.error("Internal organization contact email token error:", e);
+      sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+    }
+  },
+);
+
+function toOwnerLookupRow(user: {
+  id: string;
+  email: string;
+  name: string;
+  status: number;
+  createdAt: Date;
+}) {
+  return {
+    id: user.id,
+    email: user.email.toLowerCase(),
+    name: user.name,
+    status: user.status,
+    createdAt: user.createdAt,
+  };
+}
+
+/**
+ * Incident-service: which of these emails already have an account, and in what state.
+ * Used to block suspended owners before any confirmation email goes out, and to show the
+ * reviewer who already had an account.
+ */
+router.post(
+  "/users/lookup-by-emails",
+  body("emails").isArray({ min: 1, max: 20 }),
+  body("emails.*").isEmail(),
+  async (req, res): Promise<void> => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
+      return;
+    }
+    try {
+      const users = await authService.lookupUsersByEmails(
+        (req.body as { emails: string[] }).emails,
+      );
+      sendSuccess(res, HTTP_STATUS.OK, { users: users.map(toOwnerLookupRow) });
+    } catch (e) {
+      console.error("Internal users lookup-by-emails error:", e);
+      sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+    }
+  },
+);
+
+/**
+ * Incident-service: accounts by id with email and status (invitations, owner proposals).
+ */
+router.post(
+  "/users/lookup-by-ids",
+  body("ids").isArray({ min: 1, max: 50 }),
+  body("ids.*").isUUID(),
+  async (req, res): Promise<void> => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
+      return;
+    }
+    try {
+      const users = await userRepository.findByIds((req.body as { ids: string[] }).ids);
+      sendSuccess(res, HTTP_STATUS.OK, {
+        users: users.map((u) => ({ ...toOwnerLookupRow(u), avatar: u.avatar })),
+      });
+    } catch (e) {
+      console.error("Internal users lookup-by-ids error:", e);
+      sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+    }
+  },
+);
+
+/**
+ * Incident-service: people matching `q` (email or name) for the member / owner pickers.
+ * Returns full emails; incident-service decides whether to mask them for the caller.
+ */
+router.post(
+  "/users/search",
+  body("q").isString().isLength({ min: 2, max: 100 }),
+  body("limit").optional().isInt({ min: 1, max: 20 }).toInt(),
+  async (req, res): Promise<void> => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
+      return;
+    }
+    try {
+      const { q, limit } = req.body as { q: string; limit?: number };
+      const users = await userRepository.searchActive(q, limit ?? 10);
+      sendSuccess(res, HTTP_STATUS.OK, {
+        users: users.map((u) => ({ ...toOwnerLookupRow(u), avatar: u.avatar })),
+      });
+    } catch (e) {
+      console.error("Internal users search error:", e);
+      sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+    }
+  },
+);
+
+/**
+ * Incident-service, on approving an organization application: find or create one person
+ * account per owner email. New accounts are PENDING_ACTIVATION with no password. Idempotent.
+ */
+router.post(
+  "/users/ensure",
+  body("users").isArray({ min: 1, max: 20 }),
+  body("users.*.email").isEmail(),
+  body("users.*.fullName").isString().isLength({ max: 200 }),
+  async (req, res): Promise<void> => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
+      return;
+    }
+    try {
+      const users = await authService.ensureUsersForOwners(
+        (req.body as { users: { email: string; fullName: string }[] }).users,
+      );
+      sendSuccess(res, HTTP_STATUS.OK, { users: users.map(toOwnerLookupRow) });
+    } catch (e) {
+      console.error("Internal users ensure error:", e);
+      sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+    }
+  },
+);
+
+/**
+ * Incident-service: fresh 72-hour activation link for a PENDING_ACTIVATION user.
+ * `activation_token` is null when the account is already active.
+ */
+router.post(
+  "/users/:id/activation-token",
+  param("id").isUUID(),
+  async (req, res): Promise<void> => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
+      return;
+    }
+    try {
+      const activationToken = await authService.issueActivationToken(
+        String(req.params?.id),
+      );
+      sendSuccess(res, HTTP_STATUS.OK, {
+        activationToken,
+        expiresInHours: authService.activationTtlHours(),
+      });
+    } catch (e) {
+      console.error("Internal activation-token error:", e);
       sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
     }
   },
@@ -152,6 +303,69 @@ router.post(
       sendSuccess(res, HTTP_STATUS.OK, { users });
     } catch (error) {
       console.error("Internal users distance-from-point error:", error);
+      sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+    }
+  },
+);
+
+/** Metres between two WGS84 points (Haversine). */
+function distanceMeters(
+  a: { latitude: number; longitude: number },
+  b: { latitude: number; longitude: number },
+): number {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(b.latitude - a.latitude);
+  const dLng = toRad(b.longitude - a.longitude);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(a.latitude)) * Math.cos(toRad(b.latitude)) * Math.sin(dLng / 2) ** 2;
+  return 2 * 6_371_000 * Math.asin(Math.sqrt(h));
+}
+
+/**
+ * Incident-service, result verification: what a vote's weight depends on. The account's age,
+ * whether its email is verified, and how far its saved location is from the trash point
+ * (null without a saved location). SOS uses the same profile: verified email and phone number.
+ */
+router.post(
+  "/users/vote-profile",
+  body("userId").isUUID(),
+  body("latitude").isFloat({ min: -90, max: 90 }),
+  body("longitude").isFloat({ min: -180, max: 180 }),
+  async (req, res): Promise<void> => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
+      return;
+    }
+    const { userId, latitude, longitude } = req.body as {
+      userId: string;
+      latitude: number;
+      longitude: number;
+    };
+    try {
+      const user = await userRepository.findById(userId);
+      if (!user) {
+        sendError(res, HTTP_STATUS.NOT_FOUND.withMessage("User not found"));
+        return;
+      }
+      const savedLocationDistanceM =
+        user.latitude != null && user.longitude != null
+          ? Math.round(
+              distanceMeters(
+                { latitude: Number(latitude), longitude: Number(longitude) },
+                { latitude: user.latitude, longitude: user.longitude },
+              ),
+            )
+          : null;
+      sendSuccess(res, HTTP_STATUS.OK, {
+        createdAt: user.createdAt,
+        emailVerified: user.emailVerified,
+        savedLocationDistanceM,
+        phoneNumber: user.phoneNumber ?? null,
+      });
+    } catch (error) {
+      console.error("Internal users vote-profile error:", error);
       sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
     }
   },

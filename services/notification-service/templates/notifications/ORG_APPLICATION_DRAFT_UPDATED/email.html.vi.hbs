@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+  <body style="font-family: system-ui, sans-serif; line-height: 1.5; color: #111">
+    <p>Xin chào,</p>
+    <p>
+      Bản nháp hồ sơ <strong>{{applicationCode}}</strong>{{#if organizationName}} của
+      <strong>{{organizationName}}</strong>{{/if}} trên <strong>{{appName}}</strong> vừa được lưu
+      lúc {{savedAt}}. Hồ sơ chưa được nộp.
+    </p>
+    <p><a href="{{editUrl}}" style="display: inline-block; padding: 10px 18px; background: #0b57d0; color: #fff; border-radius: 6px; text-decoration: none">Tiếp tục hồ sơ</a></p>
+    <p style="font-size: 0.875rem; color: #444">{{editUrl}}</p>
+    <p style="font-size: 0.875rem; color: #666">
+      Không phải bạn? Ai có liên kết đều sửa được bản nháp — hãy rút hồ sơ từ liên kết trên.
+      Thông báo này gửi tối đa một lần mỗi giờ.
+    </p>
+  </body>
+</html>

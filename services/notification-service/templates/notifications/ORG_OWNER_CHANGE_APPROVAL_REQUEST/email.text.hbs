@@ -1,0 +1,8 @@
+Hello,
+
+{{{proposerName}}} proposes to {{#if isAdd}}add {{{subjectNames}}} as owner(s){{/if}}{{#if isRemove}}remove {{{subjectNames}}} as owner{{#if demoteTo}} (they keep the role {{{demoteTo}}}){{else}} (they leave the organization){{/if}}{{/if}} in {{{organizationName}}} on {{{appName}}}.
+{{#if reason}}
+Reason: {{{reason}}}
+{{/if}}
+Nothing happens until every other owner agrees. Approve or reject it on the organization page before {{{expiresAt}}}:
+{{{manageUrl}}}

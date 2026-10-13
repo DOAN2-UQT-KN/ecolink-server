@@ -6,6 +6,10 @@ import {
   sendSuccess,
 } from "../../constants/http-status";
 import { authService } from "./auth.service";
+import {
+  buildAccountActivationUrl,
+  enqueueAccountActivationEmail,
+} from "./account-activation-notify.client";
 import { GoogleOauthCallbackQuery } from "./auth.dto";
 import { googleOauthService } from "../oauth/google.service";
 import logger from "../../logger";
@@ -59,6 +63,15 @@ export class AuthController {
         return sendError(
           res,
           HTTP_STATUS.FORBIDDEN.withMessage("Account banned"),
+        );
+      }
+      if (
+        error instanceof Error &&
+        error.message === "ACCOUNT_PENDING_ACTIVATION"
+      ) {
+        return sendError(
+          res,
+          HTTP_STATUS.ACCOUNT_PENDING_ACTIVATION,
         );
       }
       console.error("Google callback error:", error);
@@ -150,6 +163,19 @@ export class AuthController {
           return sendError(
             res,
             HTTP_STATUS.FORBIDDEN.withMessage("Account banned"),
+          );
+        }
+        if (
+          error instanceof Error &&
+          error.message === "ACCOUNT_PENDING_ACTIVATION"
+        ) {
+          logger.warn(
+            { email: req.body?.email },
+            "login on account pending activation",
+          );
+          return sendError(
+            res,
+            HTTP_STATUS.ACCOUNT_PENDING_ACTIVATION,
           );
         }
         logger.error({ email: req.body?.email, err: error }, "login failed");
@@ -294,6 +320,90 @@ export class AuthController {
         console.error("Reset password error:", error);
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
+    },
+  ];
+
+  /**
+   * Redeems the activation link mailed to an approved owner who had no account, and sets the
+   * first password. Separate from `resetPassword`: the token type, the account state it lifts
+   * and the audience all differ.
+   */
+  activateAccount = [
+    body("token").notEmpty().withMessage("Activation token is required"),
+    body("newPassword")
+      .isLength({ min: 8 })
+      .withMessage("New password must be at least 8 characters long"),
+
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: errors.array(),
+        });
+      }
+
+      try {
+        const { token, newPassword } = req.body as {
+          token: string;
+          newPassword: string;
+        };
+        const success = await authService.activateAccount(token, newPassword);
+
+        if (!success) {
+          return sendError(
+            res,
+            HTTP_STATUS.BAD_REQUEST.withMessage(
+              "Invalid or expired activation token",
+            ),
+          );
+        }
+
+        sendSuccess(res, HTTP_STATUS.OK.withMessage("Account activated"));
+      } catch (error) {
+        console.error("Activate account error:", error);
+        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+      }
+    },
+  ];
+
+  /**
+   * "Resend activation email". Always answers the same way so it cannot be used to find out
+   * which emails have a pending account.
+   */
+  resendActivation = [
+    body("email").isEmail().withMessage("Valid email is required"),
+
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: errors.array(),
+        });
+      }
+
+      try {
+        const issued = await authService.requestActivationResend(
+          String(req.body.email),
+        );
+        if (issued) {
+          await enqueueAccountActivationEmail({
+            toEmail: issued.email,
+            fullName: issued.name,
+            activationUrl: buildAccountActivationUrl(issued.token),
+            expiresInHours: authService.activationTtlHours(),
+          }).catch((err) => {
+            console.error("Resend activation email failed:", err);
+          });
+        }
+      } catch (error) {
+        console.error("Resend activation error:", error);
+      }
+      sendSuccess(
+        res,
+        HTTP_STATUS.OK.withMessage(
+          "If this email has an account waiting for activation, a new link is on its way",
+        ),
+      );
     },
   ];
 

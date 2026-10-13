@@ -9,7 +9,9 @@ import {
   sendSuccess,
 } from "../../constants/http-status";
 import { GlobalStatus, JoinRequestStatus } from "../../constants/status.enum";
+import { OrgMemberRole } from "@da2/constants";
 import type {
+  ChangeMemberRoleBody,
   AdminVerifyOrganizationBody,
   CreateOrganizationBody,
   GetOrganizationJoinRequestsQuery,
@@ -111,6 +113,16 @@ function parseOrganizationListRequestStatusFilterQuery(
   return [...new Set(tokens.map((t) => parseInt(t, 10)))];
 }
 
+/** `roles=OWNER,ADMIN` or repeated `roles=OWNER&roles=ADMIN`; unknown values are dropped. */
+function parseRolesQuery(raw: unknown): string[] | undefined {
+  if (raw === undefined) return undefined;
+  const values = (Array.isArray(raw) ? raw : [raw])
+    .flatMap((value) => String(value).split(","))
+    .map((value) => value.trim().toUpperCase())
+    .filter((value) => (Object.values(OrgMemberRole) as string[]).includes(value));
+  return values.length ? values : undefined;
+}
+
 export class OrganizationController {
   createOrganization = [
     body("name")
@@ -148,6 +160,11 @@ export class OrganizationController {
       .isLength({ max: 320 })
       .isEmail()
       .withMessage("contact_email is required and must be a valid email"),
+    // Internal callers carry no JWT, so the owner has to be named explicitly.
+    body("ownerId")
+      .notEmpty()
+      .isUUID()
+      .withMessage("owner_id is required and must be a uuid"),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -157,7 +174,7 @@ export class OrganizationController {
         });
       }
 
-      const userId = req.user?.userId;
+      const userId = (req.body as { ownerId?: string }).ownerId;
       if (!userId) {
         return sendError(res, HTTP_STATUS.UNAUTHORIZED);
       }
@@ -336,6 +353,7 @@ export class OrganizationController {
       }),
     query("is_owner").optional().isIn(["true", "false", "1", "0"]),
     query("isOwner").optional().isIn(["true", "false", "1", "0"]),
+    query("roles").optional(),
     query("page").optional().isInt({ min: 1 }),
     query("limit").optional().isInt({ min: 1, max: 100 }),
     query("sortBy").optional().isIn(["createdAt", "updatedAt", "name"]),
@@ -360,6 +378,7 @@ export class OrganizationController {
         isEmailVerified: parseOrganizationListEmailVerifiedQuery(req),
         requestStatus: parseOrganizationListRequestStatusFilterQuery(req),
         isOwner: parseMyOrganizationsIsOwnerQuery(req),
+        roles: parseRolesQuery(req.query.roles),
         page: req.query.page ? parseInt(String(req.query.page), 10) : undefined,
         limit: req.query.limit
           ? parseInt(String(req.query.limit), 10)
@@ -903,11 +922,112 @@ export class OrganizationController {
     },
   ];
 
+  stepDown = [
+    orgIdParam,
+    body("role")
+      .optional({ values: "null" })
+      .isIn([OrgMemberRole.ADMIN, OrgMemberRole.MEMBER])
+      .withMessage("role must be ADMIN or MEMBER"),
+
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: errors.array(),
+        });
+      }
+      const userId = req.user?.userId;
+      if (!userId) {
+        return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+      }
+      try {
+        await organizationService.stepDown(
+          req.params.id,
+          userId,
+          String((req.body as Partial<ChangeMemberRoleBody>).role ?? OrgMemberRole.MEMBER),
+        );
+        return sendSuccess(res, HTTP_STATUS.OK);
+      } catch (error) {
+        if (sendHttpErrorResponse(res, error)) {
+          return;
+        }
+        throw error;
+      }
+    },
+  ];
+
+  changeMemberRole = [
+    orgIdParam,
+    param("userId").isUUID(),
+    body("role")
+      .isIn(Object.values(OrgMemberRole))
+      .withMessage("role must be an OrgMemberRole"),
+
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: errors.array(),
+        });
+      }
+      const userId = req.user?.userId;
+      if (!userId) {
+        return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+      }
+      try {
+        const member = await organizationService.changeMemberRole(
+          req.params.id,
+          userId,
+          req.params.userId,
+          String((req.body as ChangeMemberRoleBody).role),
+        );
+        return sendSuccess(res, HTTP_STATUS.OK, { member });
+      } catch (error) {
+        if (sendHttpErrorResponse(res, error)) {
+          return;
+        }
+        throw error;
+      }
+    },
+  ];
+
+  removeMember = [
+    orgIdParam,
+    param("userId").isUUID(),
+
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+          errors: errors.array(),
+        });
+      }
+      const userId = req.user?.userId;
+      if (!userId) {
+        return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+      }
+      try {
+        await organizationService.removeMember(
+          req.params.id,
+          userId,
+          req.params.userId,
+        );
+        return sendSuccess(res, HTTP_STATUS.OK);
+      } catch (error) {
+        if (sendHttpErrorResponse(res, error)) {
+          return;
+        }
+        throw error;
+      }
+    },
+  ];
+
   listMembers = [
     orgIdParam,
     query("userId").optional().isUUID(),
     query("user_id").optional().isUUID(),
     query("search").optional().isString().trim(),
+    query("roles").optional(),
     query("page").optional().isInt({ min: 1 }).toInt(),
     query("limit").optional().isInt({ min: 1, max: 100 }).toInt(),
     query("sortBy").optional().isIn(["createdAt", "updatedAt"]),
@@ -949,6 +1069,7 @@ export class OrganizationController {
           searchRaw !== undefined && String(searchRaw).trim().length > 0
             ? String(searchRaw).trim()
             : undefined,
+        roles: parseRolesQuery(req.query.roles),
         page: req.query.page as number | undefined,
         limit: req.query.limit as number | undefined,
         sortBy,

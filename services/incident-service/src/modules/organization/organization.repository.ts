@@ -1,6 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 import prisma from "../../config/prisma.client";
 import { GlobalStatus } from "../../constants/status.enum";
+import { MembershipSource, OWNER_ROLES, OrgMemberRole } from "@da2/constants";
 
 export class OrganizationRepository {
   private prisma: PrismaClient;
@@ -21,8 +22,11 @@ export class OrganizationRepository {
     ownerId: string;
     createdBy?: string;
   }) {
-    return this.prisma.organization.create({
-      data: {
+    // The owner membership is written in the same transaction: the DB refuses to commit an
+    // organization without one.
+    return this.prisma.$transaction(async (tx) => {
+      const organization = await tx.organization.create({
+        data: {
         name: data.name,
         slug: data.slug,
         description: data.description ?? null,
@@ -31,10 +35,22 @@ export class OrganizationRepository {
         logoUrl: data.logoUrl,
         backgroundUrl: data.backgroundUrl ?? null,
         contactEmail: data.contactEmail ?? null,
-        status: GlobalStatus._STATUS_PENDING,
-        ownerId: data.ownerId,
-        createdBy: data.createdBy ?? data.ownerId,
-      },
+        // `organizations` only holds approved rows now, so there is no PENDING state to
+        // start from; matches the column default.
+          status: GlobalStatus._STATUS_ACTIVE,
+          createdBy: data.createdBy ?? data.ownerId,
+        },
+      });
+      await tx.organizationMember.create({
+        data: {
+          organizationId: organization.id,
+          userId: data.ownerId,
+          role: OrgMemberRole.OWNER,
+          source: MembershipSource.INTERNAL,
+          createdBy: data.createdBy ?? data.ownerId,
+        },
+      });
+      return organization;
     });
   }
 
@@ -153,7 +169,6 @@ export class OrganizationRepository {
         logoUrl: true,
         backgroundUrl: true,
         contactEmail: true,
-        ownerId: true,
       },
     });
   }
@@ -218,9 +233,7 @@ export class OrganizationRepository {
     return { rows, total };
   }
 
-  /**
-   * Organizations the user owns or is an approved member of (owner is not stored in `members`).
-   */
+  /** Organizations the user holds any active membership in (owners included). */
   async findLinkedToUserPaginated(
     userId: string,
     filters: {
@@ -230,6 +243,8 @@ export class OrganizationRepository {
       organizationIdIn?: string[];
       /** Narrow to owned only (`true`) or member-but-not-owner (`false`). */
       isOwner?: boolean;
+      /** Narrow to memberships holding one of these roles. */
+      roles?: string[];
     },
     options: {
       skip: number;
@@ -244,32 +259,22 @@ export class OrganizationRepository {
     ) {
       return { rows: [], total: 0 };
     }
-    const linkScope =
-      filters.isOwner === true
-        ? { ownerId: userId }
-        : filters.isOwner === false
-          ? {
-              ownerId: { not: userId },
-              members: {
-                some: {
-                  userId,
-                  deletedAt: null,
-                },
-              },
-            }
-          : {
-              OR: [
-                { ownerId: userId },
-                {
-                  members: {
-                    some: {
-                      userId,
-                      deletedAt: null,
-                    },
-                  },
-                },
-              ],
-            };
+    const ownerRoles: string[] = [...OWNER_ROLES];
+    const linkScope = {
+      members: {
+        some: {
+          userId,
+          deletedAt: null,
+          ...(filters.roles?.length
+            ? { role: { in: filters.roles } }
+            : filters.isOwner === true
+              ? { role: { in: ownerRoles } }
+              : filters.isOwner === false
+                ? { role: { notIn: ownerRoles } }
+                : {}),
+        },
+      },
+    };
     const where = {
       deletedAt: null as null,
       ...(filters.organizationIdIn !== undefined

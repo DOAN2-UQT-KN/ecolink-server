@@ -46,6 +46,45 @@ export class UserRepository {
     });
   }
 
+  /**
+   * Active people whose email or name contains `q` (case-insensitive), for the organization
+   * member / owner pickers. Deleted and banned accounts are left out.
+   */
+  async searchActive(q: string, limit: number): Promise<UserEntity[]> {
+    const term = q.trim();
+    if (term.length < 2) return [];
+    return this.prisma.user.findMany({
+      where: {
+        deletedAt: null,
+        status: 1,
+        OR: [
+          { email: { contains: term, mode: "insensitive" } },
+          { name: { contains: term, mode: "insensitive" } },
+        ],
+      },
+      orderBy: { name: "asc" },
+      take: Math.min(Math.max(limit, 1), 20),
+    });
+  }
+
+  /** Case-insensitive lookup of several emails at once. */
+  async findManyByEmails(emails: string[]): Promise<UserEntity[]> {
+    const unique = [...new Set(emails.map((e) => e.trim().toLowerCase()))].filter(
+      Boolean,
+    );
+    if (unique.length === 0) {
+      return [];
+    }
+    return this.prisma.user.findMany({
+      where: {
+        deletedAt: null,
+        OR: unique.map((email) => ({
+          email: { equals: email, mode: "insensitive" as const },
+        })),
+      },
+    });
+  }
+
   async findByEmail(email: string): Promise<UserEntity | null> {
     return this.prisma.user.findFirst({
       where: { email, deletedAt: null },

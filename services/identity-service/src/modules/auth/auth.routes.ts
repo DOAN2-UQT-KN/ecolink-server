@@ -61,6 +61,20 @@ router.post("/request-password-reset", authController.requestPasswordReset);
 router.post("/reset-password", authController.resetPassword);
 
 /**
+ * @route   POST /api/v1/auth/activate-account
+ * @desc    Set the first password of an account created for an approved organization owner
+ * @access  Public (single-use token from the activation email)
+ */
+router.post("/activate-account", authController.activateAccount);
+
+/**
+ * @route   POST /api/v1/auth/activation/resend
+ * @desc    Mail a fresh activation link (max 3 per hour). Always answers 200.
+ * @access  Public
+ */
+router.post("/activation/resend", authController.resendActivation);
+
+/**
  * @route   GET /api/v1/auth/me
  * @desc    Get currently authenticated user profile
  * @access  Private

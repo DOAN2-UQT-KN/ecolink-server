@@ -7,6 +7,8 @@ export interface DifficultyResponse {
   nameVi?: string | null;
   nameEn?: string | null;
   maxVolunteers: number | null;
+  /** Suggested minimum volunteers per campaign day. */
+  suggestedMinVolunteers: number | null;
   greenPoints: number;
 }
 
@@ -17,6 +19,7 @@ export const toDifficultyResponse = (row: Difficulty): DifficultyResponse => ({
   nameVi: row.nameVi ?? row.name,
   nameEn: row.nameEn,
   maxVolunteers: row.maxVolunteers,
+  suggestedMinVolunteers: row.suggestedMinVolunteers,
   greenPoints: row.greenPoints,
 });
 
@@ -25,6 +28,7 @@ export interface UpdateDifficultyBody {
   nameVi?: string;
   nameEn?: string;
   maxVolunteers?: number | null;
+  suggestedMinVolunteers?: number | null;
   greenPoints?: number;
 }
 

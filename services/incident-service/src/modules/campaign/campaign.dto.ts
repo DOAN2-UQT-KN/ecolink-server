@@ -1,7 +1,6 @@
-import { GlobalStatus } from "../../constants/status.enum";
+import type { CampaignRequirements, ShiftStatusValue } from "@da2/constants";
 import type { OrganizationOwnerResponse } from "../organization/organization.dto";
 import type { ResourceVoteSummary } from "../vote/vote.dto";
-import type { CampaignCompletionVerificationSummary } from "./campaign_completion_verification/campaign_completion_verification.dto";
 import type { ReportResponse } from "../report/report.dto";
 
 export interface CampaignOrganizationResponse {
@@ -19,7 +18,7 @@ export interface CampaignManagerBasicResponse {
 }
 
 export interface CreateCampaignRequest {
-  /** Organization that owns this campaign; caller must be that organization's owner. */
+  /** Organization that owns this campaign; caller must hold an owner role in it. */
   organizationId: string;
   title: string;
   titleVi?: string;
@@ -28,15 +27,121 @@ export interface CreateCampaignRequest {
   description?: string;
   descriptionVi?: string;
   descriptionEn?: string;
-  startDate?: string;
-  endDate?: string;
-  detailAddress?: string;
-  latitude?: number;
-  longitude?: number;
-  radiusKm?: number;
   /** 1 = easy … 4 = very hard; must exist in reward-service `difficulties` table. */
   difficulty: number;
+  contactName?: string | null;
+  contactPhone?: string | null;
+  safetyNotes?: string | null;
+  requirements?: CampaignRequirements | null;
+  /** Required on submit when a day's minimum volunteers is below the difficulty's suggestion. */
+  minVolunteersReason?: string | null;
+  days?: CampaignDayInput[];
+  meetingPoints?: MeetingPointInput[];
+  shifts?: CampaignShiftInput[];
+}
+
+/** One campaign day in a create/update body. */
+export interface CampaignDayInput {
+  /** An existing day of the campaign; edits of an approved campaign match days by id. */
+  id?: string;
+  startAt: string;
+  endAt: string;
+}
+
+/**
+ * One shift (day × meeting point) in a create/update body, by position in `days` and
+ * `meetingPoints`. Shifts left out are off (0 minimum volunteers).
+ */
+export interface CampaignShiftInput {
+  dayIndex: number;
+  meetingPointIndex: number;
+  /** Shift window, ISO; omitted or null = the day's hours. */
+  startAt?: string | null;
+  endAt?: string | null;
+  gatherAt?: string | null;
+  /** Volunteers needed; 0 turns the shift off. A warning level, not a cap. */
+  minVolunteers: number;
+  /** Expected maximum; optional, warning only. */
+  maxVolunteers?: number | null;
+  leaderUserId?: string | null;
+}
+
+/** One gathering point in a create/update body. */
+export interface MeetingPointInput {
+  /** An existing meeting point; edits of an approved campaign match points by id. */
+  id?: string;
+  name?: string | null;
+  latitude: number;
+  longitude: number;
+  detailAddress?: string | null;
+  radiusKm: number;
   reportIds?: string[];
+}
+
+export interface MeetingPointResponse {
+  id: string;
+  name: string | null;
+  latitude: number;
+  longitude: number;
+  detailAddress: string | null;
+  radiusKm: number;
+  sortOrder: number;
+  reportIds: string[];
+}
+
+export interface CampaignDayResponse {
+  id: string;
+  startAt: Date;
+  endAt: Date;
+  sortOrder: number;
+}
+
+export interface CampaignShiftResponse {
+  id: string;
+  dayId: string;
+  meetingPointId: string;
+  startAt: Date;
+  endAt: Date;
+  gatherAt: Date | null;
+  minVolunteers: number;
+  maxVolunteers: number | null;
+  leaderUserId: string | null;
+  /** Actual end when the shift was ended early (spec 4.2). */
+  endedAt: Date | null;
+  /** Derived status (spec 4.2): upcoming, running, awaiting_result, ended or off. */
+  status: ShiftStatusValue;
+  /** Set when the admin rejected the completion and asked for more on this shift (spec 5.2). */
+  reopenedAt: Date | null;
+  reopenReason: string | null;
+  /** Live registrations; only on responses that count them (campaign detail). */
+  registeredCount?: number;
+}
+
+/** Body for PUT /api/v1/campaigns/:id/registrations/me: the shifts to hold; [] leaves. */
+export interface UpdateMyRegistrationsBody {
+  shiftIds: string[];
+  /** Required when adding shifts. */
+  acceptConditions?: boolean;
+}
+
+/** Body for PUT /api/v1/campaigns/:id/review (admin). */
+export interface AdminReviewCampaignBody {
+  decision: "approve" | "request_revision" | "block";
+  /** Required for request_revision and block. */
+  reason?: string | null;
+}
+
+export interface CampaignStatusLogResponse {
+  id: string;
+  type: string;
+  event: string;
+  fromStatus: number | null;
+  toStatus: number | null;
+  actorId: string | null;
+  actorRole: string;
+  reason: string | null;
+  changes: unknown;
+  createdAt: Date;
 }
 
 /**
@@ -55,9 +160,41 @@ export interface AdminVerifyCampaignBody {
 
 /** Body for PUT /api/v1/campaigns/:id/completion-review (admin). */
 export interface AdminCompletionReviewBody {
-  decision: "approve" | "reject";
-  /** Required when `decision` is `"reject"`. */
+  /** Approve only once result verification handed the campaign over (`completionAwaitingAdmin`). */
+  decision: "approve" | "cancel";
+  /** Required when `decision` is `"cancel"`. */
   rejectReason?: string | null;
+  /** Approve only: settle the difficulty (points follow it); defaults to the current one. */
+  difficulty?: number;
+}
+
+/** Body for PUT /api/v1/campaigns/:id/verification/:meetingPointId/vote (resident). */
+export interface MeetingPointVoteBody {
+  /** "up" = clean, "down" = not clean (needs `note` or `photoUrl`, and `reportIds`). */
+  value: "up" | "down";
+  note?: string | null;
+  photoUrl?: string | null;
+  /** Down only: the trash points of the round that are not clean (at least one). */
+  reportIds?: string[] | null;
+  /** Live GPS when voting; without it the vote counts as viewed online. */
+  latitude?: number | null;
+  longitude?: number | null;
+  accuracy?: number | null;
+}
+
+/** Body for PUT /api/v1/campaigns/:id/verification/:meetingPointId/decision (admin, flagged meeting point). */
+export interface MeetingPointDecisionBody {
+  decision: "verify" | "reject";
+  /** Required to reject. */
+  reason?: string | null;
+  /** Required to reject: the trash points of the round that did not pass (at least one). */
+  reportIds?: string[] | null;
+}
+
+/** Body for PUT /api/v1/campaigns/:id/mark-done (manager). */
+export interface MarkCampaignDoneBody {
+  /** One entry per trash report no shift's result lists, with the reason (1–500 characters). */
+  unhandled?: Array<{ reportId: string; reason: string }>;
 }
 
 export interface UpdateCampaignRequest {
@@ -68,16 +205,21 @@ export interface UpdateCampaignRequest {
   description?: string;
   descriptionVi?: string;
   descriptionEn?: string;
-  status?: GlobalStatus;
   difficulty?: number;
-  startDate?: string | null;
-  endDate?: string | null;
-  detailAddress?: string | null;
-  latitude?: number | null;
-  longitude?: number | null;
-  radiusKm?: number | null;
-  reportIds?: string[];
   managerIds?: string[];
+  contactName?: string | null;
+  contactPhone?: string | null;
+  safetyNotes?: string | null;
+  requirements?: CampaignRequirements | null;
+  /** Required on submit when a day's minimum volunteers is below the difficulty's suggestion. */
+  minVolunteersReason?: string | null;
+  /**
+   * The schedule (days, meeting points with their reports, shifts). Any of the three present
+   * replaces the whole schedule; the ones left out are kept from the campaign.
+   */
+  days?: CampaignDayInput[];
+  meetingPoints?: MeetingPointInput[];
+  shifts?: CampaignShiftInput[];
 }
 
 export interface CampaignResponse {
@@ -85,7 +227,7 @@ export interface CampaignResponse {
   /** Organization the campaign belongs to. */
   organizationId: string;
   Organization?: CampaignOrganizationResponse;
-  /** Organization owner profile from identity-service (name, avatar). */
+  /** Profile of the person who created the campaign for the organization (identity-service). */
   owner: OrganizationOwnerResponse | null;
   title: string;
   titleVi?: string | null;
@@ -97,18 +239,46 @@ export interface CampaignResponse {
   status: number;
   /** Admin ban reason; null when verified or never banned. */
   rejectReason: string | null;
-  startDate: Date | null;
-  endDate: Date | null;
   detailAddress: string | null;
   latitude: number | null;
   longitude: number | null;
   radiusKm: number | null;
   difficulty: number;
+  contactName: string | null;
+  /** Only for the campaign's managers, admins and accepted volunteers; null otherwise. */
+  contactPhone: string | null;
+  safetyNotes: string | null;
+  requirements: CampaignRequirements | null;
+  /** Resubmit before this while NEEDS_REVISION. */
+  revisionDeadline: Date | null;
+  submittedAt: Date | null;
+  /** First admin approval; set while back under review after an edit (spec 3.5). */
+  approvedAt: Date | null;
+  /** Last time a manager marked the campaign done (spec 5.1). */
+  completionSubmittedAt: Date | null;
+  /** Times the completion was rejected; after 3 result verification hands it to the admin. */
+  completionRejectionCount: number;
+  /**
+   * Result verification hands the campaign to the admin (complete or cancel): rejected 3 times
+   * already, or no trash point declared cleaned.
+   */
+  completionAwaitingAdmin: boolean;
+  /** Only on an update: the edit sent the campaign back for review (spec 3.5). */
+  reReview?: boolean;
+  /** Why a day's minimum volunteers is below the difficulty's suggestion. */
+  minVolunteersReason: string | null;
+  /** Suggested minimum volunteers per day for this difficulty (detail responses only). */
+  suggestedMinVolunteers: number | null;
+  /** Campaign days in time order; the campaign runs from the first start to the last end. */
+  days: CampaignDayResponse[];
+  meetingPoints: MeetingPointResponse[];
+  /** Every day × meeting point; `minVolunteers` 0 = off. */
+  shifts: CampaignShiftResponse[];
   /** Green points for this difficulty tier (reward rules). */
   greenPoints: number;
   /** Count of approved campaign join requests (volunteers). */
   currentMembers: number;
-  /** Volunteer cap for this difficulty tier from reward-service; null means no limit. */
+  /** Volunteers allowed per day for this difficulty tier (reward-service); null = no limit. */
   maxMembers: number | null;
   createdBy: string | null;
   updatedBy: string | null;
@@ -117,20 +287,22 @@ export interface CampaignResponse {
   reports: ReportResponse[];
   managers: CampaignManagerBasicResponse[];
   votes: ResourceVoteSummary;
-  /** Community clean / not-clean verification after mark-done (separate from votes). */
-  completionVerification: CampaignCompletionVerificationSummary;
   /**
    * Whether the current user saved this campaign. Null when the viewer is unknown (unauthenticated).
    */
   saved: boolean | null;
   /**
-   * For the current user when their latest non-deleted campaign join request is pending
-   * (`JoinRequestStatus._STATUS_PENDING`) or approved (`JoinRequestStatus._STATUS_APPROVED`).
-   * Present on GET /campaigns and GET /campaigns/:id; omitted if there is no request or the latest is rejected.
+   * `JoinRequestStatus._STATUS_APPROVED` when the viewer holds at least one shift; omitted
+   * otherwise. Kept for older clients; `myShiftIds` (detail) is the precise answer.
    */
   requestStatus?: number;
+  /** Detail only: the shifts the viewer is registered for. */
+  myShiftIds?: string[];
   /** True when the viewer is the campaign creator or an assigned campaign manager. */
   canManageCampaign?: boolean;
+  canDeleteCampaign?: boolean;
+  /** The viewer may cancel it now: creator or owner, and a cancellable status (spec 3.6). */
+  canCancelCampaign?: boolean;
 }
 
 export interface AddCampaignManagersRequest {
@@ -252,35 +424,6 @@ export interface PaginatedManagersEnvelopeData {
   totalPages: number;
 }
 
-export interface AssignVolunteerBody {
-  volunteerId: string;
-}
-
-export interface TaskStatusUpdateBody {
-  status: number;
-}
-
-export interface CreateCampaignTaskBody {
-  title: string;
-  description?: string;
-  priority?: 1 | 2 | 3;
-  scheduledDate?: string;
-  scheduledTime?: string;
-}
-
-export interface UpdateCampaignTaskBody {
-  title?: string;
-  description?: string;
-  status?: number;
-  priority?: 1 | 2 | 3;
-  scheduledDate?: string;
-  scheduledTime?: string;
-  result?: {
-    description?: string;
-    file?: string[];
-  };
-}
-
 export interface RemoveCampaignManagerBody {
   userId: string;
 }
@@ -311,6 +454,12 @@ export interface CampaignListQuery {
   greenPointsFrom?: number;
   greenPointsTo?: number;
   isOwner?: boolean;
+  /** Admin review queue: leave out organizations the admin belongs to. */
+  excludeMemberOrgsOfUserId?: string;
+  /** Restrict to publicly visible statuses (non-admin browsing). */
+  publicOnly?: boolean;
+  /** Drafts belong to their creator and managers only (GET /campaigns/my). */
+  excludeDrafts?: boolean;
 }
 
 /** Query for GET /campaigns/admin/awaiting-multi-submission-review. */
@@ -351,16 +500,4 @@ export interface VolunteersListEnvelopeData {
 
 export interface ManagersListEnvelopeData {
   managers: object[];
-}
-
-export interface TaskOneEnvelopeData {
-  task: object;
-}
-
-export interface TasksListEnvelopeData {
-  tasks: object[];
-}
-
-export interface TaskAssignmentEnvelopeData {
-  assignment: object;
 }

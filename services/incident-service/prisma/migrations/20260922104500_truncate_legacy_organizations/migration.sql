@@ -1,0 +1,26 @@
+-- ============================================================================
+-- DESTRUCTIVE. No backfill: every organization created through the old direct-create
+-- endpoint is discarded, and from now on an organization can only come into existence
+-- through the application pipeline.
+--
+-- Postgres propagates TRUNCATE ... CASCADE transitively, so this does NOT stop at the
+-- organization tables. Everything below is emptied:
+--
+--   organizations, organization_members, organization_joining_requests,
+--   organization_channels, organization_violations,
+--   campaigns, campaign_tasks, campaign_task_results, campaign_task_result_files,
+--   campaign_task_assignments, campaign_joining_requests, campaign_attendance_check_ins,
+--   campaign_submissions, campaign_results, campaign_result_files, campaign_managers,
+--   campaign_completion_verifications, sos,
+--   reports, report_media_files, report_issues, ai_analysis_logs,
+--   votes, saved_resources
+--
+-- After running it, re-seed with `npm run prisma:seed`. Clean up out-of-band as well:
+--   * identity DB:  DELETE FROM auth_tokens WHERE type = 'ORGANIZATION_CONTACT_EMAIL';
+--   * SQS:          purge the `incident-translation` queue (in-flight jobs point at gone rows)
+--   * Cloudinary:   orphaned logo / background assets (cosmetic only)
+--
+-- There is no rollback.
+-- ============================================================================
+
+TRUNCATE TABLE "organizations" RESTART IDENTITY CASCADE;

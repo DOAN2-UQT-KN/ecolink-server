@@ -4,12 +4,15 @@ import {
   HTTP_CIRCUIT_REWARD,
   type HttpCircuit,
 } from "../../resilience/http-circuit";
+import { HttpError, HTTP_STATUS } from "../../constants/http-status";
 
 export interface RewardDifficulty {
   id: string;
   level: number;
   name: string;
   maxVolunteers: number | null;
+  /** Suggested minimum volunteers per campaign day; null = no suggestion. */
+  suggestedMinVolunteers: number | null;
   greenPoints: number;
 }
 
@@ -38,6 +41,7 @@ function normalizeDifficulty(row: unknown): RewardDifficulty | null {
   const greenPoints = toNumberOrNull(r.greenPoints);
   const maxVolunteersRaw = toNumberOrNull(r.maxVolunteers);
   const maxVolunteers = maxVolunteersRaw === null ? null : maxVolunteersRaw;
+  const suggestedMinVolunteers = toNumberOrNull(r.suggestedMinVolunteers);
 
   if (!id || level === null || greenPoints === null) return null;
 
@@ -47,6 +51,7 @@ function normalizeDifficulty(row: unknown): RewardDifficulty | null {
     level,
     greenPoints,
     maxVolunteers,
+    suggestedMinVolunteers,
   };
 }
 
@@ -147,41 +152,47 @@ export class RewardServiceClient {
     }
   }
 
-  async getDifficultyByLevel(
+  /**
+   * The tier for a level: `null` only when reward-service answers 404 (no such level). Not being
+   * able to reach it (network, timeout, 5xx, open circuit, missing env) throws 503
+   * `REWARD_SERVICE_UNAVAILABLE`, so callers never mistake an outage for an invalid difficulty.
+   * A 404 is an answer, not a failure: it does not count against the circuit breaker.
+   */
+  async getDifficultyByLevelStrict(
     level: number,
   ): Promise<RewardDifficulty | null> {
     try {
       return await this.circuit.run(async () => {
         const client = this.getClient();
-        const { data } = await client.get<
-          SuccessEnvelope<{ difficulty: RewardDifficulty }>
-        >(`/internal/v1/difficulties/level/${level}`);
-        if (!data?.success || !data.data?.difficulty) {
-          return null;
+        try {
+          const { data } = await client.get<
+            SuccessEnvelope<{ difficulty: RewardDifficulty }>
+          >(`/internal/v1/difficulties/level/${level}`);
+          if (!data?.success || !data.data?.difficulty) {
+            return null;
+          }
+          return normalizeDifficulty(data.data.difficulty);
+        } catch (err) {
+          if (axios.isAxiosError(err) && err.response?.status === 404) {
+            return null;
+          }
+          throw err;
         }
-        return normalizeDifficulty(data.data.difficulty);
       });
     } catch (e) {
       this.logCallFailure("getDifficultyByLevel", e, { level });
-      return null;
+      throw new HttpError(HTTP_STATUS.REWARD_SERVICE_UNAVAILABLE);
     }
   }
 
-  async assertCampaignHasCapacityForJoinApproval(
-    currentApprovedCount: number,
-    difficultyLevel: number,
-  ): Promise<void> {
-    const d = await this.getDifficultyByLevel(difficultyLevel);
-    if (!d) {
-      throw new Error("Campaign difficulty missing");
-    }
-    if (d.maxVolunteers === null) {
-      return;
-    }
-    if (currentApprovedCount >= d.maxVolunteers) {
-      throw new Error(
-        `Campaign volunteer capacity exceeded for this difficulty (max ${d.maxVolunteers})`,
-      );
+  /** Same lookup for display (points, suggested minimum): `null` on any failure, never throws. */
+  async getDifficultyByLevel(
+    level: number,
+  ): Promise<RewardDifficulty | null> {
+    try {
+      return await this.getDifficultyByLevelStrict(level);
+    } catch {
+      return null;
     }
   }
 }

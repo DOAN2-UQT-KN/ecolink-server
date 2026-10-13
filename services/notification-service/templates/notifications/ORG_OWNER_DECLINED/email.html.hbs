@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+  <body style="font-family: system-ui, sans-serif; line-height: 1.5; color: #111">
+    <p>Hello,</p>
+    <p>
+      <strong>{{ownerEmail}}</strong> answered "I'm not involved" to your application for
+      <strong>{{organizationName}}</strong>.
+    </p>
+    {{#if reason}}<p style="color: #444">Their note: “{{reason}}”</p>{{/if}}
+    <p>
+      The application is back with you. Remove or replace this owner, then submit again.
+      <a href="{{trackUrl}}" style="color: #0b57d0">Open your application</a>.
+    </p>
+    <p style="font-size: 0.875rem; color: #444">{{trackUrl}}</p>
+  </body>
+</html>

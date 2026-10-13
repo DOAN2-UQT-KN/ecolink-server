@@ -103,6 +103,9 @@ export class DifficultyService {
         ...(body.maxVolunteers !== undefined
           ? { maxVolunteers: body.maxVolunteers }
           : {}),
+        ...(body.suggestedMinVolunteers !== undefined
+          ? { suggestedMinVolunteers: body.suggestedMinVolunteers }
+          : {}),
         ...(body.greenPoints !== undefined
           ? { greenPoints: body.greenPoints }
           : {}),

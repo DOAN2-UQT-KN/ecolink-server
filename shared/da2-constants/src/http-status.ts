@@ -92,6 +92,508 @@ export const HTTP_STATUS = {
     "ORGANIZATION_ALREADY_EXISTS",
   ),
 
+  ORGANIZATION_APPLICATION_NOT_FOUND: createStatus(
+    404,
+    "Organization application not found",
+    "ORGANIZATION_APPLICATION_NOT_FOUND",
+  ),
+  ORGANIZATION_APPLICATION_ALREADY_OPEN: createStatus(
+    409,
+    "An open application already exists for this contact email",
+    "ORGANIZATION_APPLICATION_ALREADY_OPEN",
+  ),
+  ORGANIZATION_APPLICATION_NOT_EDITABLE: createStatus(
+    409,
+    "Application can only be edited as a draft or while a revision is requested",
+    "ORGANIZATION_APPLICATION_NOT_EDITABLE",
+  ),
+  ORGANIZATION_APPLICATION_ALREADY_DECIDED: createStatus(
+    409,
+    "Application has already been decided",
+    "ORGANIZATION_APPLICATION_ALREADY_DECIDED",
+  ),
+  ORGANIZATION_APPLICATION_CLAIMED: createStatus(
+    409,
+    "Application is already claimed by another reviewer",
+    "ORGANIZATION_APPLICATION_CLAIMED",
+  ),
+  ORGANIZATION_DOCUMENT_NOT_FOUND: createStatus(
+    404,
+    "Organization application document not found",
+    "ORGANIZATION_DOCUMENT_NOT_FOUND",
+  ),
+  ORGANIZATION_DOCUMENT_LIMIT: createStatus(
+    422,
+    "Too many documents for this application",
+    "ORGANIZATION_DOCUMENT_LIMIT",
+  ),
+  AT_LEAST_ONE_OWNER: createStatus(
+    422,
+    "An application needs at least one owner",
+    "AT_LEAST_ONE_OWNER",
+  ),
+  TOO_MANY_OWNERS: createStatus(
+    422,
+    "Too many owners for one application",
+    "TOO_MANY_OWNERS",
+  ),
+  DUPLICATE_OWNER_EMAIL: createStatus(
+    422,
+    "The same email is listed as owner more than once",
+    "DUPLICATE_OWNER_EMAIL",
+  ),
+  SUBMITTER_MUST_BE_OWNER: createStatus(
+    422,
+    "The submitter must be one of the owners",
+    "SUBMITTER_MUST_BE_OWNER",
+  ),
+  EXACTLY_ONE_LEGAL_REP: createStatus(
+    422,
+    "Exactly one owner must be the legal representative",
+    "EXACTLY_ONE_LEGAL_REP",
+  ),
+  OWNER_SUSPENDED: createStatus(
+    422,
+    "This owner's account is suspended",
+    "OWNER_SUSPENDED",
+  ),
+  OWNER_QUOTA_EXCEEDED: createStatus(
+    422,
+    "This person already owns the maximum number of organizations",
+    "OWNER_QUOTA_EXCEEDED",
+  ),
+  TOO_MANY_PENDING_INVITES: createStatus(
+    422,
+    "This email already has too many pending owner invitations",
+    "TOO_MANY_PENDING_INVITES",
+  ),
+  OWNER_INVITE_BLOCKED: createStatus(
+    422,
+    "This email has opted out of owner invitations",
+    "OWNER_INVITE_BLOCKED",
+  ),
+  OWNER_DECLINED_MUST_BE_REPLACED: createStatus(
+    422,
+    "An owner who declined must be removed or replaced before resubmitting",
+    "OWNER_DECLINED_MUST_BE_REPLACED",
+  ),
+  OWNER_CONFIRMATION_NOT_FOUND: createStatus(
+    404,
+    "Confirmation link is invalid",
+    "OWNER_CONFIRMATION_NOT_FOUND",
+  ),
+  CONFIRM_EXPIRED: createStatus(
+    410,
+    "Confirmation link has expired",
+    "CONFIRM_EXPIRED",
+  ),
+  ALREADY_DECLINED: createStatus(
+    409,
+    "This invitation has already been declined",
+    "ALREADY_DECLINED",
+  ),
+  ALREADY_CONFIRMED: createStatus(
+    409,
+    "This invitation has already been confirmed",
+    "ALREADY_CONFIRMED",
+  ),
+  APPLICATION_NOT_ACTIVE: createStatus(
+    409,
+    "This application is no longer waiting for confirmations",
+    "APPLICATION_NOT_ACTIVE",
+  ),
+  RESEND_TOO_SOON: createStatus(
+    429,
+    "Please wait before resending the confirmation email",
+    "RESEND_TOO_SOON",
+  ),
+  NOT_PENDING_REVIEW: createStatus(
+    409,
+    "Application is not waiting for review",
+    "NOT_PENDING_REVIEW",
+  ),
+  OWNERS_NOT_ALL_CONFIRMED: createStatus(
+    409,
+    "Not every owner has confirmed",
+    "OWNERS_NOT_ALL_CONFIRMED",
+  ),
+  ORG_PERMISSION_DENIED: createStatus(
+    403,
+    "Your role in this organization does not allow this action",
+    "ORG_PERMISSION_DENIED",
+  ),
+  ROLE_NOT_ASSIGNABLE: createStatus(
+    403,
+    "You cannot assign this role",
+    "ROLE_NOT_ASSIGNABLE",
+  ),
+  CANNOT_ACT_ON_MEMBER: createStatus(
+    403,
+    "You cannot change or remove this member",
+    "CANNOT_ACT_ON_MEMBER",
+  ),
+  MEMBER_NOT_FOUND: createStatus(
+    404,
+    "This person is not a member of the organization",
+    "MEMBER_NOT_FOUND",
+  ),
+  ALREADY_MEMBER: createStatus(
+    409,
+    "This person is already a member of the organization",
+    "ALREADY_MEMBER",
+  ),
+  INVITATION_ALREADY_PENDING: createStatus(
+    409,
+    "This person already has a pending invitation",
+    "INVITATION_ALREADY_PENDING",
+  ),
+  INVITATION_NOT_FOUND: createStatus(
+    404,
+    "Invitation not found",
+    "INVITATION_NOT_FOUND",
+  ),
+  INVITATION_EXPIRED: createStatus(
+    410,
+    "This invitation has expired",
+    "INVITATION_EXPIRED",
+  ),
+  INVITATION_NOT_ACTIVE: createStatus(
+    409,
+    "This invitation is no longer active",
+    "INVITATION_NOT_ACTIVE",
+  ),
+  INVITEE_NOT_AVAILABLE: createStatus(
+    422,
+    "This account cannot be invited",
+    "INVITEE_NOT_AVAILABLE",
+  ),
+  ALREADY_OWNER: createStatus(
+    409,
+    "This person is already an owner of the organization",
+    "ALREADY_OWNER",
+  ),
+  OWNER_CHANGE_ALREADY_OPEN: createStatus(
+    409,
+    "A matching owner change is already open",
+    "OWNER_CHANGE_ALREADY_OPEN",
+  ),
+  OWNER_CHANGE_NOT_FOUND: createStatus(
+    404,
+    "Owner change not found",
+    "OWNER_CHANGE_NOT_FOUND",
+  ),
+  OWNER_CHANGE_NOT_OPEN: createStatus(
+    409,
+    "This owner change is no longer open",
+    "OWNER_CHANGE_NOT_OPEN",
+  ),
+  TARGET_NOT_OWNER: createStatus(
+    409,
+    "This person is not an owner of the organization",
+    "TARGET_NOT_OWNER",
+  ),
+  NOT_PENDING_APPROVER: createStatus(
+    403,
+    "Your approval is not being asked for on this owner change",
+    "NOT_PENDING_APPROVER",
+  ),
+  LEGAL_REP_REPLACEMENT_REQUIRED: createStatus(
+    422,
+    "The legal representative can only step down or be removed with a replacement",
+    "LEGAL_REP_REPLACEMENT_REQUIRED",
+  ),
+  CANNOT_TARGET_SELF: createStatus(
+    422,
+    "Use step down or leave to change your own role",
+    "CANNOT_TARGET_SELF",
+  ),
+  CAMPAIGN_PERMISSION_DENIED: createStatus(
+    403,
+    "Only the campaign's creator, its managers or the organization's owners can do this",
+    "CAMPAIGN_PERMISSION_DENIED",
+  ),
+  CAMPAIGN_INVALID: createStatus(
+    400,
+    "The campaign is missing information or breaks a rule",
+    "CAMPAIGN_INVALID",
+  ),
+  CAMPAIGN_REPORTS_TAKEN: createStatus(
+    409,
+    "Some waste points were just taken by another campaign; remove them and try again",
+    "CAMPAIGN_REPORTS_TAKEN",
+  ),
+  CAMPAIGN_CREATE_NOT_ALLOWED: createStatus(
+    403,
+    "This organization cannot create or submit a campaign right now",
+    "CAMPAIGN_CREATE_NOT_ALLOWED",
+  ),
+  CAMPAIGN_INVALID_TRANSITION: createStatus(
+    409,
+    "The campaign cannot move to that status from its current status",
+    "CAMPAIGN_INVALID_TRANSITION",
+  ),
+  CAMPAIGN_REVIEW_CONFLICT_OF_INTEREST: createStatus(
+    403,
+    "Admins cannot review campaigns of an organization they belong to",
+    "CAMPAIGN_REVIEW_CONFLICT_OF_INTEREST",
+  ),
+  CAMPAIGN_NOT_EDITABLE: createStatus(
+    409,
+    "These fields cannot be changed in the campaign's current status",
+    "CAMPAIGN_NOT_EDITABLE",
+  ),
+  CAMPAIGN_NOT_REGISTRABLE: createStatus(
+    409,
+    "This campaign has no shift open for registration",
+    "CAMPAIGN_NOT_REGISTRABLE",
+  ),
+  SHIFT_NOT_REGISTRABLE: createStatus(
+    409,
+    "Some shifts are off, already started or not part of this campaign",
+    "SHIFT_NOT_REGISTRABLE",
+  ),
+  SHIFT_ALREADY_STARTED: createStatus(
+    409,
+    "This shift has already started",
+    "SHIFT_ALREADY_STARTED",
+  ),
+  DAY_NEEDS_ACTIVE_SHIFT: createStatus(
+    422,
+    "Each day needs at least one shift that runs; cancel the day instead",
+    "DAY_NEEDS_ACTIVE_SHIFT",
+  ),
+  NEARBY_INVITE_TOO_SOON: createStatus(
+    429,
+    "Nearby residents were invited recently; try again later",
+    "NEARBY_INVITE_TOO_SOON",
+  ),
+  CONDITIONS_NOT_ACCEPTED: createStatus(
+    400,
+    "Confirm that you meet the participation conditions",
+    "CONDITIONS_NOT_ACCEPTED",
+  ),
+  REWARD_SERVICE_UNAVAILABLE: createStatus(
+    503,
+    "The reward service is not reachable right now; try again shortly",
+    "REWARD_SERVICE_UNAVAILABLE",
+  ),
+  CAMPAIGN_NOT_DELETABLE: createStatus(
+    409,
+    "The campaign cannot be deleted in its current status",
+    "CAMPAIGN_NOT_DELETABLE",
+  ),
+  SOS_PERMISSION_DENIED: createStatus(
+    403,
+    "Only the campaign's managers or a platform admin can resolve this SOS",
+    "SOS_PERMISSION_DENIED",
+  ),
+  SOS_NOT_ELIGIBLE: createStatus(
+    403,
+    "You cannot raise an SOS for this campaign right now",
+    "SOS_NOT_ELIGIBLE",
+  ),
+  SOS_RATE_LIMIT: createStatus(
+    429,
+    "At most 3 SOS per hour",
+    "SOS_RATE_LIMIT",
+  ),
+  SOS_DETAILS_INVALID: createStatus(
+    422,
+    "The SOS details do not match its type",
+    "SOS_DETAILS_INVALID",
+  ),
+  SOS_PHOTO_REQUIRED: createStatus(
+    422,
+    "A hazardous-waste SOS needs at least one photo",
+    "SOS_PHOTO_REQUIRED",
+  ),
+  SOS_ALREADY_RESPONDING: createStatus(
+    409,
+    "You are already on the way to another SOS",
+    "SOS_ALREADY_RESPONDING",
+  ),
+  SOS_CLOSED: createStatus(409, "This SOS is closed", "SOS_CLOSED"),
+  SOS_RESPOND_NOT_ALLOWED: createStatus(
+    403,
+    "You cannot respond to this SOS",
+    "SOS_RESPOND_NOT_ALLOWED",
+  ),
+  CAMPAIGN_MANAGER_NOT_MEMBER: createStatus(
+    422,
+    "Campaign managers must be active members of the campaign's organization",
+    "CAMPAIGN_MANAGER_NOT_MEMBER",
+  ),
+  SHIFT_MIN_REQUIRED: createStatus(
+    422,
+    "A running shift needs at least one volunteer; turn the shift off instead",
+    "SHIFT_MIN_REQUIRED",
+  ),
+  CAMPAIGN_LEADER_NOT_MANAGER: createStatus(
+    422,
+    "A shift leader must be one of the campaign's managers or an owner of its organization",
+    "CAMPAIGN_LEADER_NOT_MANAGER",
+  ),
+  CAMPAIGN_NOT_CANCELLABLE: createStatus(
+    409,
+    "Only an upcoming or running campaign, or an approved one under review again, can be cancelled",
+    "CAMPAIGN_NOT_CANCELLABLE",
+  ),
+  CAMPAIGN_HAS_VOLUNTEERS: createStatus(
+    409,
+    "Volunteers have registered for this campaign; cancel it instead of deleting it",
+    "CAMPAIGN_HAS_VOLUNTEERS",
+  ),
+  ATTENDANCE_QR_INVALID: createStatus(
+    422,
+    "The QR code has expired; please scan again",
+    "ATTENDANCE_QR_INVALID",
+  ),
+  ATTENDANCE_NOT_OPEN: createStatus(
+    409,
+    "Attendance for this shift is not open",
+    "ATTENDANCE_NOT_OPEN",
+  ),
+  ATTENDANCE_SELF_CHECK_IN: createStatus(
+    403,
+    "You cannot check yourself in to a shift you run; scan the code of a shift another manager runs",
+    "ATTENDANCE_SELF_CHECK_IN",
+  ),
+  ATTENDANCE_MANUAL_LIMIT: createStatus(
+    409,
+    "Manual attendance is limited to 20% of the people present on the shift",
+    "ATTENDANCE_MANUAL_LIMIT",
+  ),
+  ATTENDANCE_ALREADY_RECORDED: createStatus(
+    409,
+    "This person already has attendance on this shift",
+    "ATTENDANCE_ALREADY_RECORDED",
+  ),
+  ATTENDANCE_LEGACY_GONE: createStatus(
+    410,
+    "Attendance is now per shift; update the app and scan the shift's QR code",
+    "ATTENDANCE_LEGACY_GONE",
+  ),
+  SHIFT_NOT_STARTED: createStatus(
+    409,
+    "This shift has not started yet",
+    "SHIFT_NOT_STARTED",
+  ),
+  SHIFT_RESULT_REQUIRED: createStatus(
+    409,
+    "Submit the shift's result before ending it",
+    "SHIFT_RESULT_REQUIRED",
+  ),
+  SHIFT_RESULT_INVALID: createStatus(
+    422,
+    "The shift's result is incomplete or invalid",
+    "SHIFT_RESULT_INVALID",
+  ),
+  SHIFT_RESULT_LOCKED: createStatus(
+    409,
+    "The shift's result can no longer be changed",
+    "SHIFT_RESULT_LOCKED",
+  ),
+  CAMPAIGN_SHIFTS_NOT_ENDED: createStatus(
+    409,
+    "Every active shift must be ended, with its result, before the campaign is marked done",
+    "CAMPAIGN_SHIFTS_NOT_ENDED",
+  ),
+  CAMPAIGN_REPORTS_UNHANDLED: createStatus(
+    422,
+    "Give a reason for every trash report no shift handled",
+    "CAMPAIGN_REPORTS_UNHANDLED",
+  ),
+  CAMPAIGN_COMPLETION_REJECT_LIMIT: createStatus(
+    409,
+    "This completion was already rejected 3 times; approve or cancel the campaign",
+    "CAMPAIGN_COMPLETION_REJECT_LIMIT",
+  ),
+  CAMPAIGN_COMPLETION_NOT_AWAITING_ADMIN: createStatus(
+    409,
+    "Result verification decides this campaign; the admin approves only once it waits for them",
+    "CAMPAIGN_COMPLETION_NOT_AWAITING_ADMIN",
+  ),
+  CAMPAIGN_COMPLETION_VERIFICATION_GONE: createStatus(
+    410,
+    "Residents now verify each meeting point; use PUT /campaigns/:id/verification/:meetingPointId/vote",
+    "CAMPAIGN_COMPLETION_VERIFICATION_GONE",
+  ),
+  RESULT_PHOTO_INVALID: createStatus(
+    422,
+    "The result photo is missing, too large or not an image",
+    "RESULT_PHOTO_INVALID",
+  ),
+  MEETING_POINT_VOTE_CLOSED: createStatus(
+    409,
+    "Voting on this meeting point is closed",
+    "MEETING_POINT_VOTE_CLOSED",
+  ),
+  MEETING_POINT_VOTE_NOT_ALLOWED: createStatus(
+    403,
+    "Members of the organization, the campaign's managers and its volunteers cannot vote",
+    "MEETING_POINT_VOTE_NOT_ALLOWED",
+  ),
+  MEETING_POINT_VOTE_REASON_REQUIRED: createStatus(
+    422,
+    "Saying a meeting point is not clean needs a note or a photo",
+    "MEETING_POINT_VOTE_REASON_REQUIRED",
+  ),
+  MEETING_POINT_VOTE_REPORTS_REQUIRED: createStatus(
+    422,
+    "Saying a meeting point is not clean needs the trash points that are not clean (report_ids of this round)",
+    "MEETING_POINT_VOTE_REPORTS_REQUIRED",
+  ),
+  MEETING_POINT_REJECT_REPORTS_REQUIRED: createStatus(
+    422,
+    "Rejecting a meeting point needs the trash points that did not pass (report_ids of this round)",
+    "MEETING_POINT_REJECT_REPORTS_REQUIRED",
+  ),
+  MEETING_POINT_VOTE_LIMIT: createStatus(
+    429,
+    "You have reached the number of votes allowed per day",
+    "MEETING_POINT_VOTE_LIMIT",
+  ),
+  MEETING_POINT_NOT_FLAGGED: createStatus(
+    409,
+    "Only a flagged meeting point can be decided by the admin",
+    "MEETING_POINT_NOT_FLAGGED",
+  ),
+  CAMPAIGN_MANAGER_LEADS_SHIFTS: createStatus(
+    409,
+    "This manager still leads upcoming shifts; assign another leader first",
+    "CAMPAIGN_MANAGER_LEADS_SHIFTS",
+  ),
+  CANNOT_REMOVE_CAMPAIGN_CREATOR: createStatus(
+    422,
+    "The campaign's creator cannot be removed as a manager",
+    "CANNOT_REMOVE_CAMPAIGN_CREATOR",
+  ),
+  ORG_MUST_HAVE_OWNER: createStatus(
+    409,
+    "An organization must keep at least one owner",
+    "ORG_MUST_HAVE_OWNER",
+  ),
+  OTP_INVALID: createStatus(
+    400,
+    "Verification code is invalid or has expired",
+    "OTP_INVALID",
+  ),
+  ACCOUNT_PENDING_ACTIVATION: createStatus(
+    403,
+    "This account has not been activated yet. Use the activation link sent to your email, or request a new one.",
+    "ACCOUNT_PENDING_ACTIVATION",
+  ),
+  TRACKING_TOKEN_INVALID: createStatus(
+    401,
+    "Tracking link is missing, invalid or has expired",
+    "TRACKING_TOKEN_INVALID",
+  ),
+  OTP_TOO_MANY_ATTEMPTS: createStatus(
+    429,
+    "Too many verification attempts, request a new code",
+    "OTP_TOO_MANY_ATTEMPTS",
+  ),
+
   TASK_NOT_FOUND: createStatus(404, "Task not found", "TASK_NOT_FOUND"),
   TASK_ALREADY_ASSIGNED: createStatus(
     409,
@@ -173,11 +675,14 @@ export const createHttpStatus = (
 
 export class HttpError extends Error {
   readonly statusResponse: HttpStatusResponse;
+  /** Extra fields merged into the error body (e.g. per-field `details`). */
+  readonly data?: Record<string, any>;
 
-  constructor(statusResponse: HttpStatusResponse) {
+  constructor(statusResponse: HttpStatusResponse, data?: Record<string, any>) {
     super(statusResponse.message);
     this.name = "HttpError";
     this.statusResponse = statusResponse;
+    this.data = data;
     Object.setPrototypeOf(this, new.target.prototype);
   }
 
@@ -188,7 +693,7 @@ export class HttpError extends Error {
 
 export const sendHttpErrorResponse = (res: any, error: unknown): boolean => {
   if (HttpError.isHttpError(error)) {
-    sendError(res, error.statusResponse);
+    sendError(res, error.statusResponse, error.data);
     return true;
   }
   return false;

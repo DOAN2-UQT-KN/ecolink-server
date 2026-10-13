@@ -18,7 +18,7 @@ import { errorHandler } from "./middleware/error.middleware";
 import internalRoutes from "./internal/internal.routes";
 
 const app: Application = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 4000;
 const swaggerRouteFiles = routeModulesFrom(__dirname, [
   "modules/auth/auth.routes",
   "modules/user/user.routes",

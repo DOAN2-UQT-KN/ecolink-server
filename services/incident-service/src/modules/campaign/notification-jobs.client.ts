@@ -111,22 +111,6 @@ export async function enqueueCampaignDoneWebsiteNotification(params: {
   });
 }
 
-/** In-app: admins — a manager submitted the campaign for final completion approval. */
-export async function enqueueCampaignCompletionPendingAdminWebsiteNotification(params: {
-  userId: string;
-  campaignTitle: string;
-  campaignId: string;
-}): Promise<void> {
-  await postWebsiteNotificationJob({
-    kind: "CAMPAIGN_COMPLETION_PENDING_ADMIN",
-    userId: params.userId,
-    payload: {
-      campaignTitle: params.campaignTitle,
-      campaignId: params.campaignId,
-    },
-  });
-}
-
 /** In-app: organization owner — admin rejected the completion request; campaign is active again. */
 export async function enqueueCampaignCompletionRejectedByAdminWebsiteNotification(params: {
   userId: string;

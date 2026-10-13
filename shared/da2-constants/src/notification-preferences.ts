@@ -27,9 +27,55 @@ export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
 /** Kinds that bypass user opt-out (e.g. admin workflow). */
 const ADMIN_ONLY_NOTIFICATION_KINDS = new Set([
   "CAMPAIGN_COMPLETION_PENDING_ADMIN",
+  "CAMPAIGN_PENDING_REVIEW",
+  "CAMPAIGN_REVISION_REQUESTED",
+  "CAMPAIGN_BLOCKED",
+  "CAMPAIGN_EXPIRED",
+  "CAMPAIGN_CANCELLED",
+  "CAMPAIGN_SHIFT_CLOSED",
+  "CAMPAIGN_CREATOR_TRANSFERRED",
+  "CAMPAIGN_SHIFT_LEADER_REMOVED",
+  "CAMPAIGN_UPDATED_NEEDS_REVIEW",
+  "CAMPAIGN_REREVIEW_EXPIRED",
+  "CAMPAIGN_SHIFT_RESULT_MISSING",
+  // Result verification: the reporter's confirmation is a priority notice; admins' work queue.
+  "CAMPAIGN_MEETING_POINT_CONFIRM_REQUEST",
+  "CAMPAIGN_MEETING_POINT_CONFIRM_REMINDER",
+  "CAMPAIGN_MEETING_POINT_FLAGGED",
+  // SOS: the campaign's team, the admins and the people on their way cannot turn these off.
+  "SOS_TEAM_ALERT",
+  "SOS_MEDICAL_ALERT",
+  "SOS_NEARBY_ORG_REQUEST",
+  "SOS_ADMIN_ALERT",
+  "SOS_OWNER_ESCALATION",
+  "SOS_ESCALATED",
+  "SOS_LOCATION_CHANGED",
+  "SOS_EXPIRED",
+  "SOS_NO_LONGER_NEEDED",
+  "SOS_ABUSE_REVIEW",
   "ORGANIZATION_CONTACT_VERIFY",
   "ORGANIZATION_APPROVED",
   "ORGANIZATION_REJECTED",
+  "ORG_APPLICATION_OTP",
+  "ORG_APPLICATION_RECEIVED",
+  "ORG_APPLICATION_NEEDS_INFO",
+  "ORG_APPLICATION_REJECTED",
+  "ORG_APPLICATION_DRAFT_STARTED",
+  "ORG_APPLICATION_DRAFT_UPDATED",
+  "ORG_INVITATION",
+  "ORG_INVITATION_PENDING",
+  "ORG_INVITATION_REJECTED",
+  "ORG_MEMBERSHIP_CHANGED",
+  "ORG_OWNER_CHANGE_APPROVAL_REQUEST",
+  "ORG_OWNER_CHANGE_DECIDED",
+  "ORG_OWNER_REMOVAL_PROPOSED",
+  "ORG_OWNER_LEFT",
+  "ACCOUNT_ACTIVATION",
+  "ORG_OWNER_CONFIRMATION_REQUEST",
+  "ORG_OWNER_DECLINED",
+  "ORG_OWNER_CONFIRMATION_EXPIRED",
+  "ORG_APPLICATION_WITHDRAWN_NOTICE",
+  "ORG_OWNER_ATTACHED",
   "REPORT_APPROVED",
   "REPORT_REJECTED",
   "RESET_PASSWORD",
@@ -44,17 +90,29 @@ export function notificationKindToPreferenceKey(
   }
   switch (kind) {
     case "CAMPAIGN_CREATED":
+    case "CAMPAIGN_APPROVED":
       return "campaignNew";
     case "CAMPAIGN_VERIFY_INVITE":
     case "CAMPAIGN_COMPLETION_VERIFY_INVITE":
+    case "CAMPAIGN_JOIN_INVITE":
+    // SOS sent to "available" volunteers of other campaigns.
+    case "SOS_HELP_INVITE":
+    case "SOS_HAZARD_WARNING":
       return "campaignNearbyVerify";
     case "CAMPAIGN_DONE":
       return "campaignDone";
     case "CAMPAIGN_COMPLETION_APPROVED_BY_ADMIN":
+    case "CAMPAIGN_RESULT_VERIFIED":
       return "campaignDone";
     case "CAMPAIGN_COMPLETION_REJECTED_BY_ADMIN":
+    case "CAMPAIGN_RESULT_REJECTED":
+    case "CAMPAIGN_MEETING_POINT_REJECTED":
       return "campaignCompletionRejected";
     case "VOLUNTEER_REQUEST":
+    case "CAMPAIGN_REGISTRATION_DIGEST":
+    case "CAMPAIGN_SHIFT_UNDERSTAFFED":
+    case "CAMPAIGN_SHIFT_OVER_MAX":
+    case "CAMPAIGN_SHIFT_REMINDER":
     case "VOLUNTEER_APPROVED":
     case "VOLUNTEER_REJECTED":
       return "volunteerRequest";
@@ -63,7 +121,6 @@ export function notificationKindToPreferenceKey(
       return "reportStatus";
     case "CAMPAIGN_SUBMISSION_PENDING_REVIEW":
     case "CAMPAIGN_SUBMISSION_APPROVED":
-    case "TASK_ASSIGNED":
       return "campaignNew";
     default:
       return null;

@@ -1,7 +1,10 @@
 /**
- * Outbox event types. Reward-bound values match reward-service job-type strings
- * so the relay can forward `eventType` straight through. `REPORT_SUBMITTED` is
- * routed to the AI analysis queue instead (see SqsOutboxPublisher).
+ * Outbox event types. The string values intentionally match the downstream
+ * (reward-service) job-type strings so the relay can forward `eventType`
+ * straight through to the reward enqueue endpoints.
+ *
+ * Not every value goes to reward any more — the relay routes by `eventType`, see
+ * `RoutingOutboxPublisher`. `REPORT_SUBMITTED` goes to the AI analysis queue.
  */
 export const OutboxEventType = {
   REPORT_COMPLETION_GREEN_POINTS: "REPORT_COMPLETION_GREEN_POINTS",
@@ -10,6 +13,17 @@ export const OutboxEventType = {
   CAMPAIGN_FACEBOOK_RECOGNITION: "CAMPAIGN_FACEBOOK_RECOGNITION",
   /** Domain: ReportSubmitted — consumed by ai-service verification pipeline. */
   REPORT_SUBMITTED: "REPORT_SUBMITTED",
+  /**
+   * Not a reward event: after an application is approved, one per owner, to send either the
+   * account-activation link or the "you were added as owner" email. It rides the outbox so
+   * it is written atomically with the memberships and retried with backoff.
+   */
+  ORG_OWNER_ONBOARD: "ORG_OWNER_ONBOARD",
+  /**
+   * Not a reward event: an in-app notification that must not be lost (e.g. a shift was turned
+   * off), written with the change and retried by the relay.
+   */
+  WEBSITE_NOTIFICATION: "WEBSITE_NOTIFICATION",
 } as const;
 
 export type OutboxEventType =

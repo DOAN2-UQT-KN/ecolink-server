@@ -19,11 +19,20 @@ async function main() {
       contactEmail: "contact@ecovolunteers.local",
       isEmailVerified: true,
       status: 1,
-      ownerId: "11111111-1111-1111-1111-111111111141",
       createdBy: "11111111-1111-1111-1111-111111111141",
       updatedBy: "11111111-1111-1111-1111-111111111141",
       createdAt: new Date("2026-01-01T00:00:00Z"),
       updatedAt: new Date("2026-01-01T00:00:00Z"),
+      // The DB refuses an organization without an owner membership; nested create keeps
+      // both in one transaction.
+      members: {
+        create: {
+          userId: "11111111-1111-1111-1111-111111111141",
+          role: "OWNER",
+          source: "INTERNAL",
+          createdBy: "11111111-1111-1111-1111-111111111141",
+        },
+      },
     },
   });
   console.log("✅ Organizations created");
@@ -176,41 +185,6 @@ async function main() {
     },
   });
   console.log("✅ Campaign joining requests created");
-
-  // campaign_tasks
-  await prisma.campaignTask.upsert({
-    where: { id: "44444444-4444-4444-a444-444444444501" },
-    update: {},
-    create: {
-      id: "44444444-4444-4444-a444-444444444501",
-      campaignId: "44444444-4444-4444-a444-444444444411",
-      title: "Collect plastics",
-      description: "Gather plastics around river edge",
-      status: 21,
-      scheduledTime: "2026-01-03T08:00:00Z",
-      createdBy: "11111111-1111-1111-1111-111111111141",
-      updatedBy: "11111111-1111-1111-1111-111111111141",
-      createdAt: new Date("2026-01-01T00:00:00Z"),
-      updatedAt: new Date("2026-01-01T00:00:00Z"),
-    },
-  });
-  console.log("✅ Campaign tasks created");
-
-  // campaign_task_assignments
-  await prisma.campaignTaskAssignment.upsert({
-    where: { id: "44444444-4444-4444-a444-444444444511" },
-    update: {},
-    create: {
-      id: "44444444-4444-4444-a444-444444444511",
-      campaignTaskId: "44444444-4444-4444-a444-444444444501",
-      volunteerId: "11111111-1111-1111-1111-111111111142",
-      createdBy: "11111111-1111-1111-1111-111111111141",
-      updatedBy: "11111111-1111-1111-1111-111111111141",
-      createdAt: new Date("2026-01-01T00:00:00Z"),
-      updatedAt: new Date("2026-01-01T00:00:00Z"),
-    },
-  });
-  console.log("✅ Campaign task assignments created");
 
   // campaign_submissions
   await prisma.campaignSubmission.upsert({

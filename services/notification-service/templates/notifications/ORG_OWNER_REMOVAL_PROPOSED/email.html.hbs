@@ -1,0 +1,10 @@
+<!DOCTYPE html>
+<html>
+  <body style="font-family: system-ui, sans-serif; line-height: 1.5; color: #111">
+    <p>Hello,</p>
+    <p>{{proposerName}} proposed removing your owner role in "{{organizationName}}"{{#if demoteTo}}; you would keep the role {{demoteTo}}{{else}}; you would leave the organization{{/if}}. {{#if needsApproval}}It takes effect once the other owners agree.{{else}}It has taken effect.{{/if}}</p>
+    <p>{{#if reason}}Reason: {{reason}}{{/if}}</p>
+    <p><a href="{{manageUrl}}" style="display: inline-block; padding: 10px 18px; background: #0b57d0; color: #fff; border-radius: 6px; text-decoration: none">Open the organization</a></p>
+    <p style="font-size: 0.875rem; color: #444">{{manageUrl}}</p>
+  </body>
+</html>

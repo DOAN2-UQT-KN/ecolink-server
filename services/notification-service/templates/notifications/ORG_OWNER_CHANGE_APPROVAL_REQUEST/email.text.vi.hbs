@@ -1,0 +1,8 @@
+Xin chào,
+
+{{{proposerName}}} đề xuất {{#if isAdd}}thêm {{{subjectNames}}} làm owner{{/if}}{{#if isRemove}}thu hồi vai owner của {{{subjectNames}}}{{#if demoteTo}} (giữ vai {{{demoteTo}}}){{else}} (rời tổ chức){{/if}}{{/if}} trong {{{organizationName}}} trên {{{appName}}}.
+{{#if reason}}
+Lý do: {{{reason}}}
+{{/if}}
+Đề xuất chỉ có hiệu lực khi mọi owner còn lại đồng ý. Hãy đồng ý hoặc từ chối trên trang tổ chức trước {{{expiresAt}}}:
+{{{manageUrl}}}

@@ -1,5 +1,9 @@
 import { PrismaClient } from "@prisma/client";
+import { OWNER_ROLES, OrgMemberRole } from "@da2/constants";
 import prisma from "../../config/prisma.client";
+import { onMemberGone } from "../campaign/campaign_manager/campaign-team-cleanup";
+
+const OWNER_ROLE_VALUES: string[] = [...OWNER_ROLES];
 
 export class OrganizationMemberRepository {
   private prisma: PrismaClient;
@@ -8,6 +12,10 @@ export class OrganizationMemberRepository {
     this.prisma = prisma;
   }
 
+  /**
+   * Adds (or revives) a plain member. A revived row is reset to `MEMBER`: rejoining after
+   * leaving never brings back a role the person held before.
+   */
   async addMember(organizationId: string, userId: string) {
     return this.prisma.organizationMember.upsert({
       where: {
@@ -16,13 +24,114 @@ export class OrganizationMemberRepository {
       create: {
         organizationId,
         userId,
+        role: OrgMemberRole.MEMBER,
         createdBy: userId,
       },
       update: {
         deletedAt: null,
+        role: OrgMemberRole.MEMBER,
         updatedAt: new Date(),
       },
     });
+  }
+
+  /** The caller's active role in one organization, or null when not a member. */
+  async findActiveRole(
+    organizationId: string,
+    userId: string,
+  ): Promise<string | null> {
+    const row = await this.prisma.organizationMember.findFirst({
+      where: { organizationId, userId, deletedAt: null },
+      select: { role: true },
+    });
+    return row?.role ?? null;
+  }
+
+  async isOwner(organizationId: string, userId: string): Promise<boolean> {
+    const row = await this.prisma.organizationMember.findFirst({
+      where: {
+        organizationId,
+        userId,
+        deletedAt: null,
+        role: { in: OWNER_ROLE_VALUES },
+      },
+      select: { userId: true },
+    });
+    return !!row;
+  }
+
+  /** Active owners of each organization, keyed by organization id. */
+  async findOwnersByOrganizationIds(
+    organizationIds: string[],
+  ): Promise<Map<string, { userId: string; role: string }[]>> {
+    const out = new Map<string, { userId: string; role: string }[]>();
+    if (organizationIds.length === 0) return out;
+    const rows = await this.prisma.organizationMember.findMany({
+      where: {
+        organizationId: { in: organizationIds },
+        deletedAt: null,
+        role: { in: OWNER_ROLE_VALUES },
+      },
+      select: { organizationId: true, userId: true, role: true },
+      orderBy: { createdAt: "asc" },
+    });
+    for (const row of rows) {
+      const list = out.get(row.organizationId) ?? [];
+      list.push({ userId: row.userId, role: row.role });
+      out.set(row.organizationId, list);
+    }
+    return out;
+  }
+
+  async findOwnerUserIds(organizationId: string): Promise<string[]> {
+    const owners = await this.findOwnersByOrganizationIds([organizationId]);
+    return (owners.get(organizationId) ?? []).map((o) => o.userId);
+  }
+
+  /** Roles the user holds in each of the given organizations. */
+  async findActiveRolesForUser(
+    userId: string,
+    organizationIds: string[],
+  ): Promise<Map<string, string>> {
+    if (organizationIds.length === 0) return new Map();
+    const rows = await this.prisma.organizationMember.findMany({
+      where: {
+        userId,
+        deletedAt: null,
+        organizationId: { in: organizationIds },
+      },
+      select: { organizationId: true, role: true },
+    });
+    return new Map(rows.map((r) => [r.organizationId, r.role]));
+  }
+
+  /** How many organizations each user is currently an owner of (users with 0 are omitted). */
+  async countActiveOwnerOrgs(userIds: string[]): Promise<Map<string, number>> {
+    if (userIds.length === 0) return new Map();
+    const groups = await this.prisma.organizationMember.groupBy({
+      by: ["userId"],
+      where: {
+        userId: { in: userIds },
+        deletedAt: null,
+        role: { in: OWNER_ROLE_VALUES },
+        organization: { deletedAt: null },
+      },
+      _count: { _all: true },
+    });
+    return new Map(groups.map((g) => [g.userId, g._count._all]));
+  }
+
+  /** Which of `userIds` are active members of the organization. */
+  async findActiveMemberUserIds(
+    organizationId: string,
+    userIds: string[],
+  ): Promise<Set<string>> {
+    if (userIds.length === 0) return new Set();
+    const rows = await this.prisma.organizationMember.findMany({
+      where: { organizationId, userId: { in: userIds }, deletedAt: null },
+      select: { userId: true },
+    });
+    return new Set(rows.map((r) => r.userId));
   }
 
   async isActiveMember(organizationId: string, userId: string): Promise<boolean> {
@@ -72,7 +181,7 @@ export class OrganizationMemberRepository {
 
   async findByOrganizationPaginated(
     organizationId: string,
-    filters: { userId?: string },
+    filters: { userId?: string; roles?: string[] },
     options: {
       skip: number;
       take: number;
@@ -84,6 +193,7 @@ export class OrganizationMemberRepository {
       organizationId,
       deletedAt: null as null,
       ...(filters.userId ? { userId: filters.userId } : {}),
+      ...(filters.roles?.length ? { role: { in: filters.roles } } : {}),
     };
     const orderBy =
       options.sortBy === "updatedAt"
@@ -109,30 +219,39 @@ export class OrganizationMemberRepository {
       select: {
         organizationId: true,
         userId: true,
+        role: true,
         createdAt: true,
         updatedAt: true,
       },
     });
   }
 
-  /** Soft-delete active membership; returns whether a row was updated. */
+  /**
+   * Soft-delete active membership; returns whether a row was updated. The person also leaves the
+   * organization's campaign teams (`onMemberGone`), in the same transaction.
+   */
   async softDeleteMembership(
     organizationId: string,
     userId: string,
+    actorId: string = userId,
   ): Promise<boolean> {
-    const result = await this.prisma.organizationMember.updateMany({
-      where: {
-        organizationId,
-        userId,
-        deletedAt: null,
-      },
-      data: {
-        deletedAt: new Date(),
-        updatedAt: new Date(),
-        updatedBy: userId,
-      },
+    return this.prisma.$transaction(async (tx) => {
+      const result = await tx.organizationMember.updateMany({
+        where: {
+          organizationId,
+          userId,
+          deletedAt: null,
+        },
+        data: {
+          deletedAt: new Date(),
+          updatedAt: new Date(),
+          updatedBy: actorId,
+        },
+      });
+      if (result.count === 0) return false;
+      await onMemberGone(tx, organizationId, userId, actorId);
+      return true;
     });
-    return result.count > 0;
   }
 }
 

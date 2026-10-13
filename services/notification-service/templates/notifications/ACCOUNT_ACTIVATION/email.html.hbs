@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+  <body style="font-family: system-ui, sans-serif; line-height: 1.5; color: #111">
+    <p>Hello {{fullName}},</p>
+    {{#if organizationName}}
+    <p>
+      <strong>{{organizationName}}</strong> has been approved on <strong>{{appName}}</strong>,
+      and you are one of its owners.
+    </p>
+    {{/if}}
+    <p>
+      We created an account for you with this email.
+      <a href="{{activationUrl}}" style="color: #0b57d0">Set your password</a> —
+      the link is valid for {{expiresInHours}} hours and can only be used once.
+    </p>
+    <p style="font-size: 0.875rem; color: #444">{{activationUrl}}</p>
+    <p style="font-size: 0.875rem; color: #666">
+      This is your personal account: everything you do for the organization is recorded
+      under your name. If the link has expired, request a new one from the sign-in page.
+    </p>
+  </body>
+</html>

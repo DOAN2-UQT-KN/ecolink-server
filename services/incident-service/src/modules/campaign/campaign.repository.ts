@@ -1,7 +1,8 @@
 import { Prisma, PrismaClient } from "@prisma/client";
 import prisma from "../../config/prisma.client";
 import { GlobalStatus, ReportStatus } from "../../constants/status.enum";
-import { CampaignWithReports } from "./campaign.entity";
+import { CAMPAIGN_PUBLIC_STATUSES, CampaignStatus, OWNER_ROLES } from "@da2/constants";
+import { CAMPAIGN_INCLUDE, CampaignWithReports } from "./campaign.entity";
 
 const SUBMISSION_STATUSES_AWAITING_REVIEW: number[] = [
   GlobalStatus._STATUS_INREVIEW,
@@ -9,7 +10,6 @@ const SUBMISSION_STATUSES_AWAITING_REVIEW: number[] = [
   GlobalStatus._STATUS_PENDING,
 ];
 
-import { JoinRequestStatus } from "../../constants/status.enum";
 
 export class CampaignRepository {
   private prisma: PrismaClient;
@@ -21,32 +21,14 @@ export class CampaignRepository {
   async create(data: Prisma.CampaignCreateInput): Promise<CampaignWithReports> {
     return this.prisma.campaign.create({
       data,
-      include: {
-        campaignManagers: {
-          where: { deletedAt: null },
-          select: { userId: true },
-        },
-        reports: {
-          where: { deletedAt: null },
-          select: { id: true },
-        },
-      },
+      include: CAMPAIGN_INCLUDE,
     });
   }
 
   async findById(id: string): Promise<CampaignWithReports | null> {
     return this.prisma.campaign.findFirst({
       where: { id, deletedAt: null },
-      include: {
-        campaignManagers: {
-          where: { deletedAt: null },
-          select: { userId: true },
-        },
-        reports: {
-          where: { deletedAt: null },
-          select: { id: true },
-        },
-      },
+      include: CAMPAIGN_INCLUDE,
     });
   }
 
@@ -56,29 +38,11 @@ export class CampaignRepository {
     }
     return this.prisma.campaign.findMany({
       where: { id: { in: ids }, deletedAt: null },
-      include: {
-        campaignManagers: {
-          where: { deletedAt: null },
-          select: { userId: true },
-        },
-        reports: {
-          where: { deletedAt: null },
-          select: { id: true },
-        },
-      },
+      include: CAMPAIGN_INCLUDE,
     });
   }
 
-  private static readonly listInclude = {
-    campaignManagers: {
-      where: { deletedAt: null },
-      select: { userId: true },
-    },
-    reports: {
-      where: { deletedAt: null },
-      select: { id: true },
-    },
-  } as const;
+  private static readonly listInclude = CAMPAIGN_INCLUDE;
 
   async findManyPaginated(params: {
     filters: {
@@ -96,6 +60,9 @@ export class CampaignRepository {
       myCampaignsUserId?: string;
       excludeMyCampaignsUserId?: string;
       isOwner?: boolean;
+      excludeMemberOrgsOfUserId?: string;
+      publicOnly?: boolean;
+      excludeDrafts?: boolean;
     };
     skip: number;
     take: number;
@@ -104,13 +71,33 @@ export class CampaignRepository {
   }): Promise<{ rows: CampaignWithReports[]; total: number }> {
     const { filters, skip, take, sortBy, sortOrder } = params;
 
-    const where: Prisma.CampaignWhereInput = {
-      deletedAt: null,
-      ...(filters.statuses && filters.statuses.length > 0
+    const statusFilter: Prisma.CampaignWhereInput =
+      filters.statuses && filters.statuses.length > 0
         ? { status: { in: filters.statuses } }
         : filters.status !== undefined
           ? { status: filters.status }
-          : {}),
+          : {};
+    const where: Prisma.CampaignWhereInput = {
+      deletedAt: null,
+      AND: [
+        statusFilter,
+        filters.publicOnly
+          ? { status: { in: [...CAMPAIGN_PUBLIC_STATUSES] } }
+          : {},
+        filters.excludeDrafts ? { status: { not: CampaignStatus.DRAFT } } : {},
+        filters.excludeMemberOrgsOfUserId
+          ? {
+              organization: {
+                members: {
+                  none: {
+                    userId: filters.excludeMemberOrgsOfUserId,
+                    deletedAt: null,
+                  },
+                },
+              },
+            }
+          : {},
+      ],
       ...(filters.createdBy ? { createdBy: filters.createdBy } : {}),
       ...(filters.organizationId
         ? { organizationId: filters.organizationId }
@@ -139,6 +126,8 @@ export class CampaignRepository {
       ...(filters.myCampaignsUserId
         ? filters.isOwner
           ? {
+              // Campaigns I run: created, managed, or of an organization I own
+              // (owners may manage every campaign of their organization).
               OR: [
                 { createdBy: filters.myCampaignsUserId },
                 {
@@ -146,6 +135,17 @@ export class CampaignRepository {
                     some: {
                       userId: filters.myCampaignsUserId,
                       deletedAt: null,
+                    },
+                  },
+                },
+                {
+                  organization: {
+                    members: {
+                      some: {
+                        userId: filters.myCampaignsUserId,
+                        deletedAt: null,
+                        role: { in: [...OWNER_ROLES] },
+                      },
                     },
                   },
                 },
@@ -168,16 +168,16 @@ export class CampaignRepository {
                         },
                       ],
                     },
-                    { status: GlobalStatus._STATUS_ACTIVE },
+                    {
+                      status: {
+                        in: [CampaignStatus.UPCOMING, CampaignStatus.ACTIVE],
+                      },
+                    },
                   ],
                 },
                 {
-                  campaignJoiningRequests: {
-                    some: {
-                      volunteerId: filters.myCampaignsUserId,
-                      status: JoinRequestStatus._STATUS_APPROVED,
-                      deletedAt: null,
-                    },
+                  shiftRegistrations: {
+                    some: { userId: filters.myCampaignsUserId, leftAt: null },
                   },
                 },
               ],
@@ -197,12 +197,8 @@ export class CampaignRepository {
                   },
                 },
                 {
-                  campaignJoiningRequests: {
-                    some: {
-                      volunteerId: filters.excludeMyCampaignsUserId,
-                      status: JoinRequestStatus._STATUS_APPROVED,
-                      deletedAt: null,
-                    },
+                  shiftRegistrations: {
+                    some: { userId: filters.excludeMyCampaignsUserId, leftAt: null },
                   },
                 },
               ],
@@ -234,7 +230,7 @@ export class CampaignRepository {
     return { rows, total };
   }
 
-  /** All non-deleted campaigns with status ACTIVE (no pagination). */
+  /** All non-deleted approved campaigns, upcoming or running (no pagination). */
   async findAllActive(params: {
     sortBy: "createdAt" | "updatedAt" | "title";
     sortOrder: "asc" | "desc";
@@ -250,7 +246,7 @@ export class CampaignRepository {
     return this.prisma.campaign.findMany({
       where: {
         deletedAt: null,
-        status: GlobalStatus._STATUS_ACTIVE,
+        status: { in: [CampaignStatus.UPCOMING, CampaignStatus.ACTIVE] },
       },
       include: CampaignRepository.listInclude,
       orderBy,
@@ -264,16 +260,7 @@ export class CampaignRepository {
     return this.prisma.campaign.update({
       where: { id },
       data,
-      include: {
-        campaignManagers: {
-          where: { deletedAt: null },
-          select: { userId: true },
-        },
-        reports: {
-          where: { deletedAt: null },
-          select: { id: true },
-        },
-      },
+      include: CAMPAIGN_INCLUDE,
     });
   }
 
@@ -287,16 +274,7 @@ export class CampaignRepository {
         deletedAt: new Date(),
         updatedBy: deletedBy,
       },
-      include: {
-        campaignManagers: {
-          where: { deletedAt: null },
-          select: { userId: true },
-        },
-        reports: {
-          where: { deletedAt: null },
-          select: { id: true },
-        },
-      },
+      include: CAMPAIGN_INCLUDE,
     });
   }
 
