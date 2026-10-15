@@ -88,11 +88,13 @@ model Report {
   deletedAt DateTime? @map("deleted_at")
 
   // Relations
-  reportMediaFiles  ReportMediaFile[]
-  reportIssues      ReportIssue[]
-  aiAnalysisLogs    AiAnalysisLog[]
-  campaign          Campaign?                    @relation(fields: [campaignId], references: [id])
-  meetingPointLinks CampaignMeetingPointReport[]
+  reportMediaFiles   ReportMediaFile[]
+  reportIssues       ReportIssue[]
+  aiAnalysisLogs     AiAnalysisLog[]
+  campaign           Campaign?                    @relation(fields: [campaignId], references: [id])
+  meetingPointLinks  CampaignMeetingPointReport[]
+  verifications      ReportVerification[]         @relation("ReportVerifications")
+  latestVerification ReportVerification?          @relation("LatestVerification", fields: [latestVerificationId], references: [id], onDelete: SetNull)
 
   @@unique([userId, idempotencyKey])
   @@index([campaignId])
@@ -135,6 +137,74 @@ enum ModerationReasonCode {
   DUPLICATE_OF_OTHER
   NOT_ON_SITE
   INAPPROPRIATE_CONTENT
+}
+
+enum VerificationStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum VerificationCheckName {
+  DUPLICATE
+  TRUST
+  CONTEXT
+}
+
+enum VerificationCheckStatus {
+  COMPLETED
+  SKIPPED
+  FAILED
+  NOT_AVAILABLE
+}
+
+enum RiskFlag {
+  ACCEPT
+  REVIEW
+  REJECT
+}
+
+/// One run of the verification pipeline for a report (specs/006 P05). Retries add a new attempt;
+/// rows are never overwritten so attempts + moderator decisions form a labelled dataset.
+model ReportVerification {
+  id              String             @id @default(uuid()) @db.Uuid
+  reportId        String             @map("report_id") @db.Uuid
+  attempt         Int                @default(1)
+  status          VerificationStatus
+  pipelineVersion String             @map("pipeline_version") @db.VarChar(32)
+  engineVersion   String?            @map("engine_version") @db.VarChar(64)
+  riskScore       Float?             @map("risk_score")
+  flag            RiskFlag?
+  reasons         String[]           @default([])
+  startedAt       DateTime           @default(now()) @map("started_at")
+  completedAt     DateTime?          @map("completed_at")
+
+  report   Report              @relation("ReportVerifications", fields: [reportId], references: [id], onDelete: Cascade)
+  latestOf Report[]            @relation("LatestVerification")
+  checks   VerificationCheck[]
+
+  @@unique([reportId, attempt])
+  @@map("report_verifications")
+}
+
+/// Result of one check inside a verification attempt; written once, never updated.
+model VerificationCheck {
+  id             String                  @id @default(uuid()) @db.Uuid
+  verificationId String                  @map("verification_id") @db.Uuid
+  check          VerificationCheckName
+  version        String                  @db.VarChar(64)
+  status         VerificationCheckStatus
+  risk           Float?
+  reasons        String[]                @default([])
+  signals        Json
+  evidence       Json
+  error          Json?
+  durationMs     Int                     @map("duration_ms")
+
+  verification ReportVerification @relation(fields: [verificationId], references: [id], onDelete: Cascade)
+
+  @@unique([verificationId, check])
+  @@map("verification_checks")
 }
 
 /// Area where reports are accepted (specs/006 P02, BR-113). POST /reports rejects points outside

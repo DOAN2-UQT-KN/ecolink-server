@@ -27,11 +27,16 @@ function requireQueueUrl(envName: string): string {
 
 /**
  * Resolves the SQS destination for an outbox event.
- * `REPORT_SUBMITTED` → AI analysis queue; all other known types → reward intake.
+ * `REPORT_SUBMITTED` → report-verification queue when `REPORT_VERIFICATION_ENABLED=true`
+ * (specs/006 P05), otherwise the legacy AI duplicate-check queue; all other known types → reward intake.
  */
 export function resolveOutboxQueueUrl(eventType: string): string {
   if (eventType === OutboxEventType.REPORT_SUBMITTED) {
-    return requireQueueUrl("SQS_AI_ANALYSIS_QUEUE_URL");
+    return requireQueueUrl(
+      process.env.REPORT_VERIFICATION_ENABLED === "true"
+        ? "SQS_REPORT_VERIFICATION_QUEUE_URL"
+        : "SQS_AI_ANALYSIS_QUEUE_URL",
+    );
   }
   return requireQueueUrl("SQS_REWARD_INTAKE_QUEUE_URL");
 }

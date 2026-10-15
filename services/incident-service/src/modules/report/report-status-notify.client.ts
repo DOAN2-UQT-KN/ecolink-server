@@ -116,3 +116,19 @@ export async function enqueueReportRejectedWebsiteNotification(params: {
     },
   });
 }
+
+/** In-app: report owner — automatic verification sent the incident to moderator review. */
+export async function enqueueReportInReviewWebsiteNotification(params: {
+  userId: string;
+  reportId: string;
+  reportTitle: string;
+}): Promise<void> {
+  await postReportWebsiteNotification({
+    kind: "REPORT_IN_REVIEW",
+    userId: params.userId,
+    payload: {
+      reportId: params.reportId,
+      reportTitle: params.reportTitle,
+    },
+  });
+}
