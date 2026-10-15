@@ -17,15 +17,35 @@ export interface CreateReportRequest {
   description?: string;
   descriptionVi?: string;
   descriptionEn?: string;
+  /** Legacy (client trước spec 007): CSV, dùng wasteTypes. Xoá ở P10. */
   wasteType?: string;
+  category?: ReportCategory;
+  wasteTypes?: WasteType[];
   severityLevel?: number;
   latitude: number;
   longitude: number;
   /** Optional human-readable address for the report location. */
   detailAddress?: string;
-  imageUrls: string[]; // Array of image URLs
-  /** Optional; `mediaCaptures[i]` maps to `imageUrls[i]`. */
+  images?: CreateReportImageInput[];
+  /** Legacy (client trước spec 007): dùng images. Xoá ở P10. */
+  imageUrls?: string[];
+  /** Legacy, ignored since specs/006 P02 (client-declared capture data is not trusted). */
   mediaCaptures?: MediaCaptureInput[];
+}
+
+export interface CreateReportImageInput {
+  url: string;
+  /** Server-issued capture (P03); absent for gallery uploads. */
+  captureId?: string;
+}
+
+/** CreateReportRequest after legacy fields are folded into the new shape. */
+export interface NormalizedCreateReport {
+  category: ReportCategory;
+  wasteTypes: WasteType[];
+  /** Lower-case CSV kept in `waste_type` so clients before spec 007 still show the waste type. */
+  wasteTypeCsv: string | null;
+  images: { url: string; captureId: string | null }[];
 }
 
 export interface UpdateReportRequest {

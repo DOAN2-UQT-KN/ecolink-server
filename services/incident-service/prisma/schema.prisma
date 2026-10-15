@@ -137,6 +137,19 @@ enum ModerationReasonCode {
   INAPPROPRIATE_CONTENT
 }
 
+/// Area where reports are accepted (specs/006 P02, BR-113). POST /reports rejects points outside
+/// every active area with 422 REPORT_OUT_OF_SERVICE_AREA; no active area = no check.
+model ServiceArea {
+  id        String                                       @id @default(uuid()) @db.Uuid
+  name      String                                       @db.VarChar(120)
+  geog      Unsupported("geography(MultiPolygon, 4326)")
+  active    Boolean                                      @default(true)
+  createdAt DateTime                                     @default(now()) @map("created_at")
+
+  @@index([geog], map: "service_areas_geog_gist", type: Gist)
+  @@map("service_areas")
+}
+
 /// Versioned verification config (specs/006 research R6). At most one active row per key
 /// (partial unique index verification_configs_one_active_per_key, created in SQL).
 model VerificationConfig {

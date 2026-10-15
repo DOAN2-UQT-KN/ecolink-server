@@ -22,7 +22,7 @@ import {
   VoteResourceType,
 } from "../../constants/status.enum";
 import prisma from "../../config/prisma.client";
-import { Prisma } from "@prisma/client";
+import { Prisma, type Report } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import {
   ReportJobType,
@@ -49,9 +49,18 @@ import {
 import { emitOutbox } from "../../outbox/outbox.writer";
 import { OutboxEventType } from "../../outbox/outbox.types";
 import {
+  buildMediaCreateData,
+  emptyExtracted,
   prepareMediaFromUrl,
   toReportSubmittedMediaSnapshot,
 } from "../media/media-from-url.service";
+import { normalizeCreateReportInput } from "./report-create.input";
+import {
+  assertInServiceArea,
+  assertUnderRateLimit,
+  findByIdempotencyKey,
+  lockUserForSubmit,
+} from "./report-submit-gate";
 
 /**
  * Serialize Media metadata for JSON responses (`fileSize` as string).
@@ -243,10 +252,21 @@ export class ReportService {
     userId: string,
     request: CreateReportRequest,
     _authorization?: string,
-  ): Promise<ReportResponse> {
-    const imageUrls = request.imageUrls
-      .map((imageUrl) => imageUrl.trim())
-      .filter((imageUrl) => imageUrl.length > 0);
+    idempotencyKey?: string,
+  ): Promise<{ report: ReportResponse; replayed: boolean }> {
+    const input = normalizeCreateReportInput(request);
+    const toResponse = async (entity: Report): Promise<ReportResponse> => {
+      const [report] = await this.attachVotesToReports([toReportResponse(entity)], userId);
+      return report;
+    };
+
+    // BR-115: a retried submit returns the first report without re-checking the rules.
+    if (idempotencyKey) {
+      const existing = await findByIdempotencyKey(prisma, userId, idempotencyKey);
+      if (existing) return { report: await toResponse(existing), replayed: true };
+    }
+
+    await assertInServiceArea(prisma, request.latitude, request.longitude);
 
     const userTitleVi = request.titleVi?.trim() || "";
     const userTitleEn = request.titleEn?.trim() || "";
@@ -261,23 +281,29 @@ export class ReportService {
       request.description?.trim() ||
       "";
 
-    // Download + EXIF extract before opening the DB transaction (network I/O).
-    const preparedMedia =
-      imageUrls.length > 0
-        ? await Promise.all(
-            imageUrls.map((imageUrl, index) =>
-              prepareMediaFromUrl({
-                id: randomUUID(),
-                url: imageUrl,
-                type: MediaResourceType.REPORT,
-                userId,
-                capture: request.mediaCaptures?.[index] ?? null,
-              }),
-            ),
-          )
-        : [];
+    // Images are not downloaded here (FR-005): the verification pipeline reads them itself.
+    const mediaRows = input.images.map((img) =>
+      buildMediaCreateData(
+        {
+          id: randomUUID(),
+          url: img.url,
+          type: MediaResourceType.REPORT,
+          userId,
+          capture: null,
+        },
+        emptyExtracted(),
+      ),
+    );
 
-    const reportAndMedia = await prisma.$transaction(async (tx) => {
+    const outcome = await prisma.$transaction(async (tx) => {
+      await lockUserForSubmit(tx, userId);
+      if (idempotencyKey) {
+        // A concurrent request with the same key waited on the lock; return its report.
+        const existing = await findByIdempotencyKey(tx, userId, idempotencyKey);
+        if (existing) return { report: existing, reportMediaFileIds: [] as string[], replayed: true };
+      }
+      await assertUnderRateLimit(tx, userId, new Date());
+
       const createdReport = await tx.report.create({
         data: {
           userId,
@@ -291,21 +317,23 @@ export class ReportService {
             userDescriptionVi || (sourceDescription || null),
           descriptionEn:
             userDescriptionEn || (sourceDescription || null),
-          wasteType: request.wasteType,
+          category: input.category,
+          wasteTypes: input.wasteTypes,
+          wasteType: input.wasteTypeCsv,
           severityLevel: request.severityLevel,
           latitude: request.latitude,
           longitude: request.longitude,
           detailAddress: request.detailAddress,
+          idempotencyKey: idempotencyKey ?? null,
           status: ReportStatus._STATUS_PENDING,
           isVerify: false,
           aiVerified: false,
-        } as any,
+        },
       });
 
       let reportMediaFileIds: string[] = [];
       let mediaSnapshots: Record<string, unknown>[] = [];
-      if (preparedMedia.length > 0) {
-        const mediaRows = preparedMedia.map((p) => p.media);
+      if (mediaRows.length > 0) {
         await tx.media.createMany({ data: mediaRows });
 
         const reportMediaRows = mediaRows.map((m) => ({
@@ -337,23 +365,26 @@ export class ReportService {
         payload: {
           reportId: createdReport.id,
           userId,
+          attempt: 1,
           reportMediaFileIds,
           media: mediaSnapshots,
         } as Prisma.InputJsonValue,
-        dedupKey: `${OutboxEventType.REPORT_SUBMITTED}:${createdReport.id}`,
+        dedupKey: `${OutboxEventType.REPORT_SUBMITTED}:${createdReport.id}:1`,
       });
 
-      return {
-        report: createdReport,
-        reportMediaFileIds,
-      };
+      return { report: createdReport, reportMediaFileIds, replayed: false };
     });
 
-    // Publish async analysis job so report creation stays fast and resilient.
+    if (outcome.replayed) {
+      return { report: await toResponse(outcome.report), replayed: true };
+    }
+
+    // Still enqueued directly (best-effort): @da2/queue workers drop messages without a
+    // background_jobs row, so these move to the outbox only in P10 (specs/006 research R3).
     backgroundJobDispatcher
       .enqueue(ReportJobType.ANALYZE_REPORT, {
-        reportId: reportAndMedia.report.id,
-        reportMediaFileIds: reportAndMedia.reportMediaFileIds,
+        reportId: outcome.report.id,
+        reportMediaFileIds: outcome.reportMediaFileIds,
       })
       .catch((err: Error) => {
         console.error("Failed to enqueue AI analysis job:", err.message);
@@ -373,15 +404,11 @@ export class ReportService {
       : null;
     enqueueReportTranslationJob(
       TranslationResourceType.REPORT,
-      reportAndMedia.report.id,
+      outcome.report.id,
       descriptionTarget ? [titleTarget, descriptionTarget] : [titleTarget],
     );
 
-    const [report] = await this.attachVotesToReports(
-      [toReportResponse(reportAndMedia.report)],
-      userId,
-    );
-    return report;
+    return { report: await toResponse(outcome.report), replayed: false };
   }
 
   async getReportById(

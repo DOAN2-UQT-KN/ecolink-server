@@ -1,6 +1,23 @@
 import { body, param, query } from "express-validator";
+import { ReportCategory, WasteType } from "@prisma/client";
 
 const REPORT_STATUSES_QUERY_MAX = 25;
+const REPORT_IMAGES_MAX = 10;
+
+let warnedMissingCloudName = false;
+
+/** Report images must be uploads to Ecolink's own Cloudinary account (specs/006 BR-100). */
+export function isEcolinkImageUrl(url: string): boolean {
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME?.trim();
+  if (!cloudName) {
+    if (!warnedMissingCloudName) {
+      console.warn("[report] CLOUDINARY_CLOUD_NAME is not set; only checking that image URLs use https");
+      warnedMissingCloudName = true;
+    }
+    return url.startsWith("https://");
+  }
+  return url.startsWith(`https://res.cloudinary.com/${cloudName}/image/upload/`);
+}
 
 export const reportSearchQueryValidators = [
   query("search").optional().trim(),
@@ -43,6 +60,17 @@ export const createReportValidators = [
   body("title").notEmpty().withMessage("Title is required").trim(),
   body("description").optional().trim(),
   body("wasteType").optional().trim(),
+  body("category")
+    .optional()
+    .isIn(Object.values(ReportCategory))
+    .withMessage("Invalid category"),
+  body("wasteTypes")
+    .optional()
+    .isArray({ min: 1 })
+    .withMessage("wasteTypes must be a non-empty array"),
+  body("wasteTypes.*")
+    .isIn(Object.values(WasteType))
+    .withMessage("Invalid waste type"),
   body("severityLevel")
     .optional()
     .isInt({ min: 1, max: 5 })
@@ -60,16 +88,39 @@ export const createReportValidators = [
     .isFloat({ min: -180, max: 180 })
     .withMessage("Invalid longitude"),
   body("detailAddress").optional().trim(),
+  body()
+    .custom((b) => Array.isArray(b?.images) || Array.isArray(b?.imageUrls))
+    .withMessage("images is required"),
+  body("images")
+    .optional()
+    .isArray({ min: 1, max: REPORT_IMAGES_MAX })
+    .withMessage(`images must contain 1 to ${REPORT_IMAGES_MAX} items`),
+  body("images.*.url")
+    .isString()
+    .withMessage("Image URL must be a string")
+    .bail()
+    .trim()
+    .custom(isEcolinkImageUrl)
+    .withMessage("Image URL must be an Ecolink Cloudinary upload"),
+  body("images.*.captureId")
+    .optional()
+    .isUUID()
+    .withMessage("captureId must be a UUID"),
+  // Legacy (client trước spec 007): imageUrls. Xoá ở P10.
   body("imageUrls")
-    .isArray({ min: 1 })
-    .withMessage("imageUrls must be a non-empty array"),
+    .optional()
+    .isArray({ min: 1, max: REPORT_IMAGES_MAX })
+    .withMessage(`imageUrls must contain 1 to ${REPORT_IMAGES_MAX} items`),
   body("imageUrls.*")
     .isString()
     .withMessage("Each image_url must be a string")
     .bail()
     .trim()
     .notEmpty()
-    .withMessage("Each image_url must not be empty"),
+    .withMessage("Each image_url must not be empty")
+    .bail()
+    .custom(isEcolinkImageUrl)
+    .withMessage("Image URL must be an Ecolink Cloudinary upload"),
   body("mediaCaptures")
     .optional()
     .isArray()

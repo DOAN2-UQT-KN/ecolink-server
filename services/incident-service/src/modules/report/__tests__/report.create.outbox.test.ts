@@ -19,6 +19,15 @@ const transactionMock = jest.fn(
 const enqueueMock = jest.fn().mockResolvedValue(undefined);
 const emitOutboxMock = jest.fn().mockResolvedValue(undefined);
 const prepareMediaFromUrlMock = jest.fn();
+const gateMock = {
+  assertInServiceArea: jest.fn().mockResolvedValue(undefined),
+  assertUnderRateLimit: jest.fn().mockResolvedValue(undefined),
+  lockUserForSubmit: jest.fn().mockResolvedValue(undefined),
+  findByIdempotencyKey: jest.fn().mockResolvedValue(null),
+};
+
+// The submit rules need a real DB; they are covered by src/__it__/report-submit-gate.it.test.ts.
+jest.mock("../report-submit-gate", () => gateMock);
 
 jest.mock("../../../queue/register", () => ({
   backgroundJobDispatcher: { enqueue: enqueueMock },
@@ -34,6 +43,8 @@ jest.mock("../../../outbox/outbox.writer", () => ({
 }));
 
 jest.mock("../../media/media-from-url.service", () => ({
+  buildMediaCreateData: jest.requireActual("../../media/media-from-url.service").buildMediaCreateData,
+  emptyExtracted: jest.requireActual("../../media/media-from-url.service").emptyExtracted,
   prepareMediaFromUrl: (...args: unknown[]) =>
     prepareMediaFromUrlMock(...args),
   toReportSubmittedMediaSnapshot: (input: {
@@ -112,14 +123,26 @@ describe("createReport (outbox producer)", () => {
   });
 
   it("emit REPORT_SUBMITTED đúng payload + dedupKey trong cùng transaction", async () => {
-    await reportService.createReport("user-1", {
+    const result = await reportService.createReport("user-1", {
       title: "Trash nearby",
       latitude: 1,
       longitude: 2,
       imageUrls: ["https://cdn.example/a.jpg"],
+      wasteType: "household,abc",
     });
 
-    expect(prepareMediaFromUrlMock).toHaveBeenCalledTimes(1);
+    expect(result.replayed).toBe(false);
+    // FR-005: images are not downloaded while handling the request.
+    expect(prepareMediaFromUrlMock).not.toHaveBeenCalled();
+    expect(gateMock.assertInServiceArea).toHaveBeenCalledWith(expect.anything(), 1, 2);
+    expect(gateMock.lockUserForSubmit).toHaveBeenCalledWith(txFake, "user-1");
+    expect(gateMock.assertUnderRateLimit).toHaveBeenCalledWith(txFake, "user-1", expect.any(Date));
+    expect(txFake.report.create.mock.calls[0][0].data).toMatchObject({
+      category: "OTHER",
+      wasteTypes: ["HOUSEHOLD"],
+      wasteType: "household",
+      idempotencyKey: null,
+    });
     expect(transactionMock).toHaveBeenCalledTimes(1);
     expect(emitOutboxMock).toHaveBeenCalledTimes(1);
     const [tx, event] = emitOutboxMock.mock.calls[0];
@@ -127,10 +150,11 @@ describe("createReport (outbox producer)", () => {
     expect(event.aggregateType).toBe("report");
     expect(event.aggregateId).toBe("report-new");
     expect(event.eventType).toBe(OutboxEventType.REPORT_SUBMITTED);
-    expect(event.dedupKey).toBe("REPORT_SUBMITTED:report-new");
+    expect(event.dedupKey).toBe("REPORT_SUBMITTED:report-new:1");
     expect(event.payload).toMatchObject({
       reportId: "report-new",
       userId: "user-1",
+      attempt: 1,
     });
     expect(Array.isArray(event.payload.reportMediaFileIds)).toBe(true);
     expect(event.payload.reportMediaFileIds).toHaveLength(1);
@@ -141,7 +165,22 @@ describe("createReport (outbox producer)", () => {
       type: expect.any(String),
       mediaId: expect.any(String),
       reportMediaFileId: expect.any(String),
+      mimeType: null,
     });
+  });
+
+  it("replays an existing report for a known Idempotency-Key without writing", async () => {
+    gateMock.findByIdempotencyKey.mockResolvedValueOnce({ id: "report-old", userId: "user-1" });
+    const result = await reportService.createReport(
+      "user-1",
+      { title: "x", latitude: 1, longitude: 2, imageUrls: ["https://cdn.example/a.jpg"] },
+      undefined,
+      "8f1d7f4e-2a51-4c4b-9a0e-0d5f3b8e6c11",
+    );
+    expect(result).toMatchObject({ replayed: true, report: { id: "report-old" } });
+    expect(transactionMock).not.toHaveBeenCalled();
+    expect(gateMock.assertInServiceArea).not.toHaveBeenCalled();
+    expect(enqueueMock).not.toHaveBeenCalled();
   });
 
   it("vẫn enqueue ANALYZE_REPORT sau commit (path song song không bị gỡ)", async () => {

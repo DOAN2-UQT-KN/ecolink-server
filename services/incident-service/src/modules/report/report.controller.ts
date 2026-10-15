@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { validationResult } from "express-validator";
 import {
+  HttpError,
   HTTP_STATUS,
   sendError,
   sendHttpErrorResponse,
@@ -18,6 +19,8 @@ import {
   reportSearchQueryValidators,
   updateReportValidators,
 } from "./report.validator";
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const REPORT_BATCH_QUERY_MAX_IDS = 100;
 
@@ -93,13 +96,28 @@ export class ReportController {
           return sendError(res, HTTP_STATUS.UNAUTHORIZED);
         }
 
-        const report = await reportService.createReport(
+        const idempotencyKey = req.get("Idempotency-Key")?.trim() || undefined;
+        if (idempotencyKey && !UUID_RE.test(idempotencyKey)) {
+          return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+            errors: [{ path: "Idempotency-Key", msg: "Idempotency-Key must be a UUID" }],
+          });
+        }
+
+        // 202 for first submit and replay alike: verification runs after the response.
+        const { report } = await reportService.createReport(
           userId,
           req.body,
           req.headers.authorization,
+          idempotencyKey,
         );
-        sendSuccess(res, HTTP_STATUS.CREATED, { report });
+        sendSuccess(res, HTTP_STATUS.ACCEPTED, { report });
       } catch (error) {
+        const retryAfter = error instanceof HttpError ? error.data?.retryAfter : undefined;
+        if (typeof retryAfter === "string") {
+          const seconds = Math.ceil((Date.parse(retryAfter) - Date.now()) / 1000);
+          res.set("Retry-After", String(Math.max(1, seconds)));
+        }
+        if (sendHttpErrorResponse(res, error)) return;
         console.error("Create report error:", error);
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }

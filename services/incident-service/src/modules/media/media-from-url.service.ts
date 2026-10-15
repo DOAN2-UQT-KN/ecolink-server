@@ -41,7 +41,7 @@ function parseCapturedAt(value?: string): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function emptyExtracted(): ExtractedMediaFields {
+export function emptyExtracted(): ExtractedMediaFields {
   return {
     mimeType: null,
     fileSize: null,
