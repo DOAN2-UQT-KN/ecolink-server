@@ -1,3 +1,4 @@
+import type { ReportCategory, WasteType } from "@prisma/client";
 import type { OrganizationOwnerResponse } from "../organization/organization.dto";
 import type { ResourceVoteSummary } from "../vote/vote.dto";
 
@@ -153,7 +154,10 @@ export interface ReportResponse {
   description: string | null;
   descriptionVi?: string | null;
   descriptionEn?: string | null;
+  /** Deprecated free-text CSV; use `wasteTypes`. */
   wasteType: string | null;
+  category: ReportCategory;
+  wasteTypes: WasteType[];
   severityLevel: number | null;
   latitude: number | null;
   longitude: number | null;

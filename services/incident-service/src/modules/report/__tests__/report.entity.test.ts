@@ -19,6 +19,8 @@ function baseReport(overrides: Partial<Report> = {}): Report {
     descriptionVi: "d",
     descriptionEn: "d",
     wasteType: null,
+    category: "OTHER",
+    wasteTypes: [],
     severityLevel: 1,
     latitude: 1,
     longitude: 2,
@@ -29,6 +31,11 @@ function baseReport(overrides: Partial<Report> = {}): Report {
     aiVerified: false,
     aiRecommendation: null,
     duplicateVerification: null,
+    idempotencyKey: null,
+    latestVerificationId: null,
+    moderatedBy: null,
+    moderatedAt: null,
+    moderationReasonCode: null,
     createdBy: null,
     updatedBy: null,
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
@@ -128,6 +135,21 @@ describe("toDuplicateVerification", () => {
 });
 
 describe("toReportResponse", () => {
+  it("exposes category and wasteTypes", () => {
+    const response = toReportResponse(
+      baseReport({ category: "WATERWAY", wasteTypes: ["HOUSEHOLD", "HAZARDOUS"] }),
+    );
+    expect(response.category).toBe("WATERWAY");
+    expect(response.wasteTypes).toEqual(["HOUSEHOLD", "HAZARDOUS"]);
+  });
+
+  it("defaults missing wasteTypes (raw SQL rows) to an empty array", () => {
+    const response = toReportResponse(
+      baseReport({ wasteTypes: undefined as unknown as Report["wasteTypes"] }),
+    );
+    expect(response.wasteTypes).toEqual([]);
+  });
+
   it("exposes null duplicateVerification before AI write-back", () => {
     const response = toReportResponse(baseReport());
     expect(response.duplicateVerification).toBeNull();

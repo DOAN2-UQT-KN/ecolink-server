@@ -219,6 +219,8 @@ export const toReportResponse = (
   descriptionVi: entity.descriptionVi ?? entity.description,
   descriptionEn: entity.descriptionEn,
   wasteType: entity.wasteType,
+  category: entity.category,
+  wasteTypes: entity.wasteTypes ?? [],
   severityLevel: entity.severityLevel,
   latitude: entity.latitude,
   longitude: entity.longitude,

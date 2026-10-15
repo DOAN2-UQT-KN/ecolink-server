@@ -268,6 +268,8 @@ export class ReportRepository {
                 title,
                 description,
                 waste_type as "wasteType",
+                category::text as category,
+                waste_types::text[] as "wasteTypes",
                 severity_level as "severityLevel",
                 latitude,
                 longitude,
@@ -282,15 +284,14 @@ export class ReportRepository {
                 updated_at as "updatedAt",
                 deleted_at as "deletedAt",
                 ST_Distance(
-                    ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography,
+                    location,
                     ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography
                 ) as distance
             FROM reports
             WHERE ${whereClause}
-                AND latitude IS NOT NULL 
-                AND longitude IS NOT NULL
+                AND location IS NOT NULL
                 AND ST_DWithin(
-                    ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography,
+                    location,
                     ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
                     $3
                 )
@@ -306,10 +307,9 @@ export class ReportRepository {
             SELECT COUNT(*) as count
             FROM reports
             WHERE ${whereClause}
-                AND latitude IS NOT NULL 
-                AND longitude IS NOT NULL
+                AND location IS NOT NULL
                 AND ST_DWithin(
-                    ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography,
+                    location,
                     ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
                     $3
                 )
@@ -360,10 +360,9 @@ export class ReportRepository {
             FROM reports
             WHERE deleted_at IS NULL
               AND user_id IS NOT NULL
-              AND latitude IS NOT NULL
-              AND longitude IS NOT NULL
+              AND location IS NOT NULL
               AND ST_DWithin(
-                  ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography,
+                  location,
                   ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
                   $3
               )

@@ -23,12 +23,33 @@ model Report {
   descriptionVi String? @map("description_vi")
   descriptionEn String? @map("description_en")
 
-  wasteType     String? @map("waste_type") @db.VarChar(100)
-  severityLevel Int?    @map("severity_level")
+  /**
+   * deprecated: thay bằng wasteTypes, xoá ở P10 (specs/006).
+   */
+  wasteType     String?        @map("waste_type") @db.VarChar(100)
+  /**
+   * Where/what the incident is; checked against map data by ContextCheck.
+   */
+  category      ReportCategory @default(OTHER)
+  wasteTypes    WasteType[]    @default([]) @map("waste_types")
+  severityLevel Int?           @map("severity_level")
 
   // PostGIS Geography point stored as raw - we'll use raw queries for spatial operations
   latitude  Float?
   longitude Float?
+  /**
+   * Kept in sync with latitude/longitude by trigger reports_sync_location; GiST-indexed.
+   */
+  location  Unsupported("geography(Point, 4326)")?
+
+  /**
+   * Client Idempotency-Key header; unique per user.
+   */
+  idempotencyKey       String?               @map("idempotency_key") @db.VarChar(64)
+  latestVerificationId String?               @map("latest_verification_id") @db.Uuid
+  moderatedBy          String?               @map("moderated_by") @db.Uuid
+  moderatedAt          DateTime?             @map("moderated_at")
+  moderationReasonCode ModerationReasonCode? @map("moderation_reason_code")
 
   /**
    * Human-readable location text (e.g. street / place name from reverse geocoding).
@@ -73,11 +94,61 @@ model Report {
   campaign          Campaign?                    @relation(fields: [campaignId], references: [id])
   meetingPointLinks CampaignMeetingPointReport[]
 
+  @@unique([userId, idempotencyKey])
   @@index([campaignId])
   @@index([userId])
+  @@index([userId, createdAt])
+  @@index([location], map: "reports_location_gist", type: Gist)
   @@index([status])
   @@index([deletedAt])
   @@map("reports")
+}
+
+enum ReportCategory {
+  WATERWAY
+  BEACH
+  MARKET
+  SCHOOL
+  PARK
+  INDUSTRIAL_ZONE
+  ALLEY
+  STREET
+  ILLEGAL_DUMP
+  DRAIN
+  OPEN_BURNING
+  OTHER
+}
+
+enum WasteType {
+  HOUSEHOLD
+  CONSTRUCTION
+  INDUSTRIAL
+  HAZARDOUS
+}
+
+enum CaptureSource {
+  LIVE
+  GALLERY
+}
+
+enum ModerationReasonCode {
+  DUPLICATE_OF_OTHER
+  NOT_ON_SITE
+  INAPPROPRIATE_CONTENT
+}
+
+/// Versioned verification config (specs/006 research R6). At most one active row per key
+/// (partial unique index verification_configs_one_active_per_key, created in SQL).
+model VerificationConfig {
+  id        String   @id @default(uuid()) @db.Uuid
+  key       String   @db.VarChar(64)
+  version   String   @db.VarChar(64)
+  value     Json
+  isActive  Boolean  @default(false) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([key, version])
+  @@map("verification_configs")
 }
 
 model Campaign {
@@ -203,8 +274,8 @@ model Media {
   deletedAt DateTime? @map("deleted_at")
 
   // RELATIONS
-  campaignResultFiles     CampaignResultFile[]
-  reportMediaFiles        ReportMediaFile[]
+  campaignResultFiles CampaignResultFile[]
+  reportMediaFiles    ReportMediaFile[]
 
   @@index([type])
   @@index([deletedAt])
@@ -218,6 +289,12 @@ model ReportMediaFile {
   mediaId String @map("media_id") @db.Uuid
 
   uploadedBy String? @map("uploaded_by") @db.Uuid
+
+  /**
+   * LIVE when uploaded through a valid server-issued capture (P03); otherwise GALLERY.
+   */
+  captureSource CaptureSource @default(GALLERY) @map("capture_source")
+  captureId     String?       @unique @map("capture_id") @db.Uuid
 
   createdBy String? @map("created_by") @db.Uuid
   updatedBy String? @map("updated_by") @db.Uuid
