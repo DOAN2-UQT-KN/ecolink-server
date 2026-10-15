@@ -8,10 +8,9 @@ import * as outboxWriter from "../outbox/outbox.writer";
 import { prisma, resetTables } from "./setup/test-db";
 import { createVerificationOrchestrator } from "../modules/verification/verification.orchestrator";
 import { verificationConfigService } from "../modules/verification/verification-config.service";
-import { duplicateCheck } from "../modules/verification/checks/duplicate.check";
 import { trustCheck } from "../modules/verification/checks/trust.check";
 import { contextCheck } from "../modules/verification/checks/context.check";
-import type { CheckRunner } from "../modules/verification/checks/check-runner";
+import { notAvailableResult, type CheckRunner } from "../modules/verification/checks/check-runner";
 import type { CheckName, CheckResult } from "../modules/verification/verification.types";
 import type { ReasonCode } from "../constants/report-verification";
 
@@ -53,7 +52,14 @@ const hanging = (name: CheckName): CheckRunner => ({
 });
 
 const orchestrator = (checks: CheckRunner[]) => createVerificationOrchestrator({ db: prisma, checks, config });
-const stubs = () => orchestrator([duplicateCheck, trustCheck, contextCheck]);
+// DuplicateCheck is real since P06 (calls ai-service); a NOT_AVAILABLE fake keeps this offline.
+const duplicateNotAvailable: CheckRunner = {
+  name: "DUPLICATE",
+  signalNames: ["phash", "orb", "internet"],
+  version: (cfg) => cfg.duplicate.version,
+  run: async (ctx) => notAvailableResult(duplicateNotAvailable, ctx.checksConfig),
+};
+const stubs = () => orchestrator([duplicateNotAvailable, trustCheck, contextCheck]);
 
 async function seedReport(over: { status?: number; deletedAt?: Date } = {}) {
   const userId = randomUUID();

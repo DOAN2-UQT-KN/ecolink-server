@@ -1,4 +1,4 @@
-"""Duplicate detection cascade: SHA-256 → pHash → ORB (embedding later)."""
+"""Legacy duplicate cascade (SQS worker): pHash → ORB, same user. Replaced by duplicate_check (specs/006 P06); removed in P10."""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ from app.verification.contracts import (
     DuplicateMediaMatch,
     DuplicateReportResult,
     ReasonCode,
-    ReportDuplicate,
     ReportSubmittedPayload,
 )
 from app.verification.duplicate.orb import (
@@ -121,49 +120,6 @@ def _ensure_media_hashes(
     return prepared
 
 
-def exact_hash(
-    payload: ReportSubmittedPayload,
-    context: Optional[dict[str, Any]] = None,
-) -> Optional[DuplicateReportResult]:
-    """Exact SHA-256 duplicate of an existing report by the same user."""
-    logger.info(
-        "duplicate check start step=exact_hash report_id=%s",
-        payload.report_id,
-    )
-    records = _ensure_media_hashes(payload, context)
-    matched = _matched_media_ids(context)
-    matches: list[DuplicateMediaMatch] = []
-    seen: set[tuple[str, str, str]] = set()
-
-    for rec in records:
-        if not rec.sha256 or rec.media_id in matched:
-            continue
-        try:
-            hits = hash_repo.find_sha256_matches_sync(
-                rec.sha256,
-                user_id=payload.user_id,
-                exclude_report_id=payload.report_id,
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception("SHA256 corpus lookup failed")
-            raise
-        for hit in _drop_inactive(hits, context):
-            key = (rec.media_id, hit.media_id, hit.report_id)
-            if key in seen:
-                continue
-            seen.add(key)
-            matches.append(
-                DuplicateMediaMatch(
-                    media_id=rec.media_id,
-                    duplicate_media_id=hit.media_id,
-                    duplicate_report_id=hit.report_id,
-                    reason=ReasonCode.EXACT_HASH_MATCH.value,
-                )
-            )
-
-    return _result_from_matches(payload, matches)
-
-
 def phash_similarity(
     payload: ReportSubmittedPayload,
     context: Optional[dict[str, Any]] = None,
@@ -218,19 +174,6 @@ def phash_similarity(
             )
 
     return _result_from_matches(payload, matches)
-
-
-def embedding_similarity(
-    payload: ReportSubmittedPayload,
-    context: Optional[dict[str, Any]] = None,
-) -> Optional[ReportDuplicate]:
-    """Embedding-based near-duplicate check. Not implemented yet."""
-    logger.info(
-        "duplicate check start step=embedding_similarity report_id=%s",
-        payload.report_id,
-    )
-    _ = context
-    return None
 
 
 def _attach_orb(records: list[ComputedMediaHashes]) -> list[OrbFeatures]:
@@ -320,7 +263,7 @@ def run_duplicate_cascade(
     context: Optional[dict[str, Any]] = None,
 ) -> DuplicateReportResult:
     """
-    Cascade: scan every image with SHA-256, then pHash, then ORB.
+    Cascade: scan every image with pHash, then ORB.
     A later step runs only for images that have no match yet.
     """
     ctx = context if context is not None else {}
@@ -328,7 +271,7 @@ def run_duplicate_cascade(
     matched: set[str] = set()
     ctx[CONTEXT_MATCHED_MEDIA_IDS] = matched
     matches: list[DuplicateMediaMatch] = []
-    for step in (exact_hash, phash_similarity, feature_matching):
+    for step in (phash_similarity, feature_matching):
         result = step(payload, ctx)
         if result is None:
             continue

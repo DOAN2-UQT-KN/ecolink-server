@@ -1,8 +1,7 @@
-"""Download image bytes and compute SHA-256 / DCT pHash for duplicate detection."""
+"""Download image bytes and compute DCT pHash (+ mirror) for duplicate detection."""
 
 from __future__ import annotations
 
-import hashlib
 import io
 import logging
 from dataclasses import dataclass
@@ -10,7 +9,7 @@ from typing import Any, Optional
 
 import httpx
 import imagehash
-from PIL import Image
+from PIL import Image, ImageOps
 
 from app.verification.contracts import ReportSubmittedMedia, ReportSubmittedPayload
 
@@ -19,7 +18,6 @@ logger = logging.getLogger("ai-service.verification.hash")
 DOWNLOAD_TIMEOUT_S = 15.0
 MAX_DOWNLOAD_BYTES = 15 * 1024 * 1024
 
-ALG_SHA256 = "SHA256"
 ALG_PHASH = "PHASH"
 PHASH_HAMMING_THRESHOLD = 10
 
@@ -29,7 +27,6 @@ class ComputedMediaHashes:
     report_media_file_id: str
     media_id: str
     url: str
-    sha256: Optional[str] = None
     phash: Optional[str] = None
     # Kept so ORB can run without a second download. Not persisted.
     image_bytes: Optional[bytes] = None
@@ -51,10 +48,31 @@ def hamming_distance_hex(a: str, b: str) -> int:
     return distance
 
 
-def compute_sha256(buffer: bytes) -> Optional[str]:
-    if not buffer:
+_U64 = 1 << 64
+
+
+def phash_hex_to_int(hex_str: str) -> int:
+    """16-char pHash hex -> signed 64-bit int, same value as Postgres ``('x'||hex)::bit(64)::bigint``."""
+    value = int(hex_str, 16)
+    return value - _U64 if value >= (1 << 63) else value
+
+
+def hamming_int(a: int, b: int) -> int:
+    """Hamming distance between two (signed) 64-bit pHash ints."""
+    return bin((a ^ b) & (_U64 - 1)).count("1")  # int.bit_count() needs 3.10; local venv is 3.9
+
+
+def mirror_image_bytes(buffer: bytes) -> Optional[bytes]:
+    """Horizontally flipped copy (PNG, lossless) so pHash / ORB can catch mirrored re-uploads."""
+    try:
+        image = Image.open(io.BytesIO(buffer))
+        image.load()
+        out = io.BytesIO()
+        ImageOps.mirror(image.convert("RGB")).save(out, format="PNG")
+        return out.getvalue()
+    except Exception as err:  # noqa: BLE001 — decode failures are expected
+        logger.warning("mirror failed: %s", err)
         return None
-    return hashlib.sha256(buffer).hexdigest()
 
 
 def compute_phash_hex(buffer: bytes) -> Optional[str]:
@@ -81,12 +99,12 @@ _DOWNLOAD_HEADERS = {
 }
 
 
-def download_image_bytes(url: str) -> Optional[bytes]:
+def download_image_bytes(url: str, timeout: float = DOWNLOAD_TIMEOUT_S) -> Optional[bytes]:
     try:
         # trust_env=False: ignore HTTP(S)_PROXY from the process env. Cursor /
         # sandbox proxies often return 403 on CONNECT to CDNs like Cloudinary.
         with httpx.Client(
-            timeout=DOWNLOAD_TIMEOUT_S,
+            timeout=timeout,
             follow_redirects=True,
             trust_env=False,
             headers=_DOWNLOAD_HEADERS,
@@ -113,7 +131,6 @@ def compute_hashes_for_media(item: ReportSubmittedMedia) -> ComputedMediaHashes:
     if not buffer:
         return result
     result.image_bytes = buffer
-    result.sha256 = compute_sha256(buffer)
     result.phash = compute_phash_hex(buffer)
     try:
         from app.verification.duplicate.orb import extract_orb
@@ -127,5 +144,5 @@ def compute_hashes_for_media(item: ReportSubmittedMedia) -> ComputedMediaHashes:
 
 
 def prepare_media_hashes(payload: ReportSubmittedPayload) -> list[ComputedMediaHashes]:
-    """Download + hash each media once for the cascade (stored on context)."""
+    """Download + pHash each media once for the cascade (stored on context)."""
     return [compute_hashes_for_media(item) for item in payload.media]

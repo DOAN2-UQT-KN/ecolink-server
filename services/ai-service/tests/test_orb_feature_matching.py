@@ -113,7 +113,6 @@ def test_cascade_orb_hit_after_hash_miss() -> None:
             report_media_file_id="rmf1",
             media_id="m-new",
             url="https://cdn.example/a.jpg",
-            sha256="abc",
             phash="0000000000000000",
             orb=OrbFeatures("m-new", query.keypoints_xy, query.descriptors),
         )
@@ -132,9 +131,6 @@ def test_cascade_orb_hit_after_hash_miss() -> None:
     passing.is_duplicate = True
 
     with patch(
-        "app.verification.duplicate.hash_repo.find_sha256_matches_sync",
-        return_value=[],
-    ), patch(
         "app.verification.duplicate.hash_repo.list_phash_corpus_sync",
         return_value=[],
     ), patch(

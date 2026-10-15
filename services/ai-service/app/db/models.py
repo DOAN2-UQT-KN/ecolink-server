@@ -4,7 +4,9 @@ from datetime import datetime
 from typing import Any, Optional, Union
 
 from sqlalchemy import (
+    BigInteger,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     LargeBinary,
@@ -92,12 +94,13 @@ class ChatMessage(Base):
 
 
 class AiMediaContentHash(Base):
-    """Corpus of image content hashes for duplicate detection (SHA256 / PHASH)."""
+    """Corpus of image pHashes for duplicate detection (PHASH only since specs/006 P06; SHA256 rows removed)."""
 
     __tablename__ = "ai_media_content_hashes"
     __table_args__ = (
         UniqueConstraint("media_id", "algorithm", name="uq_ai_media_hash_media_algo"),
         Index("ix_ai_media_content_hashes_algorithm_hash", "algorithm", "hash"),
+        Index("ix_ai_media_content_hashes_report_created_at", "report_created_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -113,6 +116,14 @@ class AiMediaContentHash(Base):
     )
     algorithm: Mapped[str] = mapped_column(String(50), nullable=False)
     hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    # Signed 64-bit form of `hash`, so Postgres can XOR + bit_count over the whole corpus.
+    phash_int: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    latitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    longitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    report_created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    category: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -124,7 +135,7 @@ class AiMediaOrbFeature(Base):
     __tablename__ = "ai_media_orb_features"
     __table_args__ = (
         UniqueConstraint("media_id", name="uq_ai_media_orb_media"),
-        Index("ix_ai_media_orb_features_user_id", "user_id"),
+        Index("ix_ai_media_orb_features_report_created_at", "report_created_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -141,6 +152,11 @@ class AiMediaOrbFeature(Base):
     keypoints: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     descriptors: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     keypoint_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    latitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    longitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    report_created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

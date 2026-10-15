@@ -10,6 +10,7 @@ import {
 import { requireInternalAiApiKey } from "../middleware/internal-ai-auth.middleware";
 import { reportService } from "../modules/report/report.service";
 import { toDuplicateVerification } from "../modules/report/report.entity";
+import prisma from "../config/prisma.client";
 import type { DuplicateVerificationGroup } from "../modules/report/report.dto";
 
 const router = Router();
@@ -134,6 +135,36 @@ router.post(
         return;
       }
       console.error("Inactive report ids lookup error:", error);
+      sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+    }
+  },
+);
+
+/**
+ * Geo + category of reports, for ai-service's one-off corpus backfill (specs/006 P06,
+ * `scripts/backfill_corpus.py`). No status filter: the corpus only needs where/when.
+ */
+router.post(
+  "/reports/geo-by-ids",
+  body("ids").isArray({ min: 1, max: 500 }).withMessage("ids must be an array of 1 to 500 items"),
+  body("ids.*").isUUID().withMessage("ids items must be UUIDs"),
+
+  async (req, res): Promise<void> => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
+      return;
+    }
+
+    try {
+      const ids = (req.body as { ids: string[] }).ids;
+      const reports = await prisma.report.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, latitude: true, longitude: true, createdAt: true, category: true },
+      });
+      sendSuccess(res, HTTP_STATUS.OK, { reports });
+    } catch (error) {
+      console.error("Report geo lookup error:", error);
       sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
     }
   },

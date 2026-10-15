@@ -13,7 +13,6 @@ from app.verification.contracts import (
     ReportSubmittedPayload,
 )
 from app.verification.duplicate import (
-    exact_hash,
     phash_similarity,
     run_duplicate_cascade,
 )
@@ -74,178 +73,49 @@ class _FakeHit:
     algorithm: str
 
 
-def _records(*items: tuple[str, str, str, str]) -> list[ComputedMediaHashes]:
-    """(report_media_file_id, media_id, sha256, phash) → ComputedMediaHashes."""
+def _records(*items: tuple[str, str, str]) -> list[ComputedMediaHashes]:
+    """(report_media_file_id, media_id, phash) → ComputedMediaHashes."""
     out: list[ComputedMediaHashes] = []
-    for rmf, media_id, sha256, phash in items:
+    for rmf, media_id, phash in items:
         out.append(
             ComputedMediaHashes(
                 report_media_file_id=rmf,
                 media_id=media_id,
                 url=f"https://cdn.example/{media_id}.jpg",
-                sha256=sha256,
                 phash=phash,
             )
         )
     return out
 
 
-def test_exact_hash_hit_short_circuits() -> None:
-    payload = ReportSubmittedPayload("r-new", "u1", ["rmf1"], media=[])
-    context = {"media_hashes": _records(("rmf1", "m1", "abc", "1111111111111111"))}
-
-    with patch(
-        "app.verification.duplicate.hash_repo.find_sha256_matches_sync",
-        return_value=[_FakeHit("r-old", "u1", "m-old", "abc", "SHA256")],
-    ) as sha_mock, patch(
-        "app.verification.duplicate.hash_repo.list_phash_corpus_sync"
-    ) as ph_mock:
-        result = run_duplicate_cascade(payload, context)
-        assert isinstance(result, DuplicateReportResult)
-        assert result.report_id == "r-new"
-        assert result.duplicate_report_ids == ["r-old"]
-        assert result.reason == ReasonCode.DUPLICATE_IMAGE.value
-        assert len(result.matches) == 1
-        assert result.matches[0].media_id == "m1"
-        assert result.matches[0].duplicate_media_id == "m-old"
-        assert result.matches[0].reason == ReasonCode.EXACT_HASH_MATCH.value
-        sha_mock.assert_called_with(
-            "abc", user_id="u1", exclude_report_id="r-new"
-        )
-        ph_mock.assert_not_called()
-
-
-def test_exact_hash_pairs_all_media_on_first_matching_report() -> None:
-    payload = ReportSubmittedPayload("r-new", "u1", ["rmf1", "rmf2"], media=[])
-    context = {
-        "media_hashes": _records(
-            ("rmf1", "m-new-1", "hash-a", "aaaaaaaaaaaaaaaa"),
-            ("rmf2", "m-new-2", "hash-b", "bbbbbbbbbbbbbbbb"),
-        )
-    }
-
-    def _sha_lookup(sha256: str, *, user_id: str, exclude_report_id: str) -> list:
-        assert user_id == "u1"
-        assert exclude_report_id == "r-new"
-        if sha256 == "hash-a":
-            return [_FakeHit("r-old", "u1", "m-old-1", "hash-a", "SHA256")]
-        return [_FakeHit("r-old", "u1", "m-old-2", "hash-b", "SHA256")]
-
-    with patch(
-        "app.verification.duplicate.hash_repo.find_sha256_matches_sync",
-        side_effect=_sha_lookup,
-    ):
-        result = exact_hash(payload, context)
-
-    assert result is not None
-    assert result.duplicate_report_ids == ["r-old"]
-    assert {(m.media_id, m.duplicate_media_id) for m in result.matches} == {
-        ("m-new-1", "m-old-1"),
-        ("m-new-2", "m-old-2"),
-    }
-
-
-def test_exact_hash_first_matching_report_wins() -> None:
-    payload = ReportSubmittedPayload("r-new", "u1", ["rmf1", "rmf2"], media=[])
-    context = {
-        "media_hashes": _records(
-            ("rmf1", "m-new-1", "hash-a", "aaaaaaaaaaaaaaaa"),
-            ("rmf2", "m-new-2", "hash-b", "bbbbbbbbbbbbbbbb"),
-        )
-    }
-
-    def _sha_lookup(sha256: str, *, user_id: str, exclude_report_id: str) -> list:
-        _ = (user_id, exclude_report_id)
-        if sha256 == "hash-a":
-            return [_FakeHit("r-old-a", "u1", "m-old-a", "hash-a", "SHA256")]
-        return [_FakeHit("r-old-b", "u1", "m-old-b", "hash-b", "SHA256")]
-
-    with patch(
-        "app.verification.duplicate.hash_repo.find_sha256_matches_sync",
-        side_effect=_sha_lookup,
-    ):
-        result = exact_hash(payload, context)
-
-    assert result is not None
-    assert result.duplicate_report_ids == ["r-old-a", "r-old-b"]
-    assert result.to_incident_payload() == [
-        {
-            "duplicate_report_id": "r-old-a",
-            "matches": [
-                {"media_id": "m-new-1", "duplicate_media_id": "m-old-a"},
-            ],
-        },
-        {
-            "duplicate_report_id": "r-old-b",
-            "matches": [
-                {"media_id": "m-new-2", "duplicate_media_id": "m-old-b"},
-            ],
-        },
-    ]
-    assert {
-        (m.media_id, m.duplicate_media_id, m.duplicate_report_id) for m in result.matches
-    } == {
-        ("m-new-1", "m-old-a", "r-old-a"),
-        ("m-new-2", "m-old-b", "r-old-b"),
-    }
-
-
-def test_exact_hash_skips_inactive_report_and_keeps_live(monkeypatch) -> None:
+def test_phash_skips_inactive_report_and_keeps_live(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.verification.duplicate.inactive_report_ids_sync",
         lambda report_ids: {"r-inactive"},
     )
-    payload = ReportSubmittedPayload("r-new", "u1", ["rmf1", "rmf2"], media=[])
-    context = {
-        "media_hashes": _records(
-            ("rmf1", "m-new-1", "hash-a", "aaaaaaaaaaaaaaaa"),
-            ("rmf2", "m-new-2", "hash-b", "bbbbbbbbbbbbbbbb"),
-        )
-    }
-
-    def _sha_lookup(sha256: str, *, user_id: str, exclude_report_id: str) -> list:
-        _ = (user_id, exclude_report_id)
-        if sha256 == "hash-a":
-            return [_FakeHit("r-inactive", "u1", "m-old-a", "hash-a", "SHA256")]
-        return [_FakeHit("r-live", "u1", "m-old-b", "hash-b", "SHA256")]
+    payload = ReportSubmittedPayload("r-new", "u1", ["rmf1"], media=[])
+    context = {"media_hashes": _records(("rmf1", "m1", "0000000000000000"))}
+    corpus = [
+        _FakeHit("r-inactive", "u1", "m-old-a", "0000000000000000", "PHASH"),
+        _FakeHit("r-live", "u1", "m-old-b", "1000000000000000", "PHASH"),
+    ]
 
     with patch(
-        "app.verification.duplicate.hash_repo.find_sha256_matches_sync",
-        side_effect=_sha_lookup,
+        "app.verification.duplicate.hash_repo.list_phash_corpus_sync",
+        return_value=corpus,
     ):
-        result = exact_hash(payload, context)
+        result = phash_similarity(payload, context)
 
     assert result is not None
     assert result.duplicate_report_ids == ["r-live"]
-    assert [(m.media_id, m.duplicate_report_id) for m in result.matches] == [
-        ("m-new-2", "r-live"),
-    ]
 
 
-def test_exact_hash_only_inactive_is_not_a_duplicate(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "app.verification.duplicate.inactive_report_ids_sync",
-        lambda report_ids: {"r-inactive"},
-    )
+def test_phash_hit() -> None:
     payload = ReportSubmittedPayload("r-new", "u1", ["rmf1"], media=[])
-    context = {"media_hashes": _records(("rmf1", "m1", "abc", "1111111111111111"))}
-
-    with patch(
-        "app.verification.duplicate.hash_repo.find_sha256_matches_sync",
-        return_value=[_FakeHit("r-inactive", "u1", "m-old", "abc", "SHA256")],
-    ):
-        assert exact_hash(payload, context) is None
-
-
-def test_phash_hit_when_sha_misses() -> None:
-    payload = ReportSubmittedPayload("r-new", "u1", ["rmf1"], media=[])
-    context = {"media_hashes": _records(("rmf1", "m1", "abc", "0000000000000000"))}
+    context = {"media_hashes": _records(("rmf1", "m1", "0000000000000000"))}
     corpus = [_FakeHit("r-old", "u1", "m-old", "1000000000000000", "PHASH")]
 
     with patch(
-        "app.verification.duplicate.hash_repo.find_sha256_matches_sync",
-        return_value=[],
-    ) as sha_mock, patch(
         "app.verification.duplicate.hash_repo.list_phash_corpus_sync",
         return_value=corpus,
     ) as ph_mock:
@@ -256,15 +126,12 @@ def test_phash_hit_when_sha_misses() -> None:
         assert result.matches[0].media_id == "m1"
         assert result.matches[0].duplicate_media_id == "m-old"
         assert result.matches[0].reason == ReasonCode.HIGH_IMAGE_SIMILARITY.value
-        sha_mock.assert_called_with(
-            "abc", user_id="u1", exclude_report_id="r-new"
-        )
         ph_mock.assert_called_with(user_id="u1", exclude_report_id="r-new")
 
 
 def test_phash_miss_above_threshold() -> None:
     payload = ReportSubmittedPayload("r-new", "u1", ["rmf1"], media=[])
-    context = {"media_hashes": _records(("rmf1", "m1", None, "0000000000000000"))}
+    context = {"media_hashes": _records(("rmf1", "m1", "0000000000000000"))}
     corpus = [_FakeHit("r-old", "u1", "m-old", "ffffffffffffffff", "PHASH")]
 
     with patch(
@@ -276,12 +143,9 @@ def test_phash_miss_above_threshold() -> None:
 
 def test_cascade_no_hit_returns_empty_result() -> None:
     payload = ReportSubmittedPayload("r-new", "u1", ["rmf1"], media=[])
-    context = {"media_hashes": _records(("rmf1", "m1", "abc", "0000000000000000"))}
+    context = {"media_hashes": _records(("rmf1", "m1", "0000000000000000"))}
 
     with patch(
-        "app.verification.duplicate.hash_repo.find_sha256_matches_sync",
-        return_value=[],
-    ), patch(
         "app.verification.duplicate.hash_repo.list_phash_corpus_sync",
         return_value=[],
     ):
@@ -300,14 +164,6 @@ def test_cascade_no_hit_returns_empty_result() -> None:
     }
 
 
-def test_exact_hash_no_media_returns_none() -> None:
-    payload = ReportSubmittedPayload("r1", "u1", ["m1"])
-    with patch(
-        "app.verification.duplicate.prepare_media_hashes", return_value=[]
-    ):
-        assert exact_hash(payload, {}) is None
-
-
 def test_incident_payload_omits_report_id() -> None:
     result = DuplicateReportResult(
         report_id="r-new",
@@ -318,7 +174,7 @@ def test_incident_payload_omits_report_id() -> None:
                 media_id="m1",
                 duplicate_media_id="m-old",
                 duplicate_report_id="r-old",
-                reason=ReasonCode.EXACT_HASH_MATCH.value,
+                reason=ReasonCode.HIGH_IMAGE_SIMILARITY.value,
             )
         ],
     )

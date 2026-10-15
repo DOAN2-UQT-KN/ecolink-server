@@ -15,8 +15,6 @@ from app.verification.contracts import (
 )
 from app.verification.hash_compute import ComputedMediaHashes
 from app.verification.duplicate import (
-    embedding_similarity,
-    exact_hash,
     feature_matching,
     phash_similarity,
     run_duplicate_cascade,
@@ -57,15 +55,10 @@ def test_duplicate_cascade_empty_when_no_hashes() -> None:
     with patch(
         "app.verification.duplicate.prepare_media_hashes", return_value=[]
     ), patch(
-        "app.verification.duplicate.hash_repo.find_sha256_matches_sync",
-        return_value=[],
-    ), patch(
         "app.verification.duplicate.hash_repo.list_phash_corpus_sync",
         return_value=[],
     ) as ph_mock:
-        assert exact_hash(payload, {}) is None
         assert phash_similarity(payload, {}) is None
-        assert embedding_similarity(payload) is None
         assert feature_matching(payload) is None
         result = run_duplicate_cascade(payload, {})
         assert isinstance(result, DuplicateReportResult)
@@ -128,16 +121,12 @@ def test_pipeline_preserves_caller_empty_context() -> None:
             report_media_file_id="rmf1",
             media_id="m1",
             url="https://cdn.example/m1.jpg",
-            sha256="abc",
             phash="1111111111111111",
         )
     ]
     context: dict = {}
     with patch(
         "app.verification.duplicate.prepare_media_hashes", return_value=prepared
-    ), patch(
-        "app.verification.duplicate.hash_repo.find_sha256_matches_sync",
-        return_value=[],
     ), patch(
         "app.verification.duplicate.hash_repo.list_phash_corpus_sync",
         return_value=[],
@@ -157,15 +146,11 @@ def test_handle_report_submitted_upserts_hashes_from_context() -> None:
             report_media_file_id="rmf1",
             media_id="m1",
             url="https://cdn.example/m1.jpg",
-            sha256="abc",
             phash=None,
         )
     ]
     with patch(
         "app.verification.duplicate.prepare_media_hashes", return_value=prepared
-    ), patch(
-        "app.verification.duplicate.hash_repo.find_sha256_matches_sync",
-        return_value=[],
     ), patch(
         "app.verification.duplicate.hash_repo.list_phash_corpus_sync",
         return_value=[],
@@ -221,14 +206,12 @@ def test_handle_report_submitted_with_partial_duplicate() -> None:
         report_media_file_id="rmf1",
         media_id="m1",
         url="https://cdn.example/m1.jpg",
-        sha256="abc",
         phash=None,
     )
     rec2 = ComputedMediaHashes(
         report_media_file_id="rmf2",
         media_id="m2",
         url="https://cdn.example/m2.jpg",
-        sha256="def",
         phash=None,
     )
     dup_result = DuplicateReportResult(
@@ -239,7 +222,7 @@ def test_handle_report_submitted_with_partial_duplicate() -> None:
             DuplicateMediaMatch(
                 media_id="m1",
                 duplicate_media_id="m0",
-                reason="EXACT_HASH_MATCH",
+                reason="HIGH_IMAGE_SIMILARITY",
             )
         ],
     )
@@ -287,7 +270,6 @@ def test_handle_report_submitted_all_duplicate_skips_upsert() -> None:
         report_media_file_id="rmf1",
         media_id="m1",
         url="https://cdn.example/m1.jpg",
-        sha256="abc",
         phash=None,
     )
     dup_result = DuplicateReportResult(
@@ -298,7 +280,7 @@ def test_handle_report_submitted_all_duplicate_skips_upsert() -> None:
             DuplicateMediaMatch(
                 media_id="m1",
                 duplicate_media_id="m0",
-                reason="EXACT_HASH_MATCH",
+                reason="HIGH_IMAGE_SIMILARITY",
             )
         ],
     )

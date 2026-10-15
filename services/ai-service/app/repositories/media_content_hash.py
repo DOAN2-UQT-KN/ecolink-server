@@ -13,7 +13,7 @@ from sqlalchemy.dialects.postgresql import insert
 from app.db.async_bridge import run_coro
 from app.db.models import AiMediaContentHash
 from app.db.session import SessionLocal
-from app.verification.hash_compute import ALG_PHASH, ALG_SHA256, ComputedMediaHashes
+from app.verification.hash_compute import ALG_PHASH, ComputedMediaHashes, phash_hex_to_int
 
 logger = logging.getLogger("ai-service.repositories.media_content_hash")
 
@@ -32,36 +32,6 @@ def _parse_uuid(value: str) -> Optional[uuid.UUID]:
         return uuid.UUID(value)
     except (ValueError, TypeError, AttributeError):
         return None
-
-
-async def _find_sha256_matches(
-    sha256: str, *, user_id: str, exclude_report_id: str
-) -> list[CorpusHashHit]:
-    exclude = _parse_uuid(exclude_report_id)
-    owner = _parse_uuid(user_id)
-    if owner is None:
-        return []
-    async with SessionLocal() as session:
-        stmt = select(AiMediaContentHash).where(
-            AiMediaContentHash.algorithm == ALG_SHA256,
-            AiMediaContentHash.hash == sha256,
-            AiMediaContentHash.user_id == owner,
-        )
-        if exclude is not None:
-            stmt = stmt.where(AiMediaContentHash.report_id != exclude)
-        stmt = stmt.order_by(AiMediaContentHash.created_at.asc())
-        result = await session.execute(stmt)
-        rows = list(result.scalars().all())
-        return [
-            CorpusHashHit(
-                report_id=str(row.report_id),
-                user_id=str(row.user_id) if row.user_id else None,
-                media_id=str(row.media_id),
-                hash=row.hash,
-                algorithm=row.algorithm,
-            )
-            for row in rows
-        ]
 
 
 async def _list_phash_corpus(
@@ -116,10 +86,15 @@ async def _upsert_computed_hashes(
             "media_id": media_uuid,
             "user_id": user_uuid,
         }
-        if rec.sha256:
-            rows.append({**base, "algorithm": ALG_SHA256, "hash": rec.sha256})
         if rec.phash:
-            rows.append({**base, "algorithm": ALG_PHASH, "hash": rec.phash})
+            rows.append(
+                {
+                    **base,
+                    "algorithm": ALG_PHASH,
+                    "hash": rec.phash,
+                    "phash_int": phash_hex_to_int(rec.phash),
+                }
+            )
 
     if not rows:
         logger.warning(
@@ -135,6 +110,7 @@ async def _upsert_computed_hashes(
             constraint="uq_ai_media_hash_media_algo",
             set_={
                 "hash": stmt.excluded.hash,
+                "phash_int": stmt.excluded.phash_int,
                 "report_id": stmt.excluded.report_id,
                 "report_media_file_id": stmt.excluded.report_media_file_id,
                 "user_id": stmt.excluded.user_id,
@@ -171,16 +147,6 @@ async def _delete_hashes_by_media_ids(media_ids: Sequence[str]) -> int:
             [str(u) for u in uuids],
         )
         return deleted_count
-
-
-def find_sha256_matches_sync(
-    sha256: str, *, user_id: str, exclude_report_id: str
-) -> list[CorpusHashHit]:
-    return run_coro(
-        _find_sha256_matches(
-            sha256, user_id=user_id, exclude_report_id=exclude_report_id
-        )
-    )
 
 
 def list_phash_corpus_sync(

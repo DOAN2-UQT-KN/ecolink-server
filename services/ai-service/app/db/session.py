@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.exc import OperationalError
 
 from app.config import settings
+from app.db.migrations import run_migrations
 from app.db.models import Base
 
 
@@ -60,6 +61,7 @@ async def init_db() -> None:
     try:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            await run_migrations(conn)
     except OperationalError as e:
         # Surface a clearer hint for the common "database does not exist" case.
         msg = str(getattr(e, "orig", e))

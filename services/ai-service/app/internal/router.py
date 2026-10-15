@@ -3,9 +3,14 @@ import traceback
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_internal_api_key
 from app.chat.service import translate_text
+from app.db.session import get_session
+from app.verification.duplicate_check.corpus import SqlCorpus
+from app.verification.duplicate_check.models import DuplicateCheckRequest
+from app.verification.duplicate_check.service import run_duplicate_check
 
 logger = logging.getLogger(__name__)
 
@@ -53,3 +58,20 @@ async def internal_translate(body: InternalTranslateBody) -> dict:
             status_code=500,
             detail=f"{type(e).__name__}: {e}",
         ) from e
+
+
+@router.post(
+    "/verification/duplicate",
+    dependencies=[Depends(require_internal_api_key)],
+)
+async def verification_duplicate(
+    body: DuplicateCheckRequest,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """
+    DuplicateCheck of the report verification pipeline (specs/006 P06), called by
+    incident-service's orchestrator. Always 200 with a CheckResult; processing errors
+    come back as status FAILED (contracts/internal-duplicate-check.md).
+    """
+    result = await run_duplicate_check(body, SqlCorpus(session))
+    return result.model_dump()
