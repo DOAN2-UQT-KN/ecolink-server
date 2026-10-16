@@ -1,5 +1,5 @@
 import { validationResult } from "express-validator";
-import { addReportImagesValidators, createReportValidators } from "../report.validator";
+import { addReportImagesValidators, createReportValidators, isEcolinkImageUrl } from "../report.validator";
 
 const OK_URL = "https://res.cloudinary.com/ecolink/image/upload/v1/uploads/a.jpg";
 
@@ -50,6 +50,25 @@ describe("createReportValidators", () => {
     ["no images at all", { ...valid, images: undefined }, "images is required"],
   ])("rejects %s", async (_name, body, message) => {
     expect(await errorsFor(body)).toContain(message);
+  });
+});
+
+describe("isEcolinkImageUrl with extra allowed clouds", () => {
+  const previous = { cloud: process.env.CLOUDINARY_CLOUD_NAME, allowed: process.env.CLOUDINARY_ALLOWED_CLOUD_NAMES };
+  beforeAll(() => {
+    process.env.CLOUDINARY_CLOUD_NAME = "ecolink";
+    process.env.CLOUDINARY_ALLOWED_CLOUD_NAMES = " clientcloud , ";
+  });
+  afterAll(() => {
+    process.env.CLOUDINARY_CLOUD_NAME = previous.cloud;
+    process.env.CLOUDINARY_ALLOWED_CLOUD_NAMES = previous.allowed;
+  });
+
+  it("accepts the server cloud and the listed client cloud, nothing else", () => {
+    expect(isEcolinkImageUrl(OK_URL)).toBe(true);
+    expect(isEcolinkImageUrl("https://res.cloudinary.com/clientcloud/image/upload/v1/blob.jpg")).toBe(true);
+    expect(isEcolinkImageUrl("https://res.cloudinary.com/other/image/upload/v1/blob.jpg")).toBe(false);
+    expect(isEcolinkImageUrl("https://res.cloudinary.com/clientcloud/video/upload/v1/a.mp4")).toBe(false);
   });
 });
 

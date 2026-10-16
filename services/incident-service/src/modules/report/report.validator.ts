@@ -16,7 +16,12 @@ export function isEcolinkImageUrl(url: string): boolean {
     }
     return url.startsWith("https://");
   }
-  return url.startsWith(`https://res.cloudinary.com/${cloudName}/image/upload/`);
+  // The web client may upload to its own Cloudinary account (CLOUDINARY_ALLOWED_CLOUD_NAMES).
+  const allowed = [
+    cloudName,
+    ...(process.env.CLOUDINARY_ALLOWED_CLOUD_NAMES ?? "").split(",").map((c) => c.trim()).filter(Boolean),
+  ];
+  return allowed.some((name) => url.startsWith(`https://res.cloudinary.com/${name}/image/upload/`));
 }
 
 export const reportSearchQueryValidators = [

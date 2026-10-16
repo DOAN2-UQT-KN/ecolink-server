@@ -9,6 +9,15 @@ type Db = PrismaClient | Prisma.TransactionClient;
 
 export const REPORT_RATE_LIMIT = { max: 5, windowMs: 24 * 60 * 60 * 1000 } as const;
 
+/**
+ * shortcut: temporarily raised via REPORT_RATE_LIMIT_MAX for testing; drop the env and keep 5 when done.
+ * Read per call so the value does not depend on when dotenv runs.
+ */
+function rateLimitMax(): number {
+  const fromEnv = Number(process.env.REPORT_RATE_LIMIT_MAX);
+  return Number.isInteger(fromEnv) && fromEnv > 0 ? fromEnv : REPORT_RATE_LIMIT.max;
+}
+
 /** BR-113: the point must lie in an active service area. No active area = no check (fail-open). */
 export async function assertInServiceArea(db: Db, lat: number, lng: number): Promise<void> {
   if (process.env.SERVICE_AREA_CHECK_DISABLED === "true") return;
@@ -33,17 +42,18 @@ export async function lockUserForSubmit(tx: Prisma.TransactionClient, userId: st
 }
 
 /**
- * BR-114: at most 5 reports per sliding 24 h window. Soft-deleted reports count too,
+ * BR-114: at most 5 reports (REPORT_RATE_LIMIT_MAX) per sliding 24 h window. Soft-deleted reports count too,
  * so deleting and re-sending does not reset the limit.
  */
 export async function assertUnderRateLimit(tx: Db, userId: string, now: Date): Promise<void> {
+  const max = rateLimitMax();
   const recent = await tx.report.findMany({
     where: { userId, createdAt: { gt: new Date(now.getTime() - REPORT_RATE_LIMIT.windowMs) } },
     select: { createdAt: true },
     orderBy: { createdAt: "asc" },
-    take: REPORT_RATE_LIMIT.max,
+    take: max,
   });
-  if (recent.length < REPORT_RATE_LIMIT.max) return;
+  if (recent.length < max) return;
 
   const retryAfter = new Date(recent[0].createdAt.getTime() + REPORT_RATE_LIMIT.windowMs);
   throw new HttpError(HTTP_STATUS.REPORT_RATE_LIMITED, { retryAfter: retryAfter.toISOString() });
