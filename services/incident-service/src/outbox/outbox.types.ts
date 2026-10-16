@@ -14,6 +14,12 @@ export const OutboxEventType = {
   CAMPAIGN_FACEBOOK_RECOGNITION: "CAMPAIGN_FACEBOOK_RECOGNITION",
   /** Domain: ReportSubmitted — consumed by ai-service verification pipeline. */
   REPORT_SUBMITTED: "REPORT_SUBMITTED",
+  /**
+   * Background jobs written with the report (specs/006 P10): relayed to their own SQS queue with a
+   * `background_jobs` row of the same id, so `@da2/queue` workers accept them. See background-job.outbox.ts.
+   */
+  ANALYZE_REPORT: "ANALYZE_REPORT",
+  TRANSLATE_TEXT: "TRANSLATE_TEXT",
   /** Domain: ReportVerified — handled in-process (owner notification), see report-verified.publisher.ts. */
   REPORT_VERIFIED: "REPORT_VERIFIED",
   /**

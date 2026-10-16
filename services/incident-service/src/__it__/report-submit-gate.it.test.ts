@@ -74,9 +74,13 @@ describe("[it] report submit gate (P02)", () => {
 
     expect(replayed).toBe(false);
     expect(report).toMatchObject({ status: 12, category: "WATERWAY", wasteTypes: ["HOUSEHOLD"], wasteType: "household" });
-    const events = await prisma.outboxEvent.findMany({ where: { aggregateId: report.id } });
-    expect(events).toHaveLength(1);
-    expect(events[0].payload).toMatchObject({ reportId: report.id, attempt: 1 });
+    const events = await prisma.outboxEvent.findMany({ where: { aggregateId: report.id }, orderBy: { createdAt: "asc" } });
+    // REPORT_SUBMITTED + the two background jobs, all written with the report (P10).
+    expect(events.map((e) => e.eventType).sort()).toEqual(["ANALYZE_REPORT", "REPORT_SUBMITTED", "TRANSLATE_TEXT"]);
+    expect(events.find((e) => e.eventType === "REPORT_SUBMITTED")?.payload).toMatchObject({ reportId: report.id, attempt: 1 });
+    for (const job of events.filter((e) => e.eventType !== "REPORT_SUBMITTED")) {
+      expect(await prisma.backgroundJob.findUnique({ where: { id: job.id } })).toMatchObject({ jobType: job.eventType });
+    }
     const files = await prisma.reportMediaFile.findMany({ where: { reportId: report.id } });
     expect(files.map((f) => f.captureSource)).toEqual(["GALLERY"]);
   });

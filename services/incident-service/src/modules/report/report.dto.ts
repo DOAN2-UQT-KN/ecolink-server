@@ -63,8 +63,10 @@ export interface UpdateReportRequest {
 }
 
 export interface AddReportImagesRequest {
-  imageUrls: string[];
-  /** Optional; `mediaCaptures[i]` maps to `imageUrls[i]`. */
+  images?: CreateReportImageInput[];
+  /** Legacy (client trước spec 007): dùng images. Xoá ở P10b. */
+  imageUrls?: string[];
+  /** Legacy, ignored since specs/006 P10. */
   mediaCaptures?: MediaCaptureInput[];
 }
 

@@ -47,14 +47,14 @@ import {
   enqueueReportStatusWebsiteNotification,
 } from "./report-status-notify.client";
 import { emitOutbox } from "../../outbox/outbox.writer";
+import { emitBackgroundJob } from "../../outbox/background-job.outbox";
 import { OutboxEventType } from "../../outbox/outbox.types";
 import {
   buildMediaCreateData,
   emptyExtracted,
-  prepareMediaFromUrl,
   toReportSubmittedMediaSnapshot,
 } from "../media/media-from-url.service";
-import { normalizeCreateReportInput } from "./report-create.input";
+import { normalizeCreateReportInput, normalizeImages } from "./report-create.input";
 import { resolveCaptureSources } from "./capture/capture.service";
 import {
   assertInServiceArea,
@@ -131,6 +131,33 @@ function enqueueReportTranslationJob(
         err.message,
       );
     });
+}
+
+/** Translation targets of a new report: only the languages the user did not write themselves. */
+function reportTranslationTargets(t: {
+  sourceTitle: string;
+  sourceDescription: string;
+  userTitleVi: string;
+  userTitleEn: string;
+  userDescriptionVi: string;
+  userDescriptionEn: string;
+}): TranslationFieldTarget[] {
+  const targets: TranslationFieldTarget[] = [
+    {
+      sourceText: t.sourceTitle,
+      viField: t.userTitleVi ? undefined : "titleVi",
+      enField: t.userTitleEn ? undefined : "titleEn",
+    },
+  ];
+  if (t.sourceDescription) {
+    targets.push({
+      sourceText: t.sourceDescription,
+      viField: t.userDescriptionVi ? undefined : "descriptionVi",
+      enField: t.userDescriptionEn ? undefined : "descriptionEn",
+    });
+  }
+  // Same filter as enqueueReportTranslationJob: skip empty text and fully user-translated fields.
+  return targets.filter((x) => x.sourceText.trim().length > 0 && (x.viField || x.enField));
 }
 
 /** Admin moderation: report is banned / hidden (`GlobalStatus._STATUS_INACTIVE`). */
@@ -377,41 +404,42 @@ export class ReportService {
         dedupKey: `${OutboxEventType.REPORT_SUBMITTED}:${createdReport.id}:1`,
       });
 
+      // AI analysis and translation ride the same transaction (FR-043), not a post-commit enqueue.
+      if (reportMediaFileIds.length > 0) {
+        await emitBackgroundJob(tx, {
+          jobType: ReportJobType.ANALYZE_REPORT,
+          payload: { reportId: createdReport.id, reportMediaFileIds },
+          aggregateId: createdReport.id,
+          dedupKey: `${ReportJobType.ANALYZE_REPORT}:${createdReport.id}:1`,
+        });
+      }
+      const translations = reportTranslationTargets({
+        sourceTitle,
+        sourceDescription,
+        userTitleVi,
+        userTitleEn,
+        userDescriptionVi,
+        userDescriptionEn,
+      });
+      if (translations.length > 0) {
+        await emitBackgroundJob(tx, {
+          jobType: ReportJobType.TRANSLATE_TEXT,
+          payload: {
+            resourceType: TranslationResourceType.REPORT,
+            resourceId: createdReport.id,
+            translations,
+          } as unknown as Prisma.InputJsonValue,
+          aggregateId: createdReport.id,
+          dedupKey: `${ReportJobType.TRANSLATE_TEXT}:${createdReport.id}:create`,
+        });
+      }
+
       return { report: createdReport, reportMediaFileIds, replayed: false };
     });
 
     if (outcome.replayed) {
       return { report: await toResponse(outcome.report), replayed: true };
     }
-
-    // Still enqueued directly (best-effort): @da2/queue workers drop messages without a
-    // background_jobs row, so these move to the outbox only in P10 (specs/006 research R3).
-    backgroundJobDispatcher
-      .enqueue(ReportJobType.ANALYZE_REPORT, {
-        reportId: outcome.report.id,
-        reportMediaFileIds: outcome.reportMediaFileIds,
-      })
-      .catch((err: Error) => {
-        console.error("Failed to enqueue AI analysis job:", err.message);
-      });
-
-    const titleTarget: TranslationFieldTarget = {
-      sourceText: sourceTitle,
-      viField: userTitleVi ? undefined : "titleVi",
-      enField: userTitleEn ? undefined : "titleEn",
-    };
-    const descriptionTarget: TranslationFieldTarget | null = sourceDescription
-      ? {
-          sourceText: sourceDescription,
-          viField: userDescriptionVi ? undefined : "descriptionVi",
-          enField: userDescriptionEn ? undefined : "descriptionEn",
-        }
-      : null;
-    enqueueReportTranslationJob(
-      TranslationResourceType.REPORT,
-      outcome.report.id,
-      descriptionTarget ? [titleTarget, descriptionTarget] : [titleTarget],
-    );
 
     return { report: await toResponse(outcome.report), replayed: false };
   }
@@ -966,67 +994,78 @@ export class ReportService {
 
     this.assertReporterMayEditReport(existing, userId, role);
 
-    const imageUrls = request.imageUrls
-      .map((url) => url.trim())
-      .filter((url) => url.length > 0);
-
-    if (imageUrls.length === 0) {
+    const images = normalizeImages(request);
+    if (images.length === 0) {
       throw new HttpError(
-        HTTP_STATUS.BAD_REQUEST.withMessage(
-          "imageUrls must contain at least one non-empty URL",
-        ),
+        HTTP_STATUS.BAD_REQUEST.withMessage("images must contain at least one URL"),
       );
     }
 
-    // Download + EXIF extract before the DB transaction.
-    const preparedMedia = await Promise.all(
-      imageUrls.map((imageUrl, index) =>
-        prepareMediaFromUrl({
-          url: imageUrl,
-          type: MediaResourceType.REPORT,
-          userId,
-          capture: request.mediaCaptures?.[index] ?? null,
-        }),
+    // Images are not downloaded here (FR-005), same as createReport.
+    const mediaRows = images.map((img) =>
+      buildMediaCreateData(
+        { id: randomUUID(), url: img.url, type: MediaResourceType.REPORT, userId, capture: null },
+        emptyExtracted(),
       ),
     );
 
-    const reportMediaFileIds = await prisma.$transaction(async (tx) => {
-      const createdIds: string[] = [];
-
-      for (const prepared of preparedMedia) {
-        const media = await tx.media.create({ data: prepared.media });
-
-        const reportMediaFile = await tx.reportMediaFile.create({
-          data: {
-            reportId,
-            mediaId: media.id,
-            uploadedBy: userId,
-            createdBy: userId,
-            updatedBy: userId,
-          },
-          select: { id: true },
-        });
-
-        createdIds.push(reportMediaFile.id);
-      }
-
-      return createdIds;
-    });
-
-    await reportRepository.update(reportId, {
-      aiVerified: false,
-      status: ReportStatus._STATUS_PENDING,
-      duplicateVerification: Prisma.DbNull,
-    });
-
-    backgroundJobDispatcher
-      .enqueue(ReportJobType.ANALYZE_REPORT, {
+    await prisma.$transaction(async (tx) => {
+      const sources = await resolveCaptureSources(tx, userId, images, new Date());
+      await tx.media.createMany({ data: mediaRows });
+      const newFiles = mediaRows.map((m, index) => ({
+        id: randomUUID(),
         reportId,
-        reportMediaFileIds,
-      })
-      .catch((err: Error) => {
-        console.error("Failed to enqueue AI analysis job:", err.message);
+        mediaId: m.id!,
+        uploadedBy: userId,
+        createdBy: userId,
+        updatedBy: userId,
+        captureSource: sources[index].captureSource,
+        captureId: sources[index].captureId,
+      }));
+      await tx.reportMediaFile.createMany({ data: newFiles });
+
+      // Status is left alone: an accepted report no longer falls back to PENDING (docs 99); the
+      // new attempt keeps the earlier ones (FR-042).
+      await tx.report.update({ where: { id: reportId }, data: { aiVerified: false } });
+
+      const last = await tx.reportVerification.aggregate({ where: { reportId }, _max: { attempt: true } });
+      const attempt = (last._max.attempt ?? 0) + 1;
+      const allFiles = await tx.reportMediaFile.findMany({
+        where: { reportId, deletedAt: null },
+        include: { media: true },
       });
+      // A dedupKey equal to an attempt still queued is skipped by emitOutbox: harmless, the
+      // orchestrator loads the report's images when it runs.
+      await emitOutbox(tx, {
+        aggregateType: "report",
+        aggregateId: reportId,
+        eventType: OutboxEventType.REPORT_SUBMITTED,
+        payload: {
+          reportId,
+          userId: existing.userId,
+          attempt,
+          reportMediaFileIds: allFiles.map((f) => f.id),
+          // Kept for the legacy ai-service worker while REPORT_VERIFICATION_ENABLED is off (P10b drops it).
+          media: allFiles.map((f) =>
+            toReportSubmittedMediaSnapshot({
+              reportMediaFileId: f.id,
+              mediaId: f.mediaId,
+              uploadedBy: f.uploadedBy,
+              media: f.media as unknown as Prisma.MediaCreateManyInput,
+            }),
+          ),
+        } as Prisma.InputJsonValue,
+        dedupKey: `${OutboxEventType.REPORT_SUBMITTED}:${reportId}:${attempt}`,
+      });
+
+      const newIds = newFiles.map((f) => f.id);
+      await emitBackgroundJob(tx, {
+        jobType: ReportJobType.ANALYZE_REPORT,
+        payload: { reportId, reportMediaFileIds: newIds },
+        aggregateId: reportId,
+        dedupKey: `${ReportJobType.ANALYZE_REPORT}:${reportId}:${newIds.join(",")}`,
+      });
+    });
 
     const updated = await reportRepository.findById(reportId);
     return this.withReportVote(
@@ -1107,15 +1146,12 @@ export class ReportService {
       return this.withReportVote(toReportResponse(updated), viewerUserId);
     }
 
-    const report = await reportRepository.update(id, {
+    const report = await this.moderateWithNotice(id, {
       status: REPORT_STATUS_BANNED,
       rejectReason: trimmedReason,
       moderatedBy: viewerUserId ?? null,
-      moderatedAt: new Date(),
       moderationReasonCode: reasonCode ?? null,
     });
-    // shortcut: notify still direct, move to outbox with P10.
-    this.notifyOwnerOfReportModeration(report, "banned", trimmedReason);
     return this.withReportVote(toReportResponse(report), viewerUserId);
   }
 
@@ -1198,17 +1234,53 @@ export class ReportService {
       return this.withReportVote(toReportResponse(existing), viewerUserId);
     }
 
-    const report = await reportRepository.update(id, {
+    const report = await this.moderateWithNotice(id, {
       isVerify: true,
       status: ReportStatus._STATUS_TODO,
       rejectReason: null,
       moderatedBy: viewerUserId ?? null,
-      moderatedAt: new Date(),
       moderationReasonCode: null,
     });
-    // shortcut: notify still direct, move to outbox with P10.
-    this.notifyOwnerOfReportModeration(report, "approved");
     return this.withReportVote(toReportResponse(report), viewerUserId);
+  }
+
+  /**
+   * Applies an admin verify / ban and writes the owner notice in the same transaction
+   * (outbox REPORT_VERIFIED, source MODERATOR — specs/006 P10), so it cannot be lost.
+   */
+  private async moderateWithNotice(
+    id: string,
+    data: {
+      status: number;
+      isVerify?: boolean;
+      rejectReason: string | null;
+      moderatedBy: string | null;
+      moderationReasonCode: ModerationReasonCode | null;
+    },
+  ): Promise<Report> {
+    const moderatedAt = new Date();
+    return prisma.$transaction(async (tx) => {
+      const report = await tx.report.update({ where: { id }, data: { ...data, moderatedAt } });
+      await emitOutbox(tx, {
+        aggregateType: "report",
+        aggregateId: id,
+        eventType: OutboxEventType.REPORT_VERIFIED,
+        dedupKey: `REPORT_MODERATED:${id}:${moderatedAt.toISOString()}`,
+        payload: {
+          reportId: id,
+          userId: report.userId,
+          reportTitle: report.titleVi ?? report.title ?? "",
+          verificationId: report.latestVerificationId,
+          reportStatus: report.status,
+          statusChanged: true,
+          flag: null,
+          riskScore: null,
+          source: "MODERATOR",
+          rejectReason: data.rejectReason ?? "",
+        },
+      });
+      return report;
+    });
   }
 
   /** Best-effort in-app notice to the report owner after admin verify/ban. */

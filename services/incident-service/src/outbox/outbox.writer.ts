@@ -9,6 +9,8 @@ export interface OutboxEventInput {
   payload: Prisma.InputJsonValue;
   /** Deterministic dedup key, e.g. `REPORT_COMPLETION_GREEN_POINTS:<reportId>`. */
   dedupKey: string;
+  /** Only when the consumer must match another row by id (e.g. `background_jobs`, see background-job.outbox.ts). */
+  id?: string;
 }
 
 /**
@@ -24,6 +26,7 @@ export async function emitOutbox(
   await tx.outboxEvent.createMany({
     data: [
       {
+        ...(event.id ? { id: event.id } : {}),
         aggregateType: event.aggregateType,
         aggregateId: event.aggregateId,
         eventType: event.eventType,

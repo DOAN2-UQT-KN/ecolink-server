@@ -1,5 +1,5 @@
 import { WasteType } from "@prisma/client";
-import type { CreateReportRequest, NormalizedCreateReport } from "./report.dto";
+import type { CreateReportImageInput, CreateReportRequest, NormalizedCreateReport } from "./report.dto";
 
 const WASTE_TYPES = new Set<string>(Object.values(WasteType));
 
@@ -8,9 +8,7 @@ const WASTE_TYPES = new Set<string>(Object.values(WasteType));
  * shape, so clients released before spec 007 keep working. Pure; validation runs before it.
  */
 export function normalizeCreateReportInput(req: CreateReportRequest): NormalizedCreateReport {
-  const images = req.images
-    ? req.images.map((img) => ({ url: img.url.trim(), captureId: img.captureId ?? null }))
-    : (req.imageUrls ?? []).map((url) => ({ url: url.trim(), captureId: null }));
+  const images = normalizeImages(req);
 
   const rawWasteTypes = req.wasteTypes ?? (req.wasteType ?? "").split(",").map((w) => w.trim().toUpperCase());
   const wasteTypes = [...new Set(rawWasteTypes)].filter((w): w is WasteType => WASTE_TYPES.has(w));
@@ -21,4 +19,11 @@ export function normalizeCreateReportInput(req: CreateReportRequest): Normalized
     wasteTypeCsv: wasteTypes.length > 0 ? wasteTypes.map((w) => w.toLowerCase()).join(",") : null,
     images,
   };
+}
+
+/** `images` or legacy `imageUrls` (gallery) as `{ url, captureId }`; shared by create and add-images. */
+export function normalizeImages(req: { images?: CreateReportImageInput[]; imageUrls?: string[] }) {
+  return req.images
+    ? req.images.map((img) => ({ url: img.url.trim(), captureId: img.captureId ?? null }))
+    : (req.imageUrls ?? []).map((url) => ({ url: url.trim(), captureId: null }));
 }

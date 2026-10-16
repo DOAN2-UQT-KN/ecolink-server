@@ -12,6 +12,9 @@ const txFake = {
   reportMediaFile: {
     createMany: jest.fn(),
   },
+  backgroundJob: {
+    create: jest.fn(),
+  },
 };
 const transactionMock = jest.fn(
   async (cb: (tx: typeof txFake) => unknown) => cb(txFake),
@@ -144,7 +147,8 @@ describe("createReport (outbox producer)", () => {
       idempotencyKey: null,
     });
     expect(transactionMock).toHaveBeenCalledTimes(1);
-    expect(emitOutboxMock).toHaveBeenCalledTimes(1);
+    // REPORT_SUBMITTED, then ANALYZE_REPORT and TRANSLATE_TEXT (P10), all in the same transaction.
+    expect(emitOutboxMock).toHaveBeenCalledTimes(3);
     const [tx, event] = emitOutboxMock.mock.calls[0];
     expect(tx).toBe(txFake);
     expect(event.aggregateType).toBe("report");
@@ -183,13 +187,24 @@ describe("createReport (outbox producer)", () => {
     expect(enqueueMock).not.toHaveBeenCalled();
   });
 
-  it("vẫn enqueue ANALYZE_REPORT sau commit (path song song không bị gỡ)", async () => {
+  it("writes ANALYZE_REPORT and TRANSLATE_TEXT in the transaction, never enqueues directly", async () => {
     await reportService.createReport("user-1", {
       title: "Trash nearby",
       latitude: 1,
       longitude: 2,
       imageUrls: ["https://cdn.example/a.jpg"],
     });
-    expect(enqueueMock).toHaveBeenCalled();
+    expect(enqueueMock).not.toHaveBeenCalled();
+
+    const jobs = emitOutboxMock.mock.calls.map(([tx, e]) => ({ tx, ...e })).slice(1);
+    expect(jobs.map((j) => j.eventType)).toEqual(["ANALYZE_REPORT", "TRANSLATE_TEXT"]);
+    for (const job of jobs) {
+      expect(job.tx).toBe(txFake);
+      // The outbox row and the background_jobs row share one id, so the worker finds its job.
+      const jobRow = txFake.backgroundJob.create.mock.calls.find(([arg]) => arg.data.id === job.id);
+      expect(jobRow?.[0].data).toMatchObject({ jobType: job.eventType, status: 12 });
+    }
+    expect(jobs[0]).toMatchObject({ dedupKey: "ANALYZE_REPORT:report-new:1", payload: { reportId: "report-new" } });
+    expect(jobs[1].payload).toMatchObject({ resourceType: "REPORT", resourceId: "report-new" });
   });
 });

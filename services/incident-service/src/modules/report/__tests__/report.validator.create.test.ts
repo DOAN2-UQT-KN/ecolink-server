@@ -1,5 +1,5 @@
 import { validationResult } from "express-validator";
-import { createReportValidators } from "../report.validator";
+import { addReportImagesValidators, createReportValidators } from "../report.validator";
 
 const OK_URL = "https://res.cloudinary.com/ecolink/image/upload/v1/uploads/a.jpg";
 
@@ -50,5 +50,30 @@ describe("createReportValidators", () => {
     ["no images at all", { ...valid, images: undefined }, "images is required"],
   ])("rejects %s", async (_name, body, message) => {
     expect(await errorsFor(body)).toContain(message);
+  });
+});
+
+describe("addReportImagesValidators", () => {
+  const previous = process.env.CLOUDINARY_CLOUD_NAME;
+  beforeAll(() => {
+    process.env.CLOUDINARY_CLOUD_NAME = "ecolink";
+  });
+  afterAll(() => {
+    process.env.CLOUDINARY_CLOUD_NAME = previous;
+  });
+
+  const run = async (body: Record<string, unknown>) => {
+    const req = { body } as never;
+    await Promise.all(addReportImagesValidators.map((v) => v.run(req)));
+    return validationResult(req).array().map((e) => e.msg as string);
+  };
+
+  it("uses the same image rules as create (P10)", async () => {
+    expect(await run({ images: [{ url: OK_URL }] })).toEqual([]);
+    expect(await run({ imageUrls: [OK_URL] })).toEqual([]);
+    expect(await run({ images: [{ url: "https://example.com/a.jpg" }] })).toContain(
+      "Image URL must be an Ecolink Cloudinary upload",
+    );
+    expect(await run({})).toContain("images is required");
   });
 });

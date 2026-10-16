@@ -69,4 +69,20 @@ describe("resolveOutboxQueueUrl", () => {
       /SQS_REPORT_VERIFICATION_QUEUE_URL/,
     );
   });
+
+  it("routes the report background jobs to their own queues (P10)", () => {
+    const prevAnalysis = process.env.SQS_REPORT_ANALYSIS_QUEUE_URL;
+    const prevTranslation = process.env.SQS_INCIDENT_TRANSLATION_QUEUE_URL;
+    process.env.SQS_REPORT_ANALYSIS_QUEUE_URL = "http://localhost:4566/000000000000/report-analysis-job";
+    process.env.SQS_INCIDENT_TRANSLATION_QUEUE_URL = "http://localhost:4566/000000000000/incident-translation";
+    try {
+      expect(resolveOutboxQueueUrl(OutboxEventType.ANALYZE_REPORT)).toBe(process.env.SQS_REPORT_ANALYSIS_QUEUE_URL);
+      expect(resolveOutboxQueueUrl(OutboxEventType.TRANSLATE_TEXT)).toBe(process.env.SQS_INCIDENT_TRANSLATION_QUEUE_URL);
+    } finally {
+      if (prevAnalysis === undefined) delete process.env.SQS_REPORT_ANALYSIS_QUEUE_URL;
+      else process.env.SQS_REPORT_ANALYSIS_QUEUE_URL = prevAnalysis;
+      if (prevTranslation === undefined) delete process.env.SQS_INCIDENT_TRANSLATION_QUEUE_URL;
+      else process.env.SQS_INCIDENT_TRANSLATION_QUEUE_URL = prevTranslation;
+    }
+  });
 });

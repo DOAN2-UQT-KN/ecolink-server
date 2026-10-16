@@ -172,29 +172,5 @@ describe("saveDuplicateVerification", () => {
   });
 });
 
-describe("addReportImages", () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-    prepareMediaFromUrlMock.mockResolvedValue({
-      media: { url: "https://cdn.example/a.jpg", type: "REPORT" },
-      buffer: null,
-    });
-    findByIdMock.mockResolvedValue({
-      id: "r-new",
-      userId: "user-1",
-      status: 12,
-    });
-    updateMock.mockResolvedValue({ id: "r-new", userId: "user-1" });
-  });
-
-  it("clears duplicateVerification when adding media", async () => {
-    await reportService.addReportImages("r-new", "user-1", {
-      imageUrls: ["https://cdn.example/a.jpg"],
-    });
-    expect(updateMock).toHaveBeenCalledWith("r-new", {
-      aiVerified: false,
-      status: expect.any(Number),
-      duplicateVerification: Prisma.DbNull,
-    });
-  });
-});
+// addReportImages no longer clears duplicateVerification (specs/006 P10): covered by
+// src/__it__/report-images-reverify.it.test.ts.

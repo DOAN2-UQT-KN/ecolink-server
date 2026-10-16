@@ -119,5 +119,8 @@ describe("[it] moderation (P09 US6)", () => {
     const after = await prisma.report.findUniqueOrThrow({ where: { id: r.id } });
     expect(after).toMatchObject({ status: 2, moderatedBy: ADMIN, moderationReasonCode: "INAPPROPRIATE_CONTENT" });
     expect(after.moderatedAt).toBeInstanceOf(Date);
+    // The owner notice now goes through the outbox (P10), not a direct call.
+    const [event] = await verifiedEvents(r.id);
+    expect(event.payload).toMatchObject({ source: "MODERATOR", reportStatus: 2, rejectReason: "spam" });
   });
 });

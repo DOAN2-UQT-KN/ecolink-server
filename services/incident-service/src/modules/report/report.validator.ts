@@ -56,38 +56,8 @@ export const reportSearchQueryValidators = [
   query("limit").optional().isInt({ min: 1, max: 100 }),
 ];
 
-export const createReportValidators = [
-  body("title").notEmpty().withMessage("Title is required").trim(),
-  body("description").optional().trim(),
-  body("wasteType").optional().trim(),
-  body("category")
-    .optional()
-    .isIn(Object.values(ReportCategory))
-    .withMessage("Invalid category"),
-  body("wasteTypes")
-    .optional()
-    .isArray({ min: 1 })
-    .withMessage("wasteTypes must be a non-empty array"),
-  body("wasteTypes.*")
-    .isIn(Object.values(WasteType))
-    .withMessage("Invalid waste type"),
-  body("severityLevel")
-    .optional()
-    .isInt({ min: 1, max: 5 })
-    .withMessage("Severity level must be between 1 and 5"),
-  body("latitude")
-    .exists({ values: "null" })
-    .withMessage("Latitude is required")
-    .bail()
-    .isFloat({ min: -90, max: 90 })
-    .withMessage("Invalid latitude"),
-  body("longitude")
-    .exists({ values: "null" })
-    .withMessage("Longitude is required")
-    .bail()
-    .isFloat({ min: -180, max: 180 })
-    .withMessage("Invalid longitude"),
-  body("detailAddress").optional().trim(),
+/** `images[{url, captureId?}]` (or legacy `imageUrls`), shared by create and add-images. */
+const reportImageValidators = [
   body()
     .custom((b) => Array.isArray(b?.images) || Array.isArray(b?.imageUrls))
     .withMessage("images is required"),
@@ -121,6 +91,41 @@ export const createReportValidators = [
     .bail()
     .custom(isEcolinkImageUrl)
     .withMessage("Image URL must be an Ecolink Cloudinary upload"),
+];
+
+export const createReportValidators = [
+  body("title").notEmpty().withMessage("Title is required").trim(),
+  body("description").optional().trim(),
+  body("wasteType").optional().trim(),
+  body("category")
+    .optional()
+    .isIn(Object.values(ReportCategory))
+    .withMessage("Invalid category"),
+  body("wasteTypes")
+    .optional()
+    .isArray({ min: 1 })
+    .withMessage("wasteTypes must be a non-empty array"),
+  body("wasteTypes.*")
+    .isIn(Object.values(WasteType))
+    .withMessage("Invalid waste type"),
+  body("severityLevel")
+    .optional()
+    .isInt({ min: 1, max: 5 })
+    .withMessage("Severity level must be between 1 and 5"),
+  body("latitude")
+    .exists({ values: "null" })
+    .withMessage("Latitude is required")
+    .bail()
+    .isFloat({ min: -90, max: 90 })
+    .withMessage("Invalid latitude"),
+  body("longitude")
+    .exists({ values: "null" })
+    .withMessage("Longitude is required")
+    .bail()
+    .isFloat({ min: -180, max: 180 })
+    .withMessage("Invalid longitude"),
+  body("detailAddress").optional().trim(),
+  ...reportImageValidators,
   body("mediaCaptures")
     .optional()
     .isArray()
@@ -164,32 +169,12 @@ export const updateReportValidators = [
 ];
 
 export const addReportImagesValidators = [
-  body("imageUrls")
-    .isArray({ min: 1 })
-    .withMessage("imageUrls must be a non-empty array"),
-  body("imageUrls.*")
-    .isString()
-    .withMessage("Each image URL must be a string")
-    .bail()
-    .trim()
-    .notEmpty()
-    .withMessage("Each image URL must not be empty"),
+  ...reportImageValidators,
+  // Legacy, ignored since specs/006 P10 (client-declared capture data is not trusted).
   body("mediaCaptures")
     .optional()
     .isArray()
     .withMessage("mediaCaptures must be an array"),
-  body("mediaCaptures.*.capturedAt")
-    .optional()
-    .isISO8601()
-    .withMessage("mediaCaptures.capturedAt must be an ISO8601 datetime"),
-  body("mediaCaptures.*.latitude")
-    .optional()
-    .isFloat({ min: -90, max: 90 })
-    .withMessage("mediaCaptures.latitude must be between -90 and 90"),
-  body("mediaCaptures.*.longitude")
-    .optional()
-    .isFloat({ min: -180, max: 180 })
-    .withMessage("mediaCaptures.longitude must be between -180 and 180"),
 ];
 
 export const reportIdParamValidator = [
