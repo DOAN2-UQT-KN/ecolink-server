@@ -8,6 +8,7 @@ import {
   sendSuccess,
 } from "../../constants/http-status";
 import { reportService } from "./report.service";
+import { issueCapture } from "./capture/capture.service";
 import { isPlatformAdmin } from "../campaign/campaign-access.service";
 import { ReportSearchQuery, type AdminBanReportBody, type ReportMediaFileByIdResponse } from "./report.dto";
 import { normalizeQueryUuidList } from "../../utils/query-uuid-list";
@@ -124,6 +125,23 @@ export class ReportController {
       }
     },
   ];
+
+  /**
+   * Start a camera capture: one-shot token + Cloudinary signature for `captures/<id>` (specs/006 P03).
+   */
+  createCapture = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+      }
+      sendSuccess(res, HTTP_STATUS.CREATED, await issueCapture(userId));
+    } catch (error) {
+      if (sendHttpErrorResponse(res, error)) return;
+      console.error("Create capture error:", error);
+      sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+    }
+  };
 
   getReportsByIds = [
     async (req: Request, res: Response): Promise<void> => {

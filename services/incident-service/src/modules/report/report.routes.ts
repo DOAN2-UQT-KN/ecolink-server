@@ -13,6 +13,15 @@ const router = Router();
 router.post("/", authenticate, reportController.createReport);
 
 /**
+ * @route   POST /api/v1/reports/captures
+ * @desc    Start a camera capture (specs/006 P03): returns capture_id, expires_at and a Cloudinary
+ *          upload signature for public_id `captures/<capture_id>`. Send the capture_id with the image
+ *          in POST /reports so it counts as LIVE.
+ * @access  Private
+ */
+router.post("/captures", authenticate, reportController.createCapture);
+
+/**
  * @route   GET /api/v1/reports/search
  * @desc    Search and discover reports with filters and sorting. Optional `statuses` (comma-separated or repeated ints) filters `status IN statuses`. Each report includes duplicate_verification.
  * @access  Private

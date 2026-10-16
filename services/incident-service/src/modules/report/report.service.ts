@@ -55,6 +55,7 @@ import {
   toReportSubmittedMediaSnapshot,
 } from "../media/media-from-url.service";
 import { normalizeCreateReportInput } from "./report-create.input";
+import { resolveCaptureSources } from "./capture/capture.service";
 import {
   assertInServiceArea,
   assertUnderRateLimit,
@@ -336,13 +337,17 @@ export class ReportService {
       if (mediaRows.length > 0) {
         await tx.media.createMany({ data: mediaRows });
 
-        const reportMediaRows = mediaRows.map((m) => ({
+        // LIVE / GALLERY per image; consumes the captures in this transaction (P03).
+        const sources = await resolveCaptureSources(tx, userId, input.images, new Date());
+        const reportMediaRows = mediaRows.map((m, index) => ({
           id: randomUUID(),
           reportId: createdReport.id,
           mediaId: m.id!,
           uploadedBy: userId,
           createdBy: userId,
           updatedBy: userId,
+          captureSource: sources[index].captureSource,
+          captureId: sources[index].captureId,
         }));
 
         await tx.reportMediaFile.createMany({ data: reportMediaRows });

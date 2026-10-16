@@ -207,6 +207,20 @@ model VerificationCheck {
   @@map("verification_checks")
 }
 
+/// Server-issued camera capture (specs/006 P03): a one-shot token for one LIVE report image.
+/// Issued by POST /reports/captures, consumed (usedAt) in the report's transaction.
+model MediaCapture {
+  id              String           @id @default(uuid()) @db.Uuid
+  userId          String           @map("user_id") @db.Uuid
+  issuedAt        DateTime         @default(now()) @map("issued_at")
+  expiresAt       DateTime         @map("expires_at")
+  usedAt          DateTime?        @map("used_at")
+  reportMediaFile ReportMediaFile?
+
+  @@index([userId, issuedAt])
+  @@map("media_captures")
+}
+
 /// Area where reports are accepted (specs/006 P02, BR-113). POST /reports rejects points outside
 /// every active area with 422 REPORT_OUT_OF_SERVICE_AREA; no active area = no check.
 model ServiceArea {
@@ -378,6 +392,7 @@ model ReportMediaFile {
    */
   captureSource CaptureSource @default(GALLERY) @map("capture_source")
   captureId     String?       @unique @map("capture_id") @db.Uuid
+  capture       MediaCapture? @relation(fields: [captureId], references: [id])
 
   createdBy String? @map("created_by") @db.Uuid
   updatedBy String? @map("updated_by") @db.Uuid

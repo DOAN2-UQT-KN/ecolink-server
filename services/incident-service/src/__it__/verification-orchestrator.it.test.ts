@@ -8,7 +8,6 @@ import * as outboxWriter from "../outbox/outbox.writer";
 import { prisma, resetTables } from "./setup/test-db";
 import { createVerificationOrchestrator } from "../modules/verification/verification.orchestrator";
 import { verificationConfigService } from "../modules/verification/verification-config.service";
-import { trustCheck } from "../modules/verification/checks/trust.check";
 import { contextCheck } from "../modules/verification/checks/context.check";
 import { notAvailableResult, type CheckRunner } from "../modules/verification/checks/check-runner";
 import type { CheckName, CheckResult } from "../modules/verification/verification.types";
@@ -59,7 +58,14 @@ const duplicateNotAvailable: CheckRunner = {
   version: (cfg) => cfg.duplicate.version,
   run: async (ctx) => notAvailableResult(duplicateNotAvailable, ctx.checksConfig),
 };
-const stubs = () => orchestrator([duplicateNotAvailable, trustCheck, contextCheck]);
+// TrustCheck is real since P07 (always completes on the image source); keep a NOT_AVAILABLE fake.
+const trustNotAvailable: CheckRunner = {
+  name: "TRUST",
+  signalNames: ["capture", "reject_history", "account_age"],
+  version: (cfg) => cfg.trust.version,
+  run: async (ctx) => notAvailableResult(trustNotAvailable, ctx.checksConfig),
+};
+const stubs = () => orchestrator([duplicateNotAvailable, trustNotAvailable, contextCheck]);
 
 async function seedReport(over: { status?: number; deletedAt?: Date } = {}) {
   const userId = randomUUID();
