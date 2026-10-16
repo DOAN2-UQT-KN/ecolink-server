@@ -65,6 +65,8 @@ const trustNotAvailable: CheckRunner = {
   version: (cfg) => cfg.trust.version,
   run: async (ctx) => notAvailableResult(trustNotAvailable, ctx.checksConfig),
 };
+// contextCheck is real since P08 but returns NOT_AVAILABLE while CONTEXT_CHECK_ENABLED is unset;
+// this suite relies on that (do not set the flag in the test env).
 const stubs = () => orchestrator([duplicateNotAvailable, trustNotAvailable, contextCheck]);
 
 async function seedReport(over: { status?: number; deletedAt?: Date } = {}) {

@@ -22,6 +22,15 @@ router.post("/", authenticate, reportController.createReport);
 router.post("/captures", authenticate, reportController.createCapture);
 
 /**
+ * @route   GET /api/v1/reports/context
+ * @desc    Categories that fit the pinned point (query lat, lng), with the nearest place found via Goong
+ *          (specs/006 P08). A hint only: 503 CONTEXT_UNAVAILABLE when off, slow (> 2 s) or failing; the
+ *          client then shows the full category list.
+ * @access  Private
+ */
+router.get("/context", authenticate, reportController.getLocationContext);
+
+/**
  * @route   GET /api/v1/reports/search
  * @desc    Search and discover reports with filters and sorting. Optional `statuses` (comma-separated or repeated ints) filters `status IN statuses`. Each report includes duplicate_verification.
  * @access  Private

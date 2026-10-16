@@ -221,6 +221,21 @@ model MediaCapture {
   @@map("media_captures")
 }
 
+/// Goong lookups for ContextCheck (specs/006 P08), per geohash cell and category-rules version.
+/// Stores places/addresses found, never a verdict: distances are measured from each report's point.
+model GeoContextCache {
+  cellId    String   @map("cell_id") @db.VarChar(12)
+  ruleKey   String   @map("rule_key") @db.VarChar(80)
+  places    Json
+  address   Json?
+  fetchedAt DateTime @default(now()) @map("fetched_at")
+  expiresAt DateTime @map("expires_at")
+
+  @@id([cellId, ruleKey])
+  @@index([expiresAt])
+  @@map("geo_context_cache")
+}
+
 /// Area where reports are accepted (specs/006 P02, BR-113). POST /reports rejects points outside
 /// every active area with 422 REPORT_OUT_OF_SERVICE_AREA; no active area = no check.
 model ServiceArea {

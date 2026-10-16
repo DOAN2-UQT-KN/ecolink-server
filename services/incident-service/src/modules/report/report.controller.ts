@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { validationResult } from "express-validator";
+import { query, validationResult } from "express-validator";
 import {
   HttpError,
   HTTP_STATUS,
@@ -9,6 +9,7 @@ import {
 } from "../../constants/http-status";
 import { reportService } from "./report.service";
 import { issueCapture } from "./capture/capture.service";
+import { suggestCategories } from "../verification/geo/category-suggest.service";
 import { isPlatformAdmin } from "../campaign/campaign-access.service";
 import { ReportSearchQuery, type AdminBanReportBody, type ReportMediaFileByIdResponse } from "./report.dto";
 import { normalizeQueryUuidList } from "../../utils/query-uuid-list";
@@ -121,6 +122,27 @@ export class ReportController {
         }
         if (sendHttpErrorResponse(res, error)) return;
         console.error("Create report error:", error);
+        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+      }
+    },
+  ];
+
+  /**
+   * Categories that fit the pinned point (specs/006 P08). A hint only: on 503 the form keeps the full list.
+   */
+  getLocationContext = [
+    query("lat").isFloat({ min: -90, max: 90 }).withMessage("lat must be between -90 and 90"),
+    query("lng").isFloat({ min: -180, max: 180 }).withMessage("lng must be between -180 and 180"),
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
+      }
+      try {
+        sendSuccess(res, HTTP_STATUS.OK, await suggestCategories(Number(req.query.lat), Number(req.query.lng)));
+      } catch (error) {
+        if (sendHttpErrorResponse(res, error)) return;
+        console.error("Location context error:", error);
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     },

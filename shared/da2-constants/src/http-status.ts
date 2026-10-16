@@ -100,6 +100,11 @@ export const HTTP_STATUS = {
     "Report is not awaiting moderation",
     "REPORT_ALREADY_MODERATED",
   ),
+  CONTEXT_UNAVAILABLE: createStatus(
+    503,
+    "Location context is unavailable",
+    "CONTEXT_UNAVAILABLE",
+  ),
   REPORT_ALREADY_EXISTS: createStatus(
     409,
     "Report already exists",
