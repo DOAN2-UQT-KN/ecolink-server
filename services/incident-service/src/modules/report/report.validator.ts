@@ -1,5 +1,5 @@
 import { body, param, query } from "express-validator";
-import { ReportCategory, WasteType } from "@prisma/client";
+import { ModerationReasonCode, ReportCategory, WasteType } from "@prisma/client";
 
 const REPORT_STATUSES_QUERY_MAX = 25;
 const REPORT_IMAGES_MAX = 10;
@@ -210,4 +210,8 @@ export const adminBanReportValidators = [
     .notEmpty()
     .isLength({ max: 5000 })
     .withMessage("reject_reason is required when banning a report"),
+  body("reasonCode")
+    .optional()
+    .isIn(Object.values(ModerationReasonCode))
+    .withMessage("Invalid reason_code"),
 ];

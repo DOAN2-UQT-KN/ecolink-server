@@ -1,4 +1,4 @@
-import type { ReportCategory, WasteType } from "@prisma/client";
+import type { ModerationReasonCode, ReportCategory, RiskFlag, VerificationStatus, WasteType } from "@prisma/client";
 import type { OrganizationOwnerResponse } from "../organization/organization.dto";
 import type { ResourceVoteSummary } from "../vote/vote.dto";
 
@@ -72,6 +72,8 @@ export interface AddReportImagesRequest {
 export interface AdminBanReportBody {
   /** Required when banning. */
   rejectReason: string;
+  /** Optional moderation reason code (specs/006 P09). */
+  reasonCode?: ModerationReasonCode;
 }
 
 /** Shared media metadata fields returned on report media responses. */
@@ -220,6 +222,8 @@ export interface ReportDetailResponse extends ReportResponse {
   mediaFiles: ReportMediaFileResponse[];
   /** Null when the report is not linked to a campaign (or campaign/org is deleted). */
   handledBy: ReportHandledByResponse | null;
+  /** Summary of the latest verification (specs/006 P09); only on GET /reports/:id. */
+  latestVerification?: { status: VerificationStatus; flag: RiskFlag | null } | null;
 }
 
 export interface ReportMediaFileResponse extends MediaMetadataResponse {

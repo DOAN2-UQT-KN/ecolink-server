@@ -22,7 +22,7 @@ import {
   VoteResourceType,
 } from "../../constants/status.enum";
 import prisma from "../../config/prisma.client";
-import { Prisma, type Report } from "@prisma/client";
+import { Prisma, type ModerationReasonCode, type Report } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import {
   ReportJobType,
@@ -497,10 +497,19 @@ export class ReportService {
   async getReportDetail(
     id: string,
     viewerUserId?: string | null,
+    viewerIsAdmin = false,
   ): Promise<ReportDetailResponse | null> {
     const report = await reportRepository.findByIdWithRelations(id);
     if (!report) return null;
-    if (report.status === REPORT_STATUS_BANNED) return null;
+    // A rejected report stays hidden from everyone but its owner and admins (BR-103), so the
+    // owner can still see why it was not accepted (specs/006 P09).
+    if (
+      report.status === REPORT_STATUS_BANNED &&
+      !viewerIsAdmin &&
+      (!viewerUserId || report.userId !== viewerUserId)
+    ) {
+      return null;
+    }
 
     const [details] = await this.reportsWithMediaToDetails([
       report as ReportWithMediaFiles,
@@ -509,7 +518,15 @@ export class ReportService {
       [details],
       viewerUserId,
     );
-    return withVotes;
+    if (!report.latestVerificationId) {
+      return { ...withVotes, latestVerification: null };
+    }
+    const latestVerification = await prisma.reportVerification.findUnique({
+      where: { id: report.latestVerificationId },
+      select: { status: true, flag: true },
+    });
+    // The legacy duplicate check result is superseded once the new pipeline has run.
+    return { ...withVotes, duplicateVerification: null, latestVerification };
   }
 
   /** reportIds limited to 100 UUIDs at the controller; order matches request. */
@@ -1055,6 +1072,7 @@ export class ReportService {
     id: string,
     viewerUserId?: string | null,
     rejectReason?: string | null,
+    reasonCode?: ModerationReasonCode | null,
   ): Promise<ReportResponse> {
     const existing = await reportRepository.findById(id);
     if (!existing) {
@@ -1077,6 +1095,9 @@ export class ReportService {
       }
       const updated = await reportRepository.update(id, {
         rejectReason: trimmedReason,
+        moderatedBy: viewerUserId ?? null,
+        moderatedAt: new Date(),
+        ...(reasonCode ? { moderationReasonCode: reasonCode } : {}),
       });
       return this.withReportVote(toReportResponse(updated), viewerUserId);
     }
@@ -1084,7 +1105,11 @@ export class ReportService {
     const report = await reportRepository.update(id, {
       status: REPORT_STATUS_BANNED,
       rejectReason: trimmedReason,
+      moderatedBy: viewerUserId ?? null,
+      moderatedAt: new Date(),
+      moderationReasonCode: reasonCode ?? null,
     });
+    // shortcut: notify still direct, move to outbox with P10.
     this.notifyOwnerOfReportModeration(report, "banned", trimmedReason);
     return this.withReportVote(toReportResponse(report), viewerUserId);
   }
@@ -1172,7 +1197,11 @@ export class ReportService {
       isVerify: true,
       status: ReportStatus._STATUS_TODO,
       rejectReason: null,
+      moderatedBy: viewerUserId ?? null,
+      moderatedAt: new Date(),
+      moderationReasonCode: null,
     });
+    // shortcut: notify still direct, move to outbox with P10.
     this.notifyOwnerOfReportModeration(report, "approved");
     return this.withReportVote(toReportResponse(report), viewerUserId);
   }

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { reportController } from "./report.controller";
 import { authenticate } from "../../middleware/auth.middleware";
+import { verificationController } from "../verification/verification.controller";
 
 const router = Router();
 
@@ -62,6 +63,34 @@ router.get(
   authenticate,
   reportController.getReportBackgroundJobsStatus,
 );
+
+/**
+ * @route   GET /api/v1/reports/moderation
+ * @desc    Moderator queue (specs/006 P09). Query `flag` REVIEW (status 9, default) or REJECT (rejected by the engine, no moderator decision yet), `page`, `limit` (1..100, default 20). Highest risk first; `counts` per tab.
+ * @access  Private (Admin only)
+ */
+router.get("/moderation", authenticate, verificationController.moderationQueue);
+
+/**
+ * @route   GET /api/v1/reports/:id/verification
+ * @desc    Latest verification attempt. Owner: status, flag and public issues only; admin: score, checks, signals, evidence, moderation.
+ * @access  Private (Report owner or admin)
+ */
+router.get("/:id/verification", authenticate, verificationController.getVerification);
+
+/**
+ * @route   GET /api/v1/reports/:id/verifications
+ * @desc    Every verification attempt of the report, newest first (admin view).
+ * @access  Private (Admin only)
+ */
+router.get("/:id/verifications", authenticate, verificationController.listVerifications);
+
+/**
+ * @route   POST /api/v1/reports/:id/moderation
+ * @desc    Moderator decision `{ decision: ACCEPT | REJECT, reason_code (required for REJECT), note? }` on a report in review or rejected by the engine. 409 REPORT_ALREADY_MODERATED otherwise.
+ * @access  Private (Admin only)
+ */
+router.post("/:id/moderation", authenticate, verificationController.moderate);
 
 /**
  * @route   GET /api/v1/reports/:id

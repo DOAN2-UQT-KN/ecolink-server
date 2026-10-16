@@ -17,6 +17,8 @@ interface ReportVerifiedPayload {
   reportTitle?: string;
   reportStatus?: number | null;
   statusChanged?: boolean;
+  /** Moderator's note (source MODERATOR); empty for engine rejections. */
+  rejectReason?: string;
 }
 
 /**
@@ -34,7 +36,7 @@ export class ReportVerifiedPublisher implements OutboxPublisher {
         return enqueueReportApprovedWebsiteNotification(base);
       case REPORT_STATUS_REJECTED:
         // Engine rejections carry no free-text reason; the template hides the line when empty.
-        return enqueueReportRejectedWebsiteNotification({ ...base, rejectReason: "" });
+        return enqueueReportRejectedWebsiteNotification({ ...base, rejectReason: p.rejectReason ?? "" });
       case REPORT_STATUS_IN_REVIEW:
         return enqueueReportInReviewWebsiteNotification(base);
       default:

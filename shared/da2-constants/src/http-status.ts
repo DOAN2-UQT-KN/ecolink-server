@@ -90,6 +90,16 @@ export const HTTP_STATUS = {
     "You have sent 5 reports in the last 24 hours",
     "REPORT_RATE_LIMITED",
   ),
+  VERIFICATION_NOT_FOUND: createStatus(
+    404,
+    "Report has no verification yet",
+    "VERIFICATION_NOT_FOUND",
+  ),
+  REPORT_ALREADY_MODERATED: createStatus(
+    409,
+    "Report is not awaiting moderation",
+    "REPORT_ALREADY_MODERATED",
+  ),
   REPORT_ALREADY_EXISTS: createStatus(
     409,
     "Report already exists",

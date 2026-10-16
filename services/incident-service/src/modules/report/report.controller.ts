@@ -8,6 +8,7 @@ import {
   sendSuccess,
 } from "../../constants/http-status";
 import { reportService } from "./report.service";
+import { isPlatformAdmin } from "../campaign/campaign-access.service";
 import { ReportSearchQuery, type AdminBanReportBody, type ReportMediaFileByIdResponse } from "./report.dto";
 import { normalizeQueryUuidList } from "../../utils/query-uuid-list";
 import {
@@ -261,6 +262,7 @@ export class ReportController {
       const report = await reportService.getReportDetail(
         req.params.id,
         req.user?.userId,
+        isPlatformAdmin(req.user?.role),
       );
 
       if (!report) {
@@ -454,11 +456,12 @@ export class ReportController {
           );
         }
 
-        const { rejectReason } = req.body as AdminBanReportBody;
+        const { rejectReason, reasonCode } = req.body as AdminBanReportBody;
         const report = await reportService.adminBanReport(
           req.params.id,
           userId,
           rejectReason,
+          reasonCode,
         );
         sendSuccess(
           res,
