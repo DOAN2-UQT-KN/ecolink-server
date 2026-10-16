@@ -117,6 +117,8 @@ export interface ReportSearchQuery {
   sortOrder?: "asc" | "desc";
   page?: number;
   limit?: number;
+  /** Admin-only (specs/008): moderation queue filter + risk order; ignored for other viewers. */
+  moderation?: "REVIEW" | "REJECT";
 }
 
 /** Server-only scope for repository search (GET /my); never take from client on /search. */
@@ -224,8 +226,11 @@ export interface ReportDetailResponse extends ReportResponse {
   mediaFiles: ReportMediaFileResponse[];
   /** Null when the report is not linked to a campaign (or campaign/org is deleted). */
   handledBy: ReportHandledByResponse | null;
-  /** Summary of the latest verification (specs/006 P09); only on GET /reports/:id. */
-  latestVerification?: { status: VerificationStatus; flag: RiskFlag | null } | null;
+  /**
+   * Summary of the latest verification: GET /reports/:id (owner and admin), and GET /reports/search
+   * for admins only (specs/008). `riskScore` is only ever set for admins.
+   */
+  latestVerification?: { status: VerificationStatus; flag: RiskFlag | null; riskScore?: number | null } | null;
 }
 
 export interface ReportMediaFileResponse extends MediaMetadataResponse {

@@ -52,6 +52,10 @@ export const reportSearchQueryValidators = [
   query("maxDistance").optional().isInt({ min: 1 }),
   query("sortBy").optional().isIn(["distance", "createdAt", "severityLevel"]),
   query("sortOrder").optional().isIn(["asc", "desc"]),
+  query("moderation")
+    .optional()
+    .isIn(["REVIEW", "REJECT"])
+    .withMessage("moderation must be REVIEW or REJECT"),
   query("page").optional().isInt({ min: 1 }),
   query("limit").optional().isInt({ min: 1, max: 100 }),
 ];

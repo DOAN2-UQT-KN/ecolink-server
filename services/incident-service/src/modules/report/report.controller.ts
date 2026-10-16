@@ -73,6 +73,10 @@ function buildReportSearchQuery(req: Request): ReportSearchQuery {
     sortOrder: req.query.sortOrder as "asc" | "desc",
     page: req.query.page ? parseInt(req.query.page as string, 10) : 1,
     limit: req.query.limit ? parseInt(req.query.limit as string, 10) : 10,
+    // The moderation filter is an admin tool; other viewers get the plain search.
+    moderation: isPlatformAdmin(req.user?.role)
+      ? (req.query.moderation as "REVIEW" | "REJECT" | undefined)
+      : undefined,
   };
 }
 
@@ -684,6 +688,7 @@ export class ReportController {
         const result = await reportService.searchReports(
           buildReportSearchQuery(req),
           req.user?.userId,
+          isPlatformAdmin(req.user?.role),
         );
         sendSuccess(res, HTTP_STATUS.OK, result);
       } catch (error) {

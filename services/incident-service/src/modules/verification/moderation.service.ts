@@ -10,7 +10,9 @@ import { emitOutbox } from "../../outbox/outbox.writer";
 import { OutboxEventType } from "../../outbox/outbox.types";
 import { toReportResponse } from "../report/report.entity";
 
-export type ModerationTab = "REVIEW" | "REJECT";
+import { MODERATION_ORDER_BY, MODERATION_TAB_FILTER, type ModerationTab } from "./moderation-filter";
+
+export type { ModerationTab };
 
 export interface ModerationDecision {
   decision: "ACCEPT" | "REJECT";
@@ -27,24 +29,14 @@ const AWAITING_MODERATION: Prisma.ReportWhereInput = {
   ],
 };
 
-const TAB_FILTER: Record<ModerationTab, Prisma.ReportWhereInput> = {
-  REVIEW: { deletedAt: null, status: REPORT_STATUS_IN_REVIEW },
-  REJECT: {
-    deletedAt: null,
-    status: REPORT_STATUS_REJECTED,
-    moderatedBy: null,
-    latestVerificationId: { not: null },
-  },
-};
-
 export const moderationService = {
   /** Moderator queue, highest risk first (specs/006 FR-038). */
   async queue({ flag = "REVIEW", page = 1, limit = 20 }: { flag?: ModerationTab; page?: number; limit?: number }) {
-    const where = TAB_FILTER[flag];
+    const where = MODERATION_TAB_FILTER[flag];
     const [rows, total, review, autoRejected] = await Promise.all([
       prisma.report.findMany({
         where,
-        orderBy: [{ latestVerification: { riskScore: { sort: "desc", nulls: "last" } } }, { createdAt: "asc" }],
+        orderBy: MODERATION_ORDER_BY,
         skip: (page - 1) * limit,
         take: limit,
         include: {
@@ -53,8 +45,8 @@ export const moderationService = {
         },
       }),
       prisma.report.count({ where }),
-      prisma.report.count({ where: TAB_FILTER.REVIEW }),
-      prisma.report.count({ where: TAB_FILTER.REJECT }),
+      prisma.report.count({ where: MODERATION_TAB_FILTER.REVIEW }),
+      prisma.report.count({ where: MODERATION_TAB_FILTER.REJECT }),
     ]);
 
     return {

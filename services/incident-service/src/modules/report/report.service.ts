@@ -554,9 +554,10 @@ export class ReportService {
     if (!report.latestVerificationId) {
       return { ...withVotes, latestVerification: null };
     }
+    // The score is admin-only (BR-116); the owner keeps { status, flag }.
     const latestVerification = await prisma.reportVerification.findUnique({
       where: { id: report.latestVerificationId },
-      select: { status: true, flag: true },
+      select: { status: true, flag: true, ...(viewerIsAdmin && { riskScore: true }) },
     });
     // The legacy duplicate check result is superseded once the new pipeline has run.
     return { ...withVotes, duplicateVerification: null, latestVerification };
@@ -1417,12 +1418,15 @@ export class ReportService {
   async searchReports(
     query: ReportSearchWithScope,
     viewerUserId?: string | null,
+    viewerIsAdmin = false,
   ): Promise<PaginatedReportsResponse> {
+    // The moderation filter is admin-only; drop it for anyone else, whoever the caller is.
+    if (!viewerIsAdmin && query.moderation) query = { ...query, moderation: undefined };
     const page = query.page || 1;
     const limit = query.limit || 10;
 
-    // If user provides location, use geospatial search
-    if (query.latitude !== undefined && query.longitude !== undefined) {
+    // If user provides location, use geospatial search (the moderation filter sorts by risk instead)
+    if (query.latitude !== undefined && query.longitude !== undefined && !query.moderation) {
       const { reports, total } = await reportRepository.searchWithDistance(
         query.latitude,
         query.longitude,
@@ -1433,7 +1437,7 @@ export class ReportService {
       const withVotes = await this.attachVotesToReports(details, viewerUserId);
 
       return {
-        reports: withVotes,
+        reports: viewerIsAdmin ? await this.attachLatestVerification(withVotes) : withVotes,
         total,
         page,
         limit,
@@ -1447,12 +1451,28 @@ export class ReportService {
     const withVotes = await this.attachVotesToReports(details, viewerUserId);
 
     return {
-      reports: withVotes,
+      reports: viewerIsAdmin ? await this.attachLatestVerification(withVotes) : withVotes,
       total,
       page,
       limit,
       totalPages: Math.ceil(total / limit),
     };
+  }
+
+  /**
+   * Admin list rows get the latest verification with its score (specs/008). One query for the page;
+   * never called for other viewers, since the score is admin-only (BR-116).
+   */
+  private async attachLatestVerification<T extends { id: string }>(
+    rows: T[],
+  ): Promise<(T & { latestVerification: ReportDetailResponse["latestVerification"] })[]> {
+    if (rows.length === 0) return [];
+    const found = await prisma.report.findMany({
+      where: { id: { in: rows.map((r) => r.id) } },
+      select: { id: true, latestVerification: { select: { status: true, flag: true, riskScore: true } } },
+    });
+    const byId = new Map(found.map((r) => [r.id, r.latestVerification]));
+    return rows.map((r) => ({ ...r, latestVerification: byId.get(r.id) ?? null }));
   }
 
   /**
