@@ -3,11 +3,15 @@
  * per-cell cache, rules-version keys, expiry, street filtering, Detail cap and suggestions.
  */
 // suggestCategories uses the default client: replace it with a fake market 50 m from MARKET_AT.
+// School lookups fail (like a Goong 429): the other categories must still be suggested.
 jest.mock("../modules/verification/geo/goong.client", () => {
   const near = { lat: 10.77253 + 50 / 111_320, lng: 106.69803 };
   return {
     goongClient: {
-      autocomplete: async () => [{ placeId: "m", mainText: "Chợ Bến Thành", description: "Chợ Bến Thành" }],
+      autocomplete: async ({ input }: { input: string }) => {
+        if (input === "trường") throw new Error("Request failed with status code 429");
+        return [{ placeId: "m", mainText: "Chợ Bến Thành", description: "Chợ Bến Thành" }];
+      },
       placeDetail: async () => ({ name: "Chợ Bến Thành", ...near }),
       geocode: async (lat: number, lng: number) => ({ name: "45 Lê Lợi, Quận 1", lat, lng }),
     },
