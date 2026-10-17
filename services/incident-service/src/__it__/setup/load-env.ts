@@ -14,3 +14,5 @@ process.env.NODE_ENV = process.env.NODE_ENV ?? "test";
 // in-process mock and reuse this key.
 process.env.INTERNAL_REWARD_API_KEY =
   process.env.INTERNAL_REWARD_API_KEY ?? "it-internal-key";
+// Tests pin the default report limit (BR-114) whatever a local .env raises it to.
+process.env.REPORT_RATE_LIMIT_MAX = "5";

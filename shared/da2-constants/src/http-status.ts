@@ -80,6 +80,31 @@ export const HTTP_STATUS = {
   USER_INACTIVE: createStatus(403, "User account is inactive", "USER_INACTIVE"),
 
   REPORT_NOT_FOUND: createStatus(404, "Report not found", "REPORT_NOT_FOUND"),
+  REPORT_OUT_OF_SERVICE_AREA: createStatus(
+    422,
+    "Location is outside the Ecolink service area",
+    "REPORT_OUT_OF_SERVICE_AREA",
+  ),
+  REPORT_RATE_LIMITED: createStatus(
+    429,
+    "You have sent 5 reports in the last 24 hours",
+    "REPORT_RATE_LIMITED",
+  ),
+  VERIFICATION_NOT_FOUND: createStatus(
+    404,
+    "Report has no verification yet",
+    "VERIFICATION_NOT_FOUND",
+  ),
+  REPORT_ALREADY_MODERATED: createStatus(
+    409,
+    "Report is not awaiting moderation",
+    "REPORT_ALREADY_MODERATED",
+  ),
+  CONTEXT_UNAVAILABLE: createStatus(
+    503,
+    "Location context is unavailable",
+    "CONTEXT_UNAVAILABLE",
+  ),
   REPORT_ALREADY_EXISTS: createStatus(
     409,
     "Report already exists",

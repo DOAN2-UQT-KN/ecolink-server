@@ -1,17 +1,31 @@
 import { Request, Response } from "express";
-import { body, param, query, validationResult } from "express-validator";
+import { query, validationResult } from "express-validator";
 import {
+  HttpError,
   HTTP_STATUS,
   sendError,
   sendHttpErrorResponse,
   sendSuccess,
 } from "../../constants/http-status";
 import { reportService } from "./report.service";
+import { issueCapture } from "./capture/capture.service";
+import { suggestCategories } from "../verification/geo/category-suggest.service";
+import { isPlatformAdmin } from "../campaign/campaign-access.service";
 import { ReportSearchQuery, type AdminBanReportBody, type ReportMediaFileByIdResponse } from "./report.dto";
 import { normalizeQueryUuidList } from "../../utils/query-uuid-list";
+import {
+  addReportImagesValidators,
+  adminBanReportValidators,
+  createReportValidators,
+  deleteReportMediaFileValidators,
+  reportIdParamValidator,
+  reportSearchQueryValidators,
+  updateReportValidators,
+} from "./report.validator";
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const REPORT_BATCH_QUERY_MAX_IDS = 100;
-const REPORT_STATUSES_QUERY_MAX = 25;
 
 /** Repeated keys (`?statuses=21&statuses=22`) or comma-separated (`?statuses=21,22`). */
 function normalizeQueryIntList(value: unknown): number[] {
@@ -59,45 +73,12 @@ function buildReportSearchQuery(req: Request): ReportSearchQuery {
     sortOrder: req.query.sortOrder as "asc" | "desc",
     page: req.query.page ? parseInt(req.query.page as string, 10) : 1,
     limit: req.query.limit ? parseInt(req.query.limit as string, 10) : 10,
+    // The moderation filter is an admin tool; other viewers get the plain search.
+    moderation: isPlatformAdmin(req.user?.role)
+      ? (req.query.moderation as "REVIEW" | "REJECT" | undefined)
+      : undefined,
   };
 }
-
-const reportSearchQueryValidators = [
-  query("search").optional().trim(),
-  query("status").optional().isInt(),
-  query("statuses")
-    .optional()
-    .custom((value) => {
-      if (value === undefined || value === null || value === "") {
-        return true;
-      }
-      const raw = Array.isArray(value)
-        ? value.flatMap((v) => String(v).split(","))
-        : String(value).split(",");
-      const tokens = raw.map((s) => String(s).trim()).filter((s) => s.length > 0);
-      if (tokens.length === 0) {
-        return true;
-      }
-      if (tokens.length > REPORT_STATUSES_QUERY_MAX) {
-        throw new Error(
-          `statuses must contain at most ${REPORT_STATUSES_QUERY_MAX} values`,
-        );
-      }
-      if (!tokens.every((t) => /^-?\d+$/.test(t))) {
-        throw new Error("statuses must be integer(s)");
-      }
-      return true;
-    }),
-  query("wasteType").optional().trim(),
-  query("severityLevel").optional().isInt({ min: 1, max: 5 }),
-  query("latitude").optional().isFloat({ min: -90, max: 90 }),
-  query("longitude").optional().isFloat({ min: -180, max: 180 }),
-  query("maxDistance").optional().isInt({ min: 1 }),
-  query("sortBy").optional().isIn(["distance", "createdAt", "severityLevel"]),
-  query("sortOrder").optional().isIn(["asc", "desc"]),
-  query("page").optional().isInt({ min: 1 }),
-  query("limit").optional().isInt({ min: 1, max: 100 }),
-];
 
 export class ReportController {
   constructor() { }
@@ -106,36 +87,7 @@ export class ReportController {
    * Create a new report
    */
   createReport = [
-    body("title").notEmpty().withMessage("Title is required").trim(),
-    body("description").optional().trim(),
-    body("wasteType").optional().trim(),
-    body("severityLevel")
-      .optional()
-      .isInt({ min: 1, max: 5 })
-      .withMessage("Severity level must be between 1 and 5"),
-    body("latitude")
-      .exists({ values: "null" })
-      .withMessage("Latitude is required")
-      .bail()
-      .isFloat({ min: -90, max: 90 })
-      .withMessage("Invalid latitude"),
-    body("longitude")
-      .exists({ values: "null" })
-      .withMessage("Longitude is required")
-      .bail()
-      .isFloat({ min: -180, max: 180 })
-      .withMessage("Invalid longitude"),
-    body("detailAddress").optional().trim(),
-    body("imageUrls")
-      .isArray({ min: 1 })
-      .withMessage("imageUrls must be a non-empty array"),
-    body("imageUrls.*")
-      .isString()
-      .withMessage("Each image_url must be a string")
-      .bail()
-      .trim()
-      .notEmpty()
-      .withMessage("Each image_url must not be empty"),
+    ...createReportValidators,
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -151,13 +103,28 @@ export class ReportController {
           return sendError(res, HTTP_STATUS.UNAUTHORIZED);
         }
 
-        const report = await reportService.createReport(
+        const idempotencyKey = req.get("Idempotency-Key")?.trim() || undefined;
+        if (idempotencyKey && !UUID_RE.test(idempotencyKey)) {
+          return sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
+            errors: [{ path: "Idempotency-Key", msg: "Idempotency-Key must be a UUID" }],
+          });
+        }
+
+        // 202 for first submit and replay alike: verification runs after the response.
+        const { report } = await reportService.createReport(
           userId,
           req.body,
           req.headers.authorization,
+          idempotencyKey,
         );
-        sendSuccess(res, HTTP_STATUS.CREATED, { report });
+        sendSuccess(res, HTTP_STATUS.ACCEPTED, { report });
       } catch (error) {
+        const retryAfter = error instanceof HttpError ? error.data?.retryAfter : undefined;
+        if (typeof retryAfter === "string") {
+          const seconds = Math.ceil((Date.parse(retryAfter) - Date.now()) / 1000);
+          res.set("Retry-After", String(Math.max(1, seconds)));
+        }
+        if (sendHttpErrorResponse(res, error)) return;
         console.error("Create report error:", error);
         sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
@@ -165,8 +132,43 @@ export class ReportController {
   ];
 
   /**
-   * @query reportIds — required; comma-separated or repeated; max 100 UUIDs
+   * Categories that fit the pinned point (specs/006 P08). A hint only: on 503 the form keeps the full list.
    */
+  getLocationContext = [
+    query("lat").isFloat({ min: -90, max: 90 }).withMessage("lat must be between -90 and 90"),
+    query("lng").isFloat({ min: -180, max: 180 }).withMessage("lng must be between -180 and 180"),
+    async (req: Request, res: Response): Promise<void> => {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return sendError(res, HTTP_STATUS.VALIDATION_ERROR, { errors: errors.array() });
+      }
+      try {
+        sendSuccess(res, HTTP_STATUS.OK, await suggestCategories(Number(req.query.lat), Number(req.query.lng)));
+      } catch (error) {
+        if (sendHttpErrorResponse(res, error)) return;
+        console.error("Location context error:", error);
+        sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+      }
+    },
+  ];
+
+  /**
+   * Start a camera capture: one-shot token + Cloudinary signature for `captures/<id>` (specs/006 P03).
+   */
+  createCapture = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return sendError(res, HTTP_STATUS.UNAUTHORIZED);
+      }
+      sendSuccess(res, HTTP_STATUS.CREATED, await issueCapture(userId));
+    } catch (error) {
+      if (sendHttpErrorResponse(res, error)) return;
+      console.error("Create capture error:", error);
+      sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+    }
+  };
+
   getReportsByIds = [
     async (req: Request, res: Response): Promise<void> => {
       const parsed = normalizeQueryUuidList(
@@ -304,6 +306,7 @@ export class ReportController {
       const report = await reportService.getReportDetail(
         req.params.id,
         req.user?.userId,
+        isPlatformAdmin(req.user?.role),
       );
 
       if (!report) {
@@ -322,7 +325,7 @@ export class ReportController {
    * (nothing pending or in process).
    */
   getReportBackgroundJobsStatus = [
-    param("id").isUUID().withMessage("Report ID must be a valid UUID"),
+    ...reportIdParamValidator,
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -357,27 +360,7 @@ export class ReportController {
    * Update a report
    */
   updateReport = [
-    body("title").optional().trim(),
-    body("titleVi").optional().trim(),
-    body("titleEn").optional().trim(),
-    body("description").optional().trim(),
-    body("descriptionVi").optional().trim(),
-    body("descriptionEn").optional().trim(),
-    body("lang").optional().isIn(["vi", "en"]),
-    body("wasteType").optional().trim(),
-    body("severityLevel")
-      .optional()
-      .isInt({ min: 1, max: 5 })
-      .withMessage("Severity level must be between 1 and 5"),
-    body("latitude")
-      .optional()
-      .isFloat({ min: -90, max: 90 })
-      .withMessage("Invalid latitude"),
-    body("longitude")
-      .optional()
-      .isFloat({ min: -180, max: 180 })
-      .withMessage("Invalid longitude"),
-    body("detailAddress").optional().trim(),
+    ...updateReportValidators,
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -414,16 +397,7 @@ export class ReportController {
    * Add images to a report (append media)
    */
   addReportImages = [
-    body("imageUrls")
-      .isArray({ min: 1 })
-      .withMessage("imageUrls must be a non-empty array"),
-    body("imageUrls.*")
-      .isString()
-      .withMessage("Each image URL must be a string")
-      .bail()
-      .trim()
-      .notEmpty()
-      .withMessage("Each image URL must not be empty"),
+    ...addReportImagesValidators,
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -442,7 +416,10 @@ export class ReportController {
         const report = await reportService.addReportImages(
           req.params.id,
           userId,
-          { imageUrls: req.body.imageUrls },
+          {
+            imageUrls: req.body.imageUrls,
+            mediaCaptures: req.body.mediaCaptures,
+          },
           req.user?.role,
         );
         sendSuccess(res, HTTP_STATUS.OK, { report });
@@ -458,9 +435,7 @@ export class ReportController {
    * Delete a report media file (soft delete)
    */
   deleteReportMediaFile = [
-    param("mediaFileId")
-      .isUUID()
-      .withMessage("mediaFileId must be a valid UUID"),
+    ...deleteReportMediaFileValidators,
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -499,13 +474,7 @@ export class ReportController {
    * Ban a report (admin moderation only). Requires `reject_reason`.
    */
   adminBanReport = [
-    param("id").isUUID().withMessage("Report ID must be a valid UUID"),
-    body("rejectReason")
-      .isString()
-      .trim()
-      .notEmpty()
-      .isLength({ max: 5000 })
-      .withMessage("reject_reason is required when banning a report"),
+    ...adminBanReportValidators,
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -531,11 +500,12 @@ export class ReportController {
           );
         }
 
-        const { rejectReason } = req.body as AdminBanReportBody;
+        const { rejectReason, reasonCode } = req.body as AdminBanReportBody;
         const report = await reportService.adminBanReport(
           req.params.id,
           userId,
           rejectReason,
+          reasonCode,
         );
         sendSuccess(
           res,
@@ -554,7 +524,7 @@ export class ReportController {
    * Verify a report (admin only). Sets `is_verify` and status pending (eligible for campaigns).
    */
   adminVerifyReport = [
-    param("id").isUUID().withMessage("Report ID must be a valid UUID"),
+    ...reportIdParamValidator,
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -600,7 +570,7 @@ export class ReportController {
    * Mark report as done (admin only)
    */
   adminMarkReportDone = [
-    param("id").isUUID().withMessage("Report ID must be a valid UUID"),
+    ...reportIdParamValidator,
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -718,6 +688,7 @@ export class ReportController {
         const result = await reportService.searchReports(
           buildReportSearchQuery(req),
           req.user?.userId,
+          isPlatformAdmin(req.user?.role),
         );
         sendSuccess(res, HTTP_STATUS.OK, result);
       } catch (error) {

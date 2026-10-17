@@ -171,8 +171,8 @@ export class OutboxRelay {
 
   private async deliver(row: ClaimedRow): Promise<void> {
     try {
-      // The reward intake worker routes by `event_type` (jobType), so the relay
-      // just hands the event to the shared queue regardless of its kind.
+      // Publisher routes by eventType (e.g. REPORT_SUBMITTED → AI queue;
+      // green-point events → reward intake). Downstream workers route by jobType.
       await this.getPublisher().publish({
         id: row.id,
         eventType: row.event_type,

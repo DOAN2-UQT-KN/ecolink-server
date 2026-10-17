@@ -56,7 +56,6 @@ export class ReportMediaRepository {
   /**
    * Report media rows visible to the viewer: non-deleted file + report,
    * parent report owned by viewer or admin-verified (`isVerify`); media row non-deleted.
-   * (No Prisma relation from report_media_files → media — join in code.)
    */
   async findManyByIdsVisibleToViewer(ids: string[], viewerUserId: string) {
     if (ids.length === 0) {
@@ -79,7 +78,21 @@ export class ReportMediaRepository {
     const mediaIds = [...new Set(files.map((f) => f.mediaId))];
     const mediaRows = await this.prisma.media.findMany({
       where: { id: { in: mediaIds }, deletedAt: null },
-      select: { id: true, url: true, type: true },
+      select: {
+        id: true,
+        url: true,
+        type: true,
+        mimeType: true,
+        fileSize: true,
+        width: true,
+        height: true,
+        capturedAt: true,
+        latitude: true,
+        longitude: true,
+        cameraMake: true,
+        cameraModel: true,
+        metadata: true,
+      },
     });
     const mediaById = new Map(mediaRows.map((m) => [m.id, m]));
     return files

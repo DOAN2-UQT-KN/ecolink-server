@@ -3,12 +3,16 @@ import { ReportSqsQueueFactory } from "./report-sqs-queue-factory";
 import prisma from "../config/prisma.client";
 import { ReportAnalysisWorker } from "./worker/report-analysis-worker";
 import { TranslationWorker } from "./worker/translation-worker";
+import { ReportVerificationWorker } from "./worker/report-verification-worker";
+import { OutboxDeliveredJobStore } from "./outbox-delivered-job-store";
+import { OutboxEventType } from "../outbox/outbox.types";
 import { ReportJobType } from "../constants/job-type.enum";
 import BackgroundJobStore from "./background-job-store";
 
 // ─── Shared store (injects Prisma once, reusable across routes) ───────────────
 
 const backgroundJobStore = new BackgroundJobStore(prisma);
+const outboxDeliveredStore = new OutboxDeliveredJobStore();
 
 // ─── Route declarations ────────────────────────────────────────────────────────
 
@@ -38,6 +42,21 @@ const QUEUE_ROUTES: QueueRouteConfig[] = [
       new TranslationWorker(queue, store, {}),
     ],
   },
+  // Report verification orchestrator (specs/006 P05). Fed by the outbox relay, so it uses a store
+  // without background_jobs rows; off until REPORT_VERIFICATION_ENABLED=true.
+  ...(process.env.REPORT_VERIFICATION_ENABLED === "true"
+    ? [
+        {
+          jobType: OutboxEventType.REPORT_SUBMITTED,
+          concurrency: Number(process.env.REPORT_VERIFICATION_CONCURRENCY ?? 2),
+          thresholds: { visibilityTimeoutSeconds: 60, maxRetries: 5 },
+          createQueue: () =>
+            sqsFactory.createQueue("SQS_REPORT_VERIFICATION_QUEUE_URL", outboxDeliveredStore),
+          store: outboxDeliveredStore,
+          createWorkers: (queue, store) => [new ReportVerificationWorker(queue, store, {})],
+        } satisfies QueueRouteConfig,
+      ]
+    : []),
 ];
 
 // ─── Queue runner ─────────────────────────────────────────────────────────────

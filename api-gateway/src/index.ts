@@ -8,6 +8,67 @@ import { mountGatewaySwaggerUi } from "@da2/express-swagger";
 
 dotenv.config();
 
+type ProxyOptions = NonNullable<Parameters<typeof proxy>[1]>;
+
+function stripUpstreamCorsHeaders(
+  headers: Record<string, string | string[] | undefined>,
+): Record<string, string | string[] | undefined> {
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase().startsWith("access-control-")) {
+      delete headers[key];
+    }
+  }
+  return headers;
+}
+
+function gatewayProxy(
+  target: string,
+  options: ProxyOptions,
+): ReturnType<typeof proxy> {
+  const { userResHeaderDecorator, ...rest } = options;
+  return proxy(target, {
+    ...rest,
+    userResHeaderDecorator: (headers, userReq, userRes, proxyReq, proxyRes) => {
+      const decorated = userResHeaderDecorator
+        ? userResHeaderDecorator(
+            headers,
+            userReq,
+            userRes,
+            proxyReq,
+            proxyRes,
+          )
+        : headers;
+      stripUpstreamCorsHeaders(decorated);
+      const origin = userReq.headers.origin;
+      if (typeof origin === "string" && origin.length > 0) {
+        decorated["access-control-allow-origin"] = origin;
+        decorated["access-control-allow-credentials"] = "true";
+        decorated.vary = decorated.vary
+          ? `${decorated.vary}, Origin`
+          : "Origin";
+      }
+      return decorated;
+    },
+  });
+}
+
+function resolveCorsOrigin(
+  origin: string | undefined,
+  callback: (err: Error | null, allow?: boolean | string) => void,
+): void {
+  const configured = process.env.CORS_ORIGIN?.trim();
+  if (!configured || configured === "*") {
+    callback(null, origin ?? true);
+    return;
+  }
+  const allowed = configured.split(",").map((value) => value.trim());
+  if (!origin || allowed.includes(origin)) {
+    callback(null, true);
+  } else {
+    callback(new Error(`CORS blocked for origin: ${origin}`));
+  }
+}
+
 const app = express();
 const port = Number(process.env.PORT) || 8081;
 
@@ -30,7 +91,7 @@ console.log(
 
 app.use(
   cors({
-    origin: "*",
+    origin: resolveCorsOrigin,
     credentials: true,
   }),
 );
@@ -107,12 +168,21 @@ app.get("/api-docs/specs/ai.json", async (req, res, next) => {
   }
 });
 
-/** Swagger UI; reward.json proxies reward-service OpenAPI (gamification DTOs, metric metadata for badge rules, seasons, …). */
+app.get("/api-docs/specs/notification.json", async (req, res, next) => {
+  try {
+    await serveRewrittenOpenApi(res, NOTIFICATION_SERVICE_URL);
+  } catch (e) {
+    next(e);
+  }
+});
+
+/** Swagger UI; specs proxy each service’s OpenAPI (gateway rewrites servers to GATEWAY_PUBLIC_URL). */
 mountGatewaySwaggerUi(app, {
   specs: [
     { name: "Identity", url: "/api-docs/specs/identity.json" },
     { name: "Incident", url: "/api-docs/specs/incident.json" },
     { name: "Reward", url: "/api-docs/specs/reward.json" },
+    { name: "Notification", url: "/api-docs/specs/notification.json" },
     { name: "AI", url: "/api-docs/specs/ai.json" },
   ],
 });
@@ -126,21 +196,21 @@ app.get("/health", (_req, res) => {
 // Proxy routes — Identity
 app.use(
   "/api/v1/auth",
-  proxy(IDENTITY_SERVICE_URL, {
+  gatewayProxy(IDENTITY_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/auth${req.url}`,
   }),
 );
 
 app.use(
   "/api/v1/users",
-  proxy(IDENTITY_SERVICE_URL, {
+  gatewayProxy(IDENTITY_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/users${req.url}`,
   }),
 );
 
 app.use(
   "/api/v1/roles",
-  proxy(IDENTITY_SERVICE_URL, {
+  gatewayProxy(IDENTITY_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/roles${req.url}`,
   }),
 );
@@ -148,21 +218,21 @@ app.use(
 // Proxy routes — Incident
 app.use(
   "/api/v1/reports",
-  proxy(INCIDENT_SERVICE_URL, {
+  gatewayProxy(INCIDENT_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/reports${req.url}`,
   }),
 );
 
 app.use(
   "/api/v1/campaigns",
-  proxy(INCIDENT_SERVICE_URL, {
+  gatewayProxy(INCIDENT_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/campaigns${req.url}`,
   }),
 );
 
 app.use(
   "/api/v1/organizations",
-  proxy(INCIDENT_SERVICE_URL, {
+  gatewayProxy(INCIDENT_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/organizations${req.url}`,
   }),
 );
@@ -191,28 +261,28 @@ app.use(
 
 app.use(
   "/api/v1/admin/media",
-  proxy(INCIDENT_SERVICE_URL, {
+  gatewayProxy(INCIDENT_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/admin/media${req.url}`,
   }),
 );
 
 app.use(
   "/api/v1/incident/votes",
-  proxy(INCIDENT_SERVICE_URL, {
+  gatewayProxy(INCIDENT_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/incident/votes${req.url}`,
   }),
 );
 
 app.use(
   "/api/v1/incident/saved-resources",
-  proxy(INCIDENT_SERVICE_URL, {
+  gatewayProxy(INCIDENT_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/incident/saved-resources${req.url}`,
   }),
 );
 
 app.use(
   "/api/v1/sos",
-  proxy(INCIDENT_SERVICE_URL, {
+  gatewayProxy(INCIDENT_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/sos${req.url}`,
   }),
 );
@@ -220,7 +290,7 @@ app.use(
 // Proxy routes — Notification (in-app list, mark read; internal jobs hit service directly with API key)
 app.use(
   "/api/v1/notifications",
-  proxy(NOTIFICATION_SERVICE_URL, {
+  gatewayProxy(NOTIFICATION_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/notifications${req.url}`,
   }),
 );
@@ -228,42 +298,42 @@ app.use(
 // Proxy routes — Reward (gifts, difficulties, points, redemptions, leaderboard, seasons, gamification)
 app.use(
   "/api/v1/gifts",
-  proxy(REWARD_SERVICE_URL, {
+  gatewayProxy(REWARD_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/gifts${req.url}`,
   }),
 );
 
 app.use(
   "/api/v1/difficulties",
-  proxy(REWARD_SERVICE_URL, {
+  gatewayProxy(REWARD_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/difficulties${req.url}`,
   }),
 );
 
 app.use(
   "/api/v1/me/points",
-  proxy(REWARD_SERVICE_URL, {
+  gatewayProxy(REWARD_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/me/points${req.url}`,
   }),
 );
 
 app.use(
   "/api/v1/me/redemptions",
-  proxy(REWARD_SERVICE_URL, {
+  gatewayProxy(REWARD_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/me/redemptions${req.url}`,
   }),
 );
 
 app.use(
   "/api/v1/admin/gift-redemptions",
-  proxy(REWARD_SERVICE_URL, {
+  gatewayProxy(REWARD_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/admin/gift-redemptions${req.url}`,
   }),
 );
 
 app.use(
   "/api/v1/leaderboard",
-  proxy(REWARD_SERVICE_URL, {
+  gatewayProxy(REWARD_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/leaderboard${req.url}`,
   }),
 );
@@ -271,56 +341,56 @@ app.use(
 // Seasons & gamification (reward-service)
 app.use(
   "/api/v1/seasons",
-  proxy(REWARD_SERVICE_URL, {
+  gatewayProxy(REWARD_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/seasons${req.url}`,
   }),
 );
 
 app.use(
   "/api/v1/me/gamification",
-  proxy(REWARD_SERVICE_URL, {
+  gatewayProxy(REWARD_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/me/gamification${req.url}`,
   }),
 );
 
 app.use(
   "/api/v1/me/badges",
-  proxy(REWARD_SERVICE_URL, {
+  gatewayProxy(REWARD_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/me/badges${req.url}`,
   }),
 );
 
 app.use(
   "/api/v1/metric-tables",
-  proxy(REWARD_SERVICE_URL, {
+  gatewayProxy(REWARD_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/metric-tables${req.url}`,
   }),
 );
 
 app.use(
   "/api/v1/metric-columns",
-  proxy(REWARD_SERVICE_URL, {
+  gatewayProxy(REWARD_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/metric-columns${req.url}`,
   }),
 );
 
 app.use(
   "/api/v1/gamification",
-  proxy(REWARD_SERVICE_URL, {
+  gatewayProxy(REWARD_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/gamification${req.url}`,
   }),
 );
 
 app.use(
   "/api/v1/admin/gamification",
-  proxy(REWARD_SERVICE_URL, {
+  gatewayProxy(REWARD_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/admin/gamification${req.url}`,
   }),
 );
 
 app.use(
   "/api/v1/admin/seasons",
-  proxy(REWARD_SERVICE_URL, {
+  gatewayProxy(REWARD_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/admin/seasons${req.url}`,
   }),
 );
@@ -328,7 +398,7 @@ app.use(
 // Chat / LLM agents (Python ai-service) — SSE; avoid buffering upstream
 app.use(
   "/api/v1/chat",
-  proxy(AI_SERVICE_URL, {
+  gatewayProxy(AI_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/chat${req.url}`,
     parseReqBody: false,
   }),
@@ -337,7 +407,7 @@ app.use(
 // Translation shortcut route -> ai-service translation assistant
 app.use(
   "/api/v1/translate",
-  proxy(AI_SERVICE_URL, {
+  gatewayProxy(AI_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/chat/translate${req.url}`,
   }),
 );

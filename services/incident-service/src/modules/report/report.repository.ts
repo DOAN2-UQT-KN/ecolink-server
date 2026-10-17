@@ -2,6 +2,7 @@ import { PrismaClient, Prisma } from "@prisma/client";
 import prisma from "../../config/prisma.client";
 import { ReportEntity } from "./report.entity";
 import { ReportSearchWithScope } from "./report.dto";
+import { MODERATION_ORDER_BY, MODERATION_TAB_FILTER } from "../verification/moderation-filter";
 import { GlobalStatus, ReportStatus } from "../../constants/status.enum";
 
 /** Report row including non-deleted media links (for list/search responses). */
@@ -142,8 +143,11 @@ export class ReportRepository {
       ];
     }
 
-    // Status filter: `statuses` (IN) takes precedence over legacy single `status`
-    if (query.statuses && query.statuses.length > 0) {
+    // Moderation filter (admin, specs/008) replaces the status filter and the sort.
+    if (query.moderation) {
+      Object.assign(where, MODERATION_TAB_FILTER[query.moderation]);
+    } else if (query.statuses && query.statuses.length > 0) {
+      // Status filter: `statuses` (IN) takes precedence over legacy single `status`
       where.status = { in: query.statuses };
     } else if (query.status) {
       where.status = query.status;
@@ -160,8 +164,12 @@ export class ReportRepository {
     }
 
     // Build orderBy
-    let orderBy: Prisma.ReportOrderByWithRelationInput = { createdAt: "desc" };
-    if (query.sortBy === "severityLevel") {
+    let orderBy: Prisma.ReportOrderByWithRelationInput | Prisma.ReportOrderByWithRelationInput[] = {
+      createdAt: "desc",
+    };
+    if (query.moderation) {
+      orderBy = MODERATION_ORDER_BY;
+    } else if (query.sortBy === "severityLevel") {
       orderBy = { severityLevel: query.sortOrder || "desc" };
     } else if (query.sortBy === "createdAt") {
       orderBy = { createdAt: query.sortOrder || "desc" };
@@ -268,6 +276,8 @@ export class ReportRepository {
                 title,
                 description,
                 waste_type as "wasteType",
+                category::text as category,
+                waste_types::text[] as "wasteTypes",
                 severity_level as "severityLevel",
                 latitude,
                 longitude,
@@ -277,19 +287,19 @@ export class ReportRepository {
                 reject_reason as "rejectReason",
                 ai_verified as "aiVerified",
                 ai_recommendation as "aiRecommendation",
+                duplicate_verification as "duplicateVerification",
                 created_at as "createdAt",
                 updated_at as "updatedAt",
                 deleted_at as "deletedAt",
                 ST_Distance(
-                    ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography,
+                    location,
                     ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography
                 ) as distance
             FROM reports
             WHERE ${whereClause}
-                AND latitude IS NOT NULL 
-                AND longitude IS NOT NULL
+                AND location IS NOT NULL
                 AND ST_DWithin(
-                    ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography,
+                    location,
                     ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
                     $3
                 )
@@ -305,10 +315,9 @@ export class ReportRepository {
             SELECT COUNT(*) as count
             FROM reports
             WHERE ${whereClause}
-                AND latitude IS NOT NULL 
-                AND longitude IS NOT NULL
+                AND location IS NOT NULL
                 AND ST_DWithin(
-                    ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography,
+                    location,
                     ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
                     $3
                 )
@@ -359,10 +368,9 @@ export class ReportRepository {
             FROM reports
             WHERE deleted_at IS NULL
               AND user_id IS NOT NULL
-              AND latitude IS NOT NULL
-              AND longitude IS NOT NULL
+              AND location IS NOT NULL
               AND ST_DWithin(
-                  ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography,
+                  location,
                   ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
                   $3
               )

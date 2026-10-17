@@ -1,5 +1,13 @@
+import type { ModerationReasonCode, ReportCategory, RiskFlag, VerificationStatus, WasteType } from "@prisma/client";
 import type { OrganizationOwnerResponse } from "../organization/organization.dto";
 import type { ResourceVoteSummary } from "../vote/vote.dto";
+
+/** Optional capture context aligned by index with `imageUrls`. */
+export interface MediaCaptureInput {
+  capturedAt?: string;
+  latitude?: number;
+  longitude?: number;
+}
 
 // Request DTOs
 export interface CreateReportRequest {
@@ -9,13 +17,35 @@ export interface CreateReportRequest {
   description?: string;
   descriptionVi?: string;
   descriptionEn?: string;
+  /** Legacy (client trước spec 007): CSV, dùng wasteTypes. Xoá ở P10. */
   wasteType?: string;
+  category?: ReportCategory;
+  wasteTypes?: WasteType[];
   severityLevel?: number;
   latitude: number;
   longitude: number;
   /** Optional human-readable address for the report location. */
   detailAddress?: string;
-  imageUrls: string[]; // Array of image URLs
+  images?: CreateReportImageInput[];
+  /** Legacy (client trước spec 007): dùng images. Xoá ở P10. */
+  imageUrls?: string[];
+  /** Legacy, ignored since specs/006 P02 (client-declared capture data is not trusted). */
+  mediaCaptures?: MediaCaptureInput[];
+}
+
+export interface CreateReportImageInput {
+  url: string;
+  /** Server-issued capture (P03); absent for gallery uploads. */
+  captureId?: string;
+}
+
+/** CreateReportRequest after legacy fields are folded into the new shape. */
+export interface NormalizedCreateReport {
+  category: ReportCategory;
+  wasteTypes: WasteType[];
+  /** Lower-case CSV kept in `waste_type` so clients before spec 007 still show the waste type. */
+  wasteTypeCsv: string | null;
+  images: { url: string; captureId: string | null }[];
 }
 
 export interface UpdateReportRequest {
@@ -33,17 +63,38 @@ export interface UpdateReportRequest {
 }
 
 export interface AddReportImagesRequest {
-  imageUrls: string[];
+  images?: CreateReportImageInput[];
+  /** Legacy (client trước spec 007): dùng images. Xoá ở P10b. */
+  imageUrls?: string[];
+  /** Legacy, ignored since specs/006 P10. */
+  mediaCaptures?: MediaCaptureInput[];
 }
 
 /** Body for PUT /api/v1/reports/:id/ban (admin). */
 export interface AdminBanReportBody {
   /** Required when banning. */
   rejectReason: string;
+  /** Optional moderation reason code (specs/006 P09). */
+  reasonCode?: ModerationReasonCode;
+}
+
+/** Shared media metadata fields returned on report media responses. */
+export interface MediaMetadataResponse {
+  mimeType: string | null;
+  /** BigInt serialized as string for JSON safety. */
+  fileSize: string | null;
+  width: number | null;
+  height: number | null;
+  capturedAt: Date | null;
+  latitude: number | null;
+  longitude: number | null;
+  cameraMake: string | null;
+  cameraModel: string | null;
+  metadata: unknown | null;
 }
 
 /** One row from GET /api/v1/reports/media-files/by-ids (snake_case in HTTP response). */
-export interface ReportMediaFileByIdResponse {
+export interface ReportMediaFileByIdResponse extends MediaMetadataResponse {
   id: string;
   reportId: string | null;
   mediaId: string;
@@ -66,12 +117,53 @@ export interface ReportSearchQuery {
   sortOrder?: "asc" | "desc";
   page?: number;
   limit?: number;
+  /** Admin-only (specs/008): moderation queue filter + risk order; ignored for other viewers. */
+  moderation?: "REVIEW" | "REJECT";
 }
 
 /** Server-only scope for repository search (GET /my); never take from client on /search. */
 export type ReportSearchWithScope = ReportSearchQuery & {
   scopedUserId?: string;
 };
+
+export interface DuplicateMediaMatch {
+  /** Media.id on the report that was just submitted. */
+  mediaId: string;
+  /** Media.id on the older duplicate report. */
+  duplicateMediaId: string;
+}
+
+/** One older report and the media pairs that matched it. Stored JSON only. */
+export interface DuplicateVerificationGroup {
+  duplicateReportId: string;
+  matches: DuplicateMediaMatch[];
+}
+
+/** Current-report image shown in a duplicate match. Not stored. */
+export interface DuplicateNewMedia {
+  mediaId: string;
+  url: string | null;
+}
+
+/** Older-report image shown in a duplicate match. Not stored. */
+export interface DuplicateOldMedia {
+  duplicateMediaId: string;
+  duplicateUrl: string | null;
+}
+
+export interface DuplicateVerificationMatchView {
+  newMedia: DuplicateNewMedia;
+  duplicateMedia: DuplicateOldMedia;
+}
+
+/** Group plus report/media summary filled when a report is loaded. */
+export interface DuplicateVerificationGroupView {
+  duplicateReportId: string;
+  title: string | null;
+  detailAddress: string | null;
+  status: number | null;
+  matches: DuplicateVerificationMatchView[];
+}
 
 // Response DTOs
 export interface ReportResponse {
@@ -88,7 +180,10 @@ export interface ReportResponse {
   description: string | null;
   descriptionVi?: string | null;
   descriptionEn?: string | null;
+  /** Deprecated free-text CSV; use `wasteTypes`. */
   wasteType: string | null;
+  category: ReportCategory;
+  wasteTypes: WasteType[];
   severityLevel: number | null;
   latitude: number | null;
   longitude: number | null;
@@ -101,6 +196,12 @@ export interface ReportResponse {
   aiVerified: boolean;
   /** LLM recommendation after image/object analysis (nullable until analysis completes). */
   aiRecommendation?: string | null;
+  /**
+   * Duplicate verification grouped by older report. Null until the AI worker writes back.
+   * After a check with no hit: an empty array. Title, address, status, and media URLs
+   * are filled when the report is loaded; they are not stored.
+   */
+  duplicateVerification: DuplicateVerificationGroupView[] | null;
   createdAt: Date;
   updatedAt: Date;
   distance?: number; // Distance in meters (when searching with location)
@@ -125,12 +226,18 @@ export interface ReportDetailResponse extends ReportResponse {
   mediaFiles: ReportMediaFileResponse[];
   /** Null when the report is not linked to a campaign (or campaign/org is deleted). */
   handledBy: ReportHandledByResponse | null;
+  /**
+   * Summary of the latest verification: GET /reports/:id (owner and admin), and GET /reports/search
+   * for admins only (specs/008). `riskScore` is only ever set for admins.
+   */
+  latestVerification?: { status: VerificationStatus; flag: RiskFlag | null; riskScore?: number | null } | null;
 }
 
-export interface ReportMediaFileResponse {
+export interface ReportMediaFileResponse extends MediaMetadataResponse {
   id: string;
   mediaId: string;
   url: string | null;
+  type: string | null;
   ai_analysis_url: string | null;
   uploadedBy: string | null;
   createdAt: Date;

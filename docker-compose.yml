@@ -26,11 +26,13 @@ services:
       retries: 10
 
   localstack:
-    image: localstack/localstack:3.8  # latest is the pro image and needs a license
+    # Pin community 3.8: localstack/localstack:latest (2026+) requires LOCALSTACK_AUTH_TOKEN.
+    image: localstack/localstack:3.8
     ports:
       - "4566:4566"
     environment:
       SERVICES: sqs
+      AWS_DEFAULT_REGION: us-east-1
     volumes:
       - localstack_data:/var/lib/localstack
       - /var/run/docker.sock:/var/run/docker.sock

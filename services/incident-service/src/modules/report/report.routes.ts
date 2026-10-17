@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { reportController } from "./report.controller";
 import { authenticate } from "../../middleware/auth.middleware";
+import { verificationController } from "../verification/verification.controller";
 
 const router = Router();
 
@@ -12,15 +13,33 @@ const router = Router();
 router.post("/", authenticate, reportController.createReport);
 
 /**
+ * @route   POST /api/v1/reports/captures
+ * @desc    Start a camera capture (specs/006 P03): returns capture_id, expires_at and a Cloudinary
+ *          upload signature for public_id `captures/<capture_id>`. Send the capture_id with the image
+ *          in POST /reports so it counts as LIVE.
+ * @access  Private
+ */
+router.post("/captures", authenticate, reportController.createCapture);
+
+/**
+ * @route   GET /api/v1/reports/context
+ * @desc    Categories that fit the pinned point (query lat, lng), with the nearest place found via Goong
+ *          (specs/006 P08). A hint only: 503 CONTEXT_UNAVAILABLE when off, slow (> 2 s) or failing; the
+ *          client then shows the full category list.
+ * @access  Private
+ */
+router.get("/context", authenticate, reportController.getLocationContext);
+
+/**
  * @route   GET /api/v1/reports/search
- * @desc    Search and discover reports with filters and sorting. Optional `statuses` (comma-separated or repeated ints) filters `status IN statuses`.
+ * @desc    Search and discover reports with filters and sorting. Optional `statuses` (comma-separated or repeated ints) filters `status IN statuses`. Each report includes duplicate_verification.
  * @access  Private
  */
 router.get("/search", authenticate, reportController.searchReports);
 
 /**
  * @route   GET /api/v1/reports/my
- * @desc    Current user's reports: same filters/sort as /search, plus page & limit (default page=1, limit=10). Response includes total, total_pages.
+ * @desc    Current user's reports: same filters/sort as /search, plus page & limit (default page=1, limit=10). Response includes total, total_pages, and duplicate_verification per report.
  * @access  Private
  */
 router.get("/my", authenticate, reportController.getMyReports);
@@ -64,8 +83,36 @@ router.get(
 );
 
 /**
+ * @route   GET /api/v1/reports/moderation
+ * @desc    Moderator queue (specs/006 P09). Query `flag` REVIEW (status 9, default) or REJECT (rejected by the engine, no moderator decision yet), `page`, `limit` (1..100, default 20). Highest risk first; `counts` per tab.
+ * @access  Private (Admin only)
+ */
+router.get("/moderation", authenticate, verificationController.moderationQueue);
+
+/**
+ * @route   GET /api/v1/reports/:id/verification
+ * @desc    Latest verification attempt. Owner: status, flag and public issues only; admin: score, checks, signals, evidence, moderation.
+ * @access  Private (Report owner or admin)
+ */
+router.get("/:id/verification", authenticate, verificationController.getVerification);
+
+/**
+ * @route   GET /api/v1/reports/:id/verifications
+ * @desc    Every verification attempt of the report, newest first (admin view).
+ * @access  Private (Admin only)
+ */
+router.get("/:id/verifications", authenticate, verificationController.listVerifications);
+
+/**
+ * @route   POST /api/v1/reports/:id/moderation
+ * @desc    Moderator decision `{ decision: ACCEPT | REJECT, reason_code (required for REJECT), note? }` on a report in review or rejected by the engine. 409 REPORT_ALREADY_MODERATED otherwise.
+ * @access  Private (Admin only)
+ */
+router.post("/:id/moderation", authenticate, verificationController.moderate);
+
+/**
  * @route   GET /api/v1/reports/:id
- * @desc    Get report with full details. Banned (inactive) reports return 404.
+ * @desc    Get report with full details including duplicate_verification (null until AI writes back). Banned (inactive) reports return 404.
  * @access  Private
  */
 router.get("/:id", authenticate, reportController.getReportDetail);

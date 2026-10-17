@@ -23,12 +23,33 @@ model Report {
   descriptionVi String? @map("description_vi")
   descriptionEn String? @map("description_en")
 
-  wasteType     String? @map("waste_type") @db.VarChar(100)
-  severityLevel Int?    @map("severity_level")
+  /**
+   * deprecated: thay bằng wasteTypes, xoá ở P10 (specs/006).
+   */
+  wasteType     String?        @map("waste_type") @db.VarChar(100)
+  /**
+   * Where/what the incident is; checked against map data by ContextCheck.
+   */
+  category      ReportCategory @default(OTHER)
+  wasteTypes    WasteType[]    @default([]) @map("waste_types")
+  severityLevel Int?           @map("severity_level")
 
   // PostGIS Geography point stored as raw - we'll use raw queries for spatial operations
   latitude  Float?
   longitude Float?
+  /**
+   * Kept in sync with latitude/longitude by trigger reports_sync_location; GiST-indexed.
+   */
+  location  Unsupported("geography(Point, 4326)")?
+
+  /**
+   * Client Idempotency-Key header; unique per user.
+   */
+  idempotencyKey       String?               @map("idempotency_key") @db.VarChar(64)
+  latestVerificationId String?               @map("latest_verification_id") @db.Uuid
+  moderatedBy          String?               @map("moderated_by") @db.Uuid
+  moderatedAt          DateTime?             @map("moderated_at")
+  moderationReasonCode ModerationReasonCode? @map("moderation_reason_code")
 
   /**
    * Human-readable location text (e.g. street / place name from reverse geocoding).
@@ -53,6 +74,12 @@ model Report {
    */
   aiRecommendation String? @map("ai_recommendation")
 
+  /**
+   * Duplicate verification result from ai-service (SHA-256 / pHash).
+   * Null until REPORT_SUBMITTED pipeline writes back.
+   */
+  duplicateVerification Json? @map("duplicate_verification")
+
   createdBy String? @map("created_by") @db.Uuid
   updatedBy String? @map("updated_by") @db.Uuid
 
@@ -61,17 +88,179 @@ model Report {
   deletedAt DateTime? @map("deleted_at")
 
   // Relations
-  reportMediaFiles  ReportMediaFile[]
-  reportIssues      ReportIssue[]
-  aiAnalysisLogs    AiAnalysisLog[]
-  campaign          Campaign?                    @relation(fields: [campaignId], references: [id])
-  meetingPointLinks CampaignMeetingPointReport[]
+  reportMediaFiles   ReportMediaFile[]
+  reportIssues       ReportIssue[]
+  aiAnalysisLogs     AiAnalysisLog[]
+  campaign           Campaign?                    @relation(fields: [campaignId], references: [id])
+  meetingPointLinks  CampaignMeetingPointReport[]
+  verifications      ReportVerification[]         @relation("ReportVerifications")
+  latestVerification ReportVerification?          @relation("LatestVerification", fields: [latestVerificationId], references: [id], onDelete: SetNull)
 
+  @@unique([userId, idempotencyKey])
   @@index([campaignId])
   @@index([userId])
+  @@index([userId, createdAt])
+  @@index([location], map: "reports_location_gist", type: Gist)
   @@index([status])
   @@index([deletedAt])
   @@map("reports")
+}
+
+enum ReportCategory {
+  WATERWAY
+  BEACH
+  MARKET
+  SCHOOL
+  PARK
+  INDUSTRIAL_ZONE
+  ALLEY
+  STREET
+  ILLEGAL_DUMP
+  DRAIN
+  OPEN_BURNING
+  OTHER
+}
+
+enum WasteType {
+  HOUSEHOLD
+  CONSTRUCTION
+  INDUSTRIAL
+  HAZARDOUS
+}
+
+enum CaptureSource {
+  LIVE
+  GALLERY
+}
+
+enum ModerationReasonCode {
+  DUPLICATE_OF_OTHER
+  NOT_ON_SITE
+  INAPPROPRIATE_CONTENT
+}
+
+enum VerificationStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum VerificationCheckName {
+  DUPLICATE
+  TRUST
+  CONTEXT
+}
+
+enum VerificationCheckStatus {
+  COMPLETED
+  SKIPPED
+  FAILED
+  NOT_AVAILABLE
+}
+
+enum RiskFlag {
+  ACCEPT
+  REVIEW
+  REJECT
+}
+
+/// One run of the verification pipeline for a report (specs/006 P05). Retries add a new attempt;
+/// rows are never overwritten so attempts + moderator decisions form a labelled dataset.
+model ReportVerification {
+  id              String             @id @default(uuid()) @db.Uuid
+  reportId        String             @map("report_id") @db.Uuid
+  attempt         Int                @default(1)
+  status          VerificationStatus
+  pipelineVersion String             @map("pipeline_version") @db.VarChar(32)
+  engineVersion   String?            @map("engine_version") @db.VarChar(64)
+  riskScore       Float?             @map("risk_score")
+  flag            RiskFlag?
+  reasons         String[]           @default([])
+  startedAt       DateTime           @default(now()) @map("started_at")
+  completedAt     DateTime?          @map("completed_at")
+
+  report   Report              @relation("ReportVerifications", fields: [reportId], references: [id], onDelete: Cascade)
+  latestOf Report[]            @relation("LatestVerification")
+  checks   VerificationCheck[]
+
+  @@unique([reportId, attempt])
+  @@map("report_verifications")
+}
+
+/// Result of one check inside a verification attempt; written once, never updated.
+model VerificationCheck {
+  id             String                  @id @default(uuid()) @db.Uuid
+  verificationId String                  @map("verification_id") @db.Uuid
+  check          VerificationCheckName
+  version        String                  @db.VarChar(64)
+  status         VerificationCheckStatus
+  risk           Float?
+  reasons        String[]                @default([])
+  signals        Json
+  evidence       Json
+  error          Json?
+  durationMs     Int                     @map("duration_ms")
+
+  verification ReportVerification @relation(fields: [verificationId], references: [id], onDelete: Cascade)
+
+  @@unique([verificationId, check])
+  @@map("verification_checks")
+}
+
+/// Server-issued camera capture (specs/006 P03): a one-shot token for one LIVE report image.
+/// Issued by POST /reports/captures, consumed (usedAt) in the report's transaction.
+model MediaCapture {
+  id              String           @id @default(uuid()) @db.Uuid
+  userId          String           @map("user_id") @db.Uuid
+  issuedAt        DateTime         @default(now()) @map("issued_at")
+  expiresAt       DateTime         @map("expires_at")
+  usedAt          DateTime?        @map("used_at")
+  reportMediaFile ReportMediaFile?
+
+  @@index([userId, issuedAt])
+  @@map("media_captures")
+}
+
+/// Goong lookups for ContextCheck (specs/006 P08), per geohash cell and category-rules version.
+/// Stores places/addresses found, never a verdict: distances are measured from each report's point.
+model GeoContextCache {
+  cellId    String   @map("cell_id") @db.VarChar(12)
+  ruleKey   String   @map("rule_key") @db.VarChar(80)
+  places    Json
+  address   Json?
+  fetchedAt DateTime @default(now()) @map("fetched_at")
+  expiresAt DateTime @map("expires_at")
+
+  @@id([cellId, ruleKey])
+  @@index([expiresAt])
+  @@map("geo_context_cache")
+}
+
+/// Area where reports are accepted (specs/006 P02, BR-113). POST /reports rejects points outside
+/// every active area with 422 REPORT_OUT_OF_SERVICE_AREA; no active area = no check.
+model ServiceArea {
+  id        String                                       @id @default(uuid()) @db.Uuid
+  name      String                                       @db.VarChar(120)
+  geog      Unsupported("geography(MultiPolygon, 4326)")
+  active    Boolean                                      @default(true)
+  createdAt DateTime                                     @default(now()) @map("created_at")
+
+  @@index([geog], map: "service_areas_geog_gist", type: Gist)
+  @@map("service_areas")
+}
+
+/// Versioned verification config (specs/006 research R6). At most one active row per key
+/// (partial unique index verification_configs_one_active_per_key, created in SQL).
+model VerificationConfig {
+  id        String   @id @default(uuid()) @db.Uuid
+  key       String   @db.VarChar(64)
+  version   String   @db.VarChar(64)
+  value     Json
+  isActive  Boolean  @default(false) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([key, version])
+  @@map("verification_configs")
 }
 
 model Campaign {
@@ -166,16 +355,39 @@ model Campaign {
 }
 
 model Media {
-  id   String @id @default(uuid()) @db.Uuid
+  id String @id @default(uuid()) @db.Uuid
+
+  // FILE
   url  String
   type String @db.VarChar(50)
 
+  // FILE METADATA
+  mimeType String? @map("mime_type") @db.VarChar(100)
+  fileSize BigInt? @map("file_size")
+  width    Int?
+  height   Int?
+
+  // CAPTURE METADATA
+  capturedAt  DateTime? @map("captured_at")
+  latitude    Float?
+  longitude   Float?
+  cameraMake  String?   @map("camera_make") @db.VarChar(100)
+  cameraModel String?   @map("camera_model") @db.VarChar(100)
+
+  // RAW METADATA
+  metadata Json?
+
+  // AUDIT
   createdBy String? @map("created_by") @db.Uuid
   updatedBy String? @map("updated_by") @db.Uuid
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
+
+  // RELATIONS
+  campaignResultFiles CampaignResultFile[]
+  reportMediaFiles    ReportMediaFile[]
 
   @@index([type])
   @@index([deletedAt])
@@ -190,6 +402,13 @@ model ReportMediaFile {
 
   uploadedBy String? @map("uploaded_by") @db.Uuid
 
+  /**
+   * LIVE when uploaded through a valid server-issued capture (P03); otherwise GALLERY.
+   */
+  captureSource CaptureSource @default(GALLERY) @map("capture_source")
+  captureId     String?       @unique @map("capture_id") @db.Uuid
+  capture       MediaCapture? @relation(fields: [captureId], references: [id])
+
   createdBy String? @map("created_by") @db.Uuid
   updatedBy String? @map("updated_by") @db.Uuid
 
@@ -199,6 +418,7 @@ model ReportMediaFile {
 
   // Relations
   report Report? @relation(fields: [reportId], references: [id])
+  media  Media   @relation(fields: [mediaId], references: [id])
 
   @@index([reportId])
   @@index([mediaId])
@@ -326,6 +546,7 @@ model CampaignResultFile {
 
   // Relations
   campaignResult CampaignResult @relation(fields: [campaignResultId], references: [id])
+  media          Media          @relation(fields: [mediaId], references: [id])
 
   @@index([campaignResultId])
   @@index([mediaId])

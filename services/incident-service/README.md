@@ -130,7 +130,12 @@ CORS_ORIGIN=*
 AI_SERVICE_URL=http://ai-service:3004
 REWARD_SERVICE_URL=http://reward-service:3002
 NOTIFICATION_SERVICE_URL=http://notification-service:3003
+# Outbox relay (worker process): REPORT_SUBMITTED → AI queue; green-point events → reward intake
+SQS_REWARD_INTAKE_QUEUE_URL=http://localhost:4566/000000000000/reward-intake
+SQS_AI_ANALYSIS_QUEUE_URL=http://localhost:4566/000000000000/ai-analysis-job
 ```
+
+Worker process (`npm run worker` / `src/worker.ts`) starts SQS pollers and the outbox relay. ai-service consumes `REPORT_SUBMITTED` via `python -m app.worker` with the same `SQS_AI_ANALYSIS_QUEUE_URL`.
 
 ## TODO
 

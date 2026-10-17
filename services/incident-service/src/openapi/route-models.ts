@@ -16,6 +16,9 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
   "GET /api/v1/reports/all": {
     responseData: "ReportsActiveListEnvelopeData",
   },
+  "GET /api/v1/reports/by-ids": {
+    responseData: "ReportsActiveListEnvelopeData",
+  },
   "GET /api/v1/reports/:id/background-jobs/status": {
     responseData: "BackgroundJobsEnvelopeData",
   },

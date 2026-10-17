@@ -1,5 +1,5 @@
 import { reportRepository, ReportWithMediaFiles } from "./report.repository";
-import { toReportResponse } from "./report.entity";
+import { toReportResponse, toDuplicateVerificationJson, embedDuplicateVerification, omitInactiveDuplicateGroups } from "./report.entity";
 import {
   CreateReportRequest,
   UpdateReportRequest,
@@ -12,6 +12,7 @@ import {
   PaginatedReportsResponse,
   ReportBackgroundJobsStatusResponse,
   ReportMediaFileByIdResponse,
+  DuplicateVerificationGroup,
 } from "./report.dto";
 import { reportMediaRepository } from "./report_media.repository";
 import {
@@ -21,6 +22,7 @@ import {
   VoteResourceType,
 } from "../../constants/status.enum";
 import prisma from "../../config/prisma.client";
+import { Prisma, type ModerationReasonCode, type Report } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import {
   ReportJobType,
@@ -45,7 +47,61 @@ import {
   enqueueReportStatusWebsiteNotification,
 } from "./report-status-notify.client";
 import { emitOutbox } from "../../outbox/outbox.writer";
+import { emitBackgroundJob } from "../../outbox/background-job.outbox";
 import { OutboxEventType } from "../../outbox/outbox.types";
+import {
+  buildMediaCreateData,
+  emptyExtracted,
+  toReportSubmittedMediaSnapshot,
+} from "../media/media-from-url.service";
+import { normalizeCreateReportInput, normalizeImages } from "./report-create.input";
+import { resolveCaptureSources } from "./capture/capture.service";
+import {
+  assertInServiceArea,
+  assertUnderRateLimit,
+  findByIdempotencyKey,
+  lockUserForSubmit,
+} from "./report-submit-gate";
+
+/**
+ * Serialize Media metadata for JSON responses (`fileSize` as string).
+ */
+function toMediaMetadataResponse(media: {
+  mimeType: string | null;
+  fileSize: bigint | null;
+  width: number | null;
+  height: number | null;
+  capturedAt: Date | null;
+  latitude: number | null;
+  longitude: number | null;
+  cameraMake: string | null;
+  cameraModel: string | null;
+  metadata: unknown;
+}): {
+  mimeType: string | null;
+  fileSize: string | null;
+  width: number | null;
+  height: number | null;
+  capturedAt: Date | null;
+  latitude: number | null;
+  longitude: number | null;
+  cameraMake: string | null;
+  cameraModel: string | null;
+  metadata: unknown | null;
+} {
+  return {
+    mimeType: media.mimeType,
+    fileSize: media.fileSize != null ? media.fileSize.toString() : null,
+    width: media.width,
+    height: media.height,
+    capturedAt: media.capturedAt,
+    latitude: media.latitude,
+    longitude: media.longitude,
+    cameraMake: media.cameraMake,
+    cameraModel: media.cameraModel,
+    metadata: media.metadata ?? null,
+  };
+}
 
 /**
  * Best-effort enqueue of a TRANSLATE_TEXT job. Failure is logged but does NOT
@@ -75,6 +131,33 @@ function enqueueReportTranslationJob(
         err.message,
       );
     });
+}
+
+/** Translation targets of a new report: only the languages the user did not write themselves. */
+function reportTranslationTargets(t: {
+  sourceTitle: string;
+  sourceDescription: string;
+  userTitleVi: string;
+  userTitleEn: string;
+  userDescriptionVi: string;
+  userDescriptionEn: string;
+}): TranslationFieldTarget[] {
+  const targets: TranslationFieldTarget[] = [
+    {
+      sourceText: t.sourceTitle,
+      viField: t.userTitleVi ? undefined : "titleVi",
+      enField: t.userTitleEn ? undefined : "titleEn",
+    },
+  ];
+  if (t.sourceDescription) {
+    targets.push({
+      sourceText: t.sourceDescription,
+      viField: t.userDescriptionVi ? undefined : "descriptionVi",
+      enField: t.userDescriptionEn ? undefined : "descriptionEn",
+    });
+  }
+  // Same filter as enqueueReportTranslationJob: skip empty text and fully user-translated fields.
+  return targets.filter((x) => x.sourceText.trim().length > 0 && (x.viField || x.enField));
 }
 
 /** Admin moderation: report is banned / hidden (`GlobalStatus._STATUS_INACTIVE`). */
@@ -197,10 +280,21 @@ export class ReportService {
     userId: string,
     request: CreateReportRequest,
     _authorization?: string,
-  ): Promise<ReportResponse> {
-    const imageUrls = request.imageUrls
-      .map((imageUrl) => imageUrl.trim())
-      .filter((imageUrl) => imageUrl.length > 0);
+    idempotencyKey?: string,
+  ): Promise<{ report: ReportResponse; replayed: boolean }> {
+    const input = normalizeCreateReportInput(request);
+    const toResponse = async (entity: Report): Promise<ReportResponse> => {
+      const [report] = await this.attachVotesToReports([toReportResponse(entity)], userId);
+      return report;
+    };
+
+    // BR-115: a retried submit returns the first report without re-checking the rules.
+    if (idempotencyKey) {
+      const existing = await findByIdempotencyKey(prisma, userId, idempotencyKey);
+      if (existing) return { report: await toResponse(existing), replayed: true };
+    }
+
+    await assertInServiceArea(prisma, request.latitude, request.longitude);
 
     const userTitleVi = request.titleVi?.trim() || "";
     const userTitleEn = request.titleEn?.trim() || "";
@@ -215,7 +309,29 @@ export class ReportService {
       request.description?.trim() ||
       "";
 
-    const reportAndMedia = await prisma.$transaction(async (tx) => {
+    // Images are not downloaded here (FR-005): the verification pipeline reads them itself.
+    const mediaRows = input.images.map((img) =>
+      buildMediaCreateData(
+        {
+          id: randomUUID(),
+          url: img.url,
+          type: MediaResourceType.REPORT,
+          userId,
+          capture: null,
+        },
+        emptyExtracted(),
+      ),
+    );
+
+    const outcome = await prisma.$transaction(async (tx) => {
+      await lockUserForSubmit(tx, userId);
+      if (idempotencyKey) {
+        // A concurrent request with the same key waited on the lock; return its report.
+        const existing = await findByIdempotencyKey(tx, userId, idempotencyKey);
+        if (existing) return { report: existing, reportMediaFileIds: [] as string[], replayed: true };
+      }
+      await assertUnderRateLimit(tx, userId, new Date());
+
       const createdReport = await tx.report.create({
         data: {
           userId,
@@ -229,82 +345,103 @@ export class ReportService {
             userDescriptionVi || (sourceDescription || null),
           descriptionEn:
             userDescriptionEn || (sourceDescription || null),
-          wasteType: request.wasteType,
+          category: input.category,
+          wasteTypes: input.wasteTypes,
+          wasteType: input.wasteTypeCsv,
           severityLevel: request.severityLevel,
           latitude: request.latitude,
           longitude: request.longitude,
           detailAddress: request.detailAddress,
+          idempotencyKey: idempotencyKey ?? null,
           status: ReportStatus._STATUS_PENDING,
           isVerify: false,
           aiVerified: false,
-        } as any,
+        },
       });
 
       let reportMediaFileIds: string[] = [];
-      if (imageUrls.length > 0) {
-        const mediaRows = imageUrls.map((imageUrl) => ({
-          id: randomUUID(),
-          url: imageUrl,
-          type: MediaResourceType.REPORT,
-          createdBy: userId,
-          updatedBy: userId,
-        }));
-
+      let mediaSnapshots: Record<string, unknown>[] = [];
+      if (mediaRows.length > 0) {
         await tx.media.createMany({ data: mediaRows });
 
-        const reportMediaRows = mediaRows.map((m) => ({
+        // LIVE / GALLERY per image; consumes the captures in this transaction (P03).
+        const sources = await resolveCaptureSources(tx, userId, input.images, new Date());
+        const reportMediaRows = mediaRows.map((m, index) => ({
           id: randomUUID(),
           reportId: createdReport.id,
-          mediaId: m.id,
+          mediaId: m.id!,
           uploadedBy: userId,
           createdBy: userId,
           updatedBy: userId,
+          captureSource: sources[index].captureSource,
+          captureId: sources[index].captureId,
         }));
 
         await tx.reportMediaFile.createMany({ data: reportMediaRows });
 
         reportMediaFileIds = reportMediaRows.map((r) => r.id);
+        mediaSnapshots = reportMediaRows.map((rm, index) =>
+          toReportSubmittedMediaSnapshot({
+            reportMediaFileId: rm.id,
+            mediaId: rm.mediaId,
+            uploadedBy: userId,
+            media: mediaRows[index]!,
+          }),
+        );
       }
 
-      return {
-        report: createdReport,
-        reportMediaFileIds,
-      };
-    });
-
-    // Publish async analysis job so report creation stays fast and resilient.
-    backgroundJobDispatcher
-      .enqueue(ReportJobType.ANALYZE_REPORT, {
-        reportId: reportAndMedia.report.id,
-        reportMediaFileIds: reportAndMedia.reportMediaFileIds,
-      })
-      .catch((err: Error) => {
-        console.error("Failed to enqueue AI analysis job:", err.message);
+      await emitOutbox(tx, {
+        aggregateType: "report",
+        aggregateId: createdReport.id,
+        eventType: OutboxEventType.REPORT_SUBMITTED,
+        payload: {
+          reportId: createdReport.id,
+          userId,
+          attempt: 1,
+          reportMediaFileIds,
+          media: mediaSnapshots,
+        } as Prisma.InputJsonValue,
+        dedupKey: `${OutboxEventType.REPORT_SUBMITTED}:${createdReport.id}:1`,
       });
 
-    const titleTarget: TranslationFieldTarget = {
-      sourceText: sourceTitle,
-      viField: userTitleVi ? undefined : "titleVi",
-      enField: userTitleEn ? undefined : "titleEn",
-    };
-    const descriptionTarget: TranslationFieldTarget | null = sourceDescription
-      ? {
-          sourceText: sourceDescription,
-          viField: userDescriptionVi ? undefined : "descriptionVi",
-          enField: userDescriptionEn ? undefined : "descriptionEn",
-        }
-      : null;
-    enqueueReportTranslationJob(
-      TranslationResourceType.REPORT,
-      reportAndMedia.report.id,
-      descriptionTarget ? [titleTarget, descriptionTarget] : [titleTarget],
-    );
+      // AI analysis and translation ride the same transaction (FR-043), not a post-commit enqueue.
+      if (reportMediaFileIds.length > 0) {
+        await emitBackgroundJob(tx, {
+          jobType: ReportJobType.ANALYZE_REPORT,
+          payload: { reportId: createdReport.id, reportMediaFileIds },
+          aggregateId: createdReport.id,
+          dedupKey: `${ReportJobType.ANALYZE_REPORT}:${createdReport.id}:1`,
+        });
+      }
+      const translations = reportTranslationTargets({
+        sourceTitle,
+        sourceDescription,
+        userTitleVi,
+        userTitleEn,
+        userDescriptionVi,
+        userDescriptionEn,
+      });
+      if (translations.length > 0) {
+        await emitBackgroundJob(tx, {
+          jobType: ReportJobType.TRANSLATE_TEXT,
+          payload: {
+            resourceType: TranslationResourceType.REPORT,
+            resourceId: createdReport.id,
+            translations,
+          } as unknown as Prisma.InputJsonValue,
+          aggregateId: createdReport.id,
+          dedupKey: `${ReportJobType.TRANSLATE_TEXT}:${createdReport.id}:create`,
+        });
+      }
 
-    const [report] = await this.attachVotesToReports(
-      [toReportResponse(reportAndMedia.report)],
-      userId,
-    );
-    return report;
+      return { report: createdReport, reportMediaFileIds, replayed: false };
+    });
+
+    if (outcome.replayed) {
+      return { report: await toResponse(outcome.report), replayed: true };
+    }
+
+    return { report: await toResponse(outcome.report), replayed: false };
   }
 
   async getReportById(
@@ -316,6 +453,58 @@ export class ReportService {
       return null;
     }
     return this.withReportVote(toReportResponse(report), viewerUserId);
+  }
+
+  async saveDuplicateVerification(
+    reportId: string,
+    verification: DuplicateVerificationGroup[],
+  ): Promise<void> {
+    const existing = await reportRepository.findById(reportId);
+    if (!existing) {
+      throw new HttpError(HTTP_STATUS.REPORT_NOT_FOUND);
+    }
+
+    const isDuplicate = verification.length > 0;
+    const updateData: Prisma.ReportUpdateInput = {
+      duplicateVerification: toDuplicateVerificationJson(verification),
+    };
+
+    if (isDuplicate) {
+      updateData.status = REPORT_STATUS_BANNED;
+      updateData.rejectReason = "DUPLICATE_IMAGE";
+    }
+
+    const updated = await reportRepository.update(reportId, updateData);
+
+    if (isDuplicate && existing.status !== REPORT_STATUS_BANNED) {
+      this.notifyOwnerOfReportModeration(
+        updated,
+        "banned",
+        updateData.rejectReason as string,
+      );
+    }
+  }
+
+  /**
+   * Report ids the duplicate cascade must ignore: banned (`_STATUS_INACTIVE`)
+   * or soft-deleted. Missing ids are not included.
+   */
+  async findInactiveReportIds(reportIds: string[]): Promise<string[]> {
+    const ids = [...new Set(reportIds.filter((id) => id))];
+    if (ids.length === 0) {
+      return [];
+    }
+    const rows = await prisma.report.findMany({
+      where: {
+        id: { in: ids },
+        OR: [
+          { status: REPORT_STATUS_BANNED },
+          { deletedAt: { not: null } },
+        ],
+      },
+      select: { id: true },
+    });
+    return rows.map((row) => row.id);
   }
 
   async getReportBackgroundJobsStatus(
@@ -341,10 +530,19 @@ export class ReportService {
   async getReportDetail(
     id: string,
     viewerUserId?: string | null,
+    viewerIsAdmin = false,
   ): Promise<ReportDetailResponse | null> {
     const report = await reportRepository.findByIdWithRelations(id);
     if (!report) return null;
-    if (report.status === REPORT_STATUS_BANNED) return null;
+    // A rejected report stays hidden from everyone but its owner and admins (BR-103), so the
+    // owner can still see why it was not accepted (specs/006 P09).
+    if (
+      report.status === REPORT_STATUS_BANNED &&
+      !viewerIsAdmin &&
+      (!viewerUserId || report.userId !== viewerUserId)
+    ) {
+      return null;
+    }
 
     const [details] = await this.reportsWithMediaToDetails([
       report as ReportWithMediaFiles,
@@ -353,7 +551,16 @@ export class ReportService {
       [details],
       viewerUserId,
     );
-    return withVotes;
+    if (!report.latestVerificationId) {
+      return { ...withVotes, latestVerification: null };
+    }
+    // The score is admin-only (BR-116); the owner keeps { status, flag }.
+    const latestVerification = await prisma.reportVerification.findUnique({
+      where: { id: report.latestVerificationId },
+      select: { status: true, flag: true, ...(viewerIsAdmin && { riskScore: true }) },
+    });
+    // The legacy duplicate check result is superseded once the new pipeline has run.
+    return { ...withVotes, duplicateVerification: null, latestVerification };
   }
 
   /** reportIds limited to 100 UUIDs at the controller; order matches request. */
@@ -404,6 +611,7 @@ export class ReportService {
         url: row.media.url,
         type: row.media.type,
         createdAt: row.createdAt,
+        ...toMediaMetadataResponse(row.media),
       });
     }
     return out;
@@ -482,19 +690,53 @@ export class ReportService {
 
   private toReportDetailFromLoaded(
     report: ReportWithMediaFiles & { distance?: number },
-    mediaUrlMap: Map<string, string>,
+    mediaMap: Map<
+      string,
+      {
+        url: string;
+        type: string;
+        mimeType: string | null;
+        fileSize: bigint | null;
+        width: number | null;
+        height: number | null;
+        capturedAt: Date | null;
+        latitude: number | null;
+        longitude: number | null;
+        cameraMake: string | null;
+        cameraModel: string | null;
+        metadata: unknown;
+      }
+    >,
     aiAnalysisUrlMap: Map<string, string>,
   ): ReportDetailResponse {
     return {
       ...toReportResponse(report, report.distance),
-      mediaFiles: report.reportMediaFiles.map((mf) => ({
-        id: mf.id,
-        mediaId: mf.mediaId,
-        url: mediaUrlMap.get(mf.mediaId) ?? null,
-        ai_analysis_url: aiAnalysisUrlMap.get(mf.id) ?? null,
-        uploadedBy: mf.uploadedBy,
-        createdAt: mf.createdAt,
-      })),
+      mediaFiles: report.reportMediaFiles.map((mf) => {
+        const media = mediaMap.get(mf.mediaId);
+        return {
+          id: mf.id,
+          mediaId: mf.mediaId,
+          url: media?.url ?? null,
+          type: media?.type ?? null,
+          ai_analysis_url: aiAnalysisUrlMap.get(mf.id) ?? null,
+          uploadedBy: mf.uploadedBy,
+          createdAt: mf.createdAt,
+          ...(media
+            ? toMediaMetadataResponse(media)
+            : {
+                mimeType: null,
+                fileSize: null,
+                width: null,
+                height: null,
+                capturedAt: null,
+                latitude: null,
+                longitude: null,
+                cameraMake: null,
+                cameraModel: null,
+                metadata: null,
+              }),
+        };
+      }),
       handledBy: null,
     };
   }
@@ -511,15 +753,89 @@ export class ReportService {
       }
     }
 
-    const [mediaUrlMap, aiAnalysisUrlMap] = await Promise.all([
-      this.getMediaUrlMap([...new Set(mediaIds)]),
+    const [mediaMap, aiAnalysisUrlMap] = await Promise.all([
+      this.getMediaMap([...new Set(mediaIds)]),
       this.getAiAnalysisUrlMap([...new Set(reportMediaFileIds)]),
     ]);
 
     const details = reports.map((r) =>
-      this.toReportDetailFromLoaded(r, mediaUrlMap, aiAnalysisUrlMap),
+      this.toReportDetailFromLoaded(r, mediaMap, aiAnalysisUrlMap),
     );
-    return this.attachHandledBy(reports, details);
+    const withHandledBy = await this.attachHandledBy(reports, details);
+    return this.attachDuplicateSummaries(withHandledBy, mediaMap);
+  }
+
+  private async attachDuplicateSummaries(
+    details: ReportDetailResponse[],
+    mediaMap: Map<string, { url: string }>,
+  ): Promise<ReportDetailResponse[]> {
+    const reportIds = new Set<string>();
+    const extraMediaIds = new Set<string>();
+    for (const detail of details) {
+      for (const group of detail.duplicateVerification ?? []) {
+        reportIds.add(group.duplicateReportId);
+        for (const match of group.matches) {
+          if (!mediaMap.has(match.newMedia.mediaId)) {
+            extraMediaIds.add(match.newMedia.mediaId);
+          }
+          if (!mediaMap.has(match.duplicateMedia.duplicateMediaId)) {
+            extraMediaIds.add(match.duplicateMedia.duplicateMediaId);
+          }
+        }
+      }
+    }
+
+    const urlByMediaId = new Map<string, string>();
+    for (const [id, media] of mediaMap) {
+      urlByMediaId.set(id, media.url);
+    }
+
+    const [reportRows, mediaRows] = await Promise.all([
+      reportIds.size === 0
+        ? Promise.resolve([])
+        : prisma.report.findMany({
+            where: { id: { in: [...reportIds] }, deletedAt: null },
+            select: {
+              id: true,
+              title: true,
+              titleVi: true,
+              detailAddress: true,
+              status: true,
+            },
+          }),
+      extraMediaIds.size === 0
+        ? Promise.resolve([])
+        : prisma.media.findMany({
+            where: { id: { in: [...extraMediaIds] }, deletedAt: null },
+            select: { id: true, url: true },
+          }),
+    ]);
+
+    for (const media of mediaRows) {
+      urlByMediaId.set(media.id, media.url);
+    }
+    const reportsById = new Map(reportRows.map((row) => [row.id, row]));
+
+    return details.map((detail) => ({
+      ...detail,
+      duplicateVerification:
+        detail.duplicateVerification == null
+          ? null
+          : embedDuplicateVerification(
+              omitInactiveDuplicateGroups(
+                detail.duplicateVerification.map((group) => ({
+                  duplicateReportId: group.duplicateReportId,
+                  matches: group.matches.map((match) => ({
+                    mediaId: match.newMedia.mediaId,
+                    duplicateMediaId: match.duplicateMedia.duplicateMediaId,
+                  })),
+                })),
+                reportsById,
+              ),
+              reportsById,
+              urlByMediaId,
+            ),
+    }));
   }
 
   private async getAiAnalysisUrlMap(
@@ -679,61 +995,78 @@ export class ReportService {
 
     this.assertReporterMayEditReport(existing, userId, role);
 
-    const imageUrls = request.imageUrls
-      .map((url) => url.trim())
-      .filter((url) => url.length > 0);
-
-    if (imageUrls.length === 0) {
+    const images = normalizeImages(request);
+    if (images.length === 0) {
       throw new HttpError(
-        HTTP_STATUS.BAD_REQUEST.withMessage(
-          "imageUrls must contain at least one non-empty URL",
-        ),
+        HTTP_STATUS.BAD_REQUEST.withMessage("images must contain at least one URL"),
       );
     }
 
-    const reportMediaFileIds = await prisma.$transaction(async (tx) => {
-      const createdIds: string[] = [];
+    // Images are not downloaded here (FR-005), same as createReport.
+    const mediaRows = images.map((img) =>
+      buildMediaCreateData(
+        { id: randomUUID(), url: img.url, type: MediaResourceType.REPORT, userId, capture: null },
+        emptyExtracted(),
+      ),
+    );
 
-      for (const imageUrl of imageUrls) {
-        const media = await tx.media.create({
-          data: {
-            url: imageUrl,
-            type: MediaResourceType.REPORT,
-            createdBy: userId,
-            updatedBy: userId,
-          },
-        });
-
-        const reportMediaFile = await tx.reportMediaFile.create({
-          data: {
-            reportId,
-            mediaId: media.id,
-            uploadedBy: userId,
-            createdBy: userId,
-            updatedBy: userId,
-          },
-          select: { id: true },
-        });
-
-        createdIds.push(reportMediaFile.id);
-      }
-
-      return createdIds;
-    });
-
-    await reportRepository.update(reportId, {
-      aiVerified: false,
-      status: ReportStatus._STATUS_PENDING,
-    });
-
-    backgroundJobDispatcher
-      .enqueue(ReportJobType.ANALYZE_REPORT, {
+    await prisma.$transaction(async (tx) => {
+      const sources = await resolveCaptureSources(tx, userId, images, new Date());
+      await tx.media.createMany({ data: mediaRows });
+      const newFiles = mediaRows.map((m, index) => ({
+        id: randomUUID(),
         reportId,
-        reportMediaFileIds,
-      })
-      .catch((err: Error) => {
-        console.error("Failed to enqueue AI analysis job:", err.message);
+        mediaId: m.id!,
+        uploadedBy: userId,
+        createdBy: userId,
+        updatedBy: userId,
+        captureSource: sources[index].captureSource,
+        captureId: sources[index].captureId,
+      }));
+      await tx.reportMediaFile.createMany({ data: newFiles });
+
+      // Status is left alone: an accepted report no longer falls back to PENDING (docs 99); the
+      // new attempt keeps the earlier ones (FR-042).
+      await tx.report.update({ where: { id: reportId }, data: { aiVerified: false } });
+
+      const last = await tx.reportVerification.aggregate({ where: { reportId }, _max: { attempt: true } });
+      const attempt = (last._max.attempt ?? 0) + 1;
+      const allFiles = await tx.reportMediaFile.findMany({
+        where: { reportId, deletedAt: null },
+        include: { media: true },
       });
+      // A dedupKey equal to an attempt still queued is skipped by emitOutbox: harmless, the
+      // orchestrator loads the report's images when it runs.
+      await emitOutbox(tx, {
+        aggregateType: "report",
+        aggregateId: reportId,
+        eventType: OutboxEventType.REPORT_SUBMITTED,
+        payload: {
+          reportId,
+          userId: existing.userId,
+          attempt,
+          reportMediaFileIds: allFiles.map((f) => f.id),
+          // Kept for the legacy ai-service worker while REPORT_VERIFICATION_ENABLED is off (P10b drops it).
+          media: allFiles.map((f) =>
+            toReportSubmittedMediaSnapshot({
+              reportMediaFileId: f.id,
+              mediaId: f.mediaId,
+              uploadedBy: f.uploadedBy,
+              media: f.media as unknown as Prisma.MediaCreateManyInput,
+            }),
+          ),
+        } as Prisma.InputJsonValue,
+        dedupKey: `${OutboxEventType.REPORT_SUBMITTED}:${reportId}:${attempt}`,
+      });
+
+      const newIds = newFiles.map((f) => f.id);
+      await emitBackgroundJob(tx, {
+        jobType: ReportJobType.ANALYZE_REPORT,
+        payload: { reportId, reportMediaFileIds: newIds },
+        aggregateId: reportId,
+        dedupKey: `${ReportJobType.ANALYZE_REPORT}:${reportId}:${newIds.join(",")}`,
+      });
+    });
 
     const updated = await reportRepository.findById(reportId);
     return this.withReportVote(
@@ -784,6 +1117,7 @@ export class ReportService {
     id: string,
     viewerUserId?: string | null,
     rejectReason?: string | null,
+    reasonCode?: ModerationReasonCode | null,
   ): Promise<ReportResponse> {
     const existing = await reportRepository.findById(id);
     if (!existing) {
@@ -806,15 +1140,19 @@ export class ReportService {
       }
       const updated = await reportRepository.update(id, {
         rejectReason: trimmedReason,
+        moderatedBy: viewerUserId ?? null,
+        moderatedAt: new Date(),
+        ...(reasonCode ? { moderationReasonCode: reasonCode } : {}),
       });
       return this.withReportVote(toReportResponse(updated), viewerUserId);
     }
 
-    const report = await reportRepository.update(id, {
+    const report = await this.moderateWithNotice(id, {
       status: REPORT_STATUS_BANNED,
       rejectReason: trimmedReason,
+      moderatedBy: viewerUserId ?? null,
+      moderationReasonCode: reasonCode ?? null,
     });
-    this.notifyOwnerOfReportModeration(report, "banned", trimmedReason);
     return this.withReportVote(toReportResponse(report), viewerUserId);
   }
 
@@ -897,13 +1235,53 @@ export class ReportService {
       return this.withReportVote(toReportResponse(existing), viewerUserId);
     }
 
-    const report = await reportRepository.update(id, {
+    const report = await this.moderateWithNotice(id, {
       isVerify: true,
       status: ReportStatus._STATUS_TODO,
       rejectReason: null,
+      moderatedBy: viewerUserId ?? null,
+      moderationReasonCode: null,
     });
-    this.notifyOwnerOfReportModeration(report, "approved");
     return this.withReportVote(toReportResponse(report), viewerUserId);
+  }
+
+  /**
+   * Applies an admin verify / ban and writes the owner notice in the same transaction
+   * (outbox REPORT_VERIFIED, source MODERATOR — specs/006 P10), so it cannot be lost.
+   */
+  private async moderateWithNotice(
+    id: string,
+    data: {
+      status: number;
+      isVerify?: boolean;
+      rejectReason: string | null;
+      moderatedBy: string | null;
+      moderationReasonCode: ModerationReasonCode | null;
+    },
+  ): Promise<Report> {
+    const moderatedAt = new Date();
+    return prisma.$transaction(async (tx) => {
+      const report = await tx.report.update({ where: { id }, data: { ...data, moderatedAt } });
+      await emitOutbox(tx, {
+        aggregateType: "report",
+        aggregateId: id,
+        eventType: OutboxEventType.REPORT_VERIFIED,
+        dedupKey: `REPORT_MODERATED:${id}:${moderatedAt.toISOString()}`,
+        payload: {
+          reportId: id,
+          userId: report.userId,
+          reportTitle: report.titleVi ?? report.title ?? "",
+          verificationId: report.latestVerificationId,
+          reportStatus: report.status,
+          statusChanged: true,
+          flag: null,
+          riskScore: null,
+          source: "MODERATOR",
+          rejectReason: data.rejectReason ?? "",
+        },
+      });
+      return report;
+    });
   }
 
   /** Best-effort in-app notice to the report owner after admin verify/ban. */
@@ -936,9 +1314,27 @@ export class ReportService {
     });
   }
 
-  private async getMediaUrlMap(
+  private async getMediaMap(
     mediaIds: string[],
-  ): Promise<Map<string, string>> {
+  ): Promise<
+    Map<
+      string,
+      {
+        url: string;
+        type: string;
+        mimeType: string | null;
+        fileSize: bigint | null;
+        width: number | null;
+        height: number | null;
+        capturedAt: Date | null;
+        latitude: number | null;
+        longitude: number | null;
+        cameraMake: string | null;
+        cameraModel: string | null;
+        metadata: unknown;
+      }
+    >
+  > {
     if (mediaIds.length === 0) {
       return new Map();
     }
@@ -951,10 +1347,39 @@ export class ReportService {
       select: {
         id: true,
         url: true,
+        type: true,
+        mimeType: true,
+        fileSize: true,
+        width: true,
+        height: true,
+        capturedAt: true,
+        latitude: true,
+        longitude: true,
+        cameraMake: true,
+        cameraModel: true,
+        metadata: true,
       },
     });
 
-    return new Map(mediaRecords.map((item) => [item.id, item.url]));
+    return new Map(
+      mediaRecords.map((item) => [
+        item.id,
+        {
+          url: item.url,
+          type: item.type,
+          mimeType: item.mimeType,
+          fileSize: item.fileSize,
+          width: item.width,
+          height: item.height,
+          capturedAt: item.capturedAt,
+          latitude: item.latitude,
+          longitude: item.longitude,
+          cameraMake: item.cameraMake,
+          cameraModel: item.cameraModel,
+          metadata: item.metadata,
+        },
+      ]),
+    );
   }
 
   async deleteReport(id: string, userId: string, role?: string): Promise<void> {
@@ -993,12 +1418,15 @@ export class ReportService {
   async searchReports(
     query: ReportSearchWithScope,
     viewerUserId?: string | null,
+    viewerIsAdmin = false,
   ): Promise<PaginatedReportsResponse> {
+    // The moderation filter is admin-only; drop it for anyone else, whoever the caller is.
+    if (!viewerIsAdmin && query.moderation) query = { ...query, moderation: undefined };
     const page = query.page || 1;
     const limit = query.limit || 10;
 
-    // If user provides location, use geospatial search
-    if (query.latitude !== undefined && query.longitude !== undefined) {
+    // If user provides location, use geospatial search (the moderation filter sorts by risk instead)
+    if (query.latitude !== undefined && query.longitude !== undefined && !query.moderation) {
       const { reports, total } = await reportRepository.searchWithDistance(
         query.latitude,
         query.longitude,
@@ -1009,7 +1437,7 @@ export class ReportService {
       const withVotes = await this.attachVotesToReports(details, viewerUserId);
 
       return {
-        reports: withVotes,
+        reports: viewerIsAdmin ? await this.attachLatestVerification(withVotes) : withVotes,
         total,
         page,
         limit,
@@ -1023,12 +1451,28 @@ export class ReportService {
     const withVotes = await this.attachVotesToReports(details, viewerUserId);
 
     return {
-      reports: withVotes,
+      reports: viewerIsAdmin ? await this.attachLatestVerification(withVotes) : withVotes,
       total,
       page,
       limit,
       totalPages: Math.ceil(total / limit),
     };
+  }
+
+  /**
+   * Admin list rows get the latest verification with its score (specs/008). One query for the page;
+   * never called for other viewers, since the score is admin-only (BR-116).
+   */
+  private async attachLatestVerification<T extends { id: string }>(
+    rows: T[],
+  ): Promise<(T & { latestVerification: ReportDetailResponse["latestVerification"] })[]> {
+    if (rows.length === 0) return [];
+    const found = await prisma.report.findMany({
+      where: { id: { in: rows.map((r) => r.id) } },
+      select: { id: true, latestVerification: { select: { status: true, flag: true, riskScore: true } } },
+    });
+    const byId = new Map(found.map((r) => [r.id, r.latestVerification]));
+    return rows.map((r) => ({ ...r, latestVerification: byId.get(r.id) ?? null }));
   }
 
   /**

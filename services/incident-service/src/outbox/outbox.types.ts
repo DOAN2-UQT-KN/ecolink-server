@@ -4,13 +4,24 @@
  * straight through to the reward enqueue endpoints.
  *
  * Not every value goes to reward any more — the relay routes by `eventType`, see
- * `RoutingOutboxPublisher`.
+ * `RoutingOutboxPublisher`. `REPORT_SUBMITTED` goes to the AI analysis queue, or to the
+ * report-verification queue when `REPORT_VERIFICATION_ENABLED=true` (specs/006 P05).
  */
 export const OutboxEventType = {
   REPORT_COMPLETION_GREEN_POINTS: "REPORT_COMPLETION_GREEN_POINTS",
   CAMPAIGN_COMPLETION_GREEN_POINTS: "CAMPAIGN_COMPLETION_GREEN_POINTS",
   REPORT_VOTE_MILESTONE_GREEN_POINTS: "REPORT_VOTE_MILESTONE_GREEN_POINTS",
   CAMPAIGN_FACEBOOK_RECOGNITION: "CAMPAIGN_FACEBOOK_RECOGNITION",
+  /** Domain: ReportSubmitted — consumed by ai-service verification pipeline. */
+  REPORT_SUBMITTED: "REPORT_SUBMITTED",
+  /**
+   * Background jobs written with the report (specs/006 P10): relayed to their own SQS queue with a
+   * `background_jobs` row of the same id, so `@da2/queue` workers accept them. See background-job.outbox.ts.
+   */
+  ANALYZE_REPORT: "ANALYZE_REPORT",
+  TRANSLATE_TEXT: "TRANSLATE_TEXT",
+  /** Domain: ReportVerified — handled in-process (owner notification), see report-verified.publisher.ts. */
+  REPORT_VERIFIED: "REPORT_VERIFIED",
   /**
    * Not a reward event: after an application is approved, one per owner, to send either the
    * account-activation link or the "you were added as owner" email. It rides the outbox so

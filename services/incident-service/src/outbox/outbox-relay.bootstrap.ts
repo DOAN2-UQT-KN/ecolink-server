@@ -1,6 +1,7 @@
 import prisma from "../config/prisma.client";
 import { websiteNotificationPublisher } from "../modules/campaign/website-notification.publisher";
 import { organizationOwnerOnboardPublisher } from "../modules/organization_application/organization-owner-onboard.publisher";
+import { reportVerifiedPublisher } from "../modules/verification/report-verified.publisher";
 import { OutboxRelay } from "./outbox-relay";
 import {
   OutboxPublisher,
@@ -25,6 +26,7 @@ function buildPublisher(): OutboxPublisher {
     {
       [OutboxEventType.ORG_OWNER_ONBOARD]: organizationOwnerOnboardPublisher,
       [OutboxEventType.WEBSITE_NOTIFICATION]: websiteNotificationPublisher,
+      [OutboxEventType.REPORT_VERIFIED]: reportVerifiedPublisher,
     },
     lazySqs,
   );

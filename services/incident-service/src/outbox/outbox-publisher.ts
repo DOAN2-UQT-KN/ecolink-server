@@ -1,5 +1,6 @@
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import type { Prisma } from "@prisma/client";
+import { OutboxEventType } from "./outbox.types";
 
 /** One outbox row's worth of data the publisher needs to deliver it. */
 export interface OutboxEventMessage {
@@ -9,31 +10,56 @@ export interface OutboxEventMessage {
 }
 
 /**
- * Transport the relay uses to hand an outbox event to reward-service. The
- * default ships events to a shared SQS queue; tests inject a fake.
+ * Transport the relay uses to hand an outbox event to a downstream SQS queue.
+ * Tests inject a fake.
  */
 export interface OutboxPublisher {
   publish(event: OutboxEventMessage): Promise<void>;
 }
 
+function requireQueueUrl(envName: string): string {
+  const queueUrl = process.env[envName]?.trim();
+  if (!queueUrl) {
+    throw new Error(`${envName} must be configured for the outbox relay`);
+  }
+  return queueUrl;
+}
+
 /**
- * Publishes outbox events onto the reward intake SQS queue. The envelope shape
- * matches `@da2/queue` (jobId/version/jobType/payload) so the reward intake
- * worker can consume it directly. Delivery is at-least-once; the reward ledger
- * is idempotent.
+ * Resolves the SQS destination for an outbox event.
+ * `REPORT_SUBMITTED` → report-verification queue when `REPORT_VERIFICATION_ENABLED=true`
+ * (specs/006 P05), otherwise the legacy AI duplicate-check queue; `ANALYZE_REPORT` / `TRANSLATE_TEXT`
+ * → their background-job queues (P10); all other known types → reward intake.
+ */
+export function resolveOutboxQueueUrl(eventType: string): string {
+  if (eventType === OutboxEventType.ANALYZE_REPORT) {
+    return requireQueueUrl("SQS_REPORT_ANALYSIS_QUEUE_URL");
+  }
+  if (eventType === OutboxEventType.TRANSLATE_TEXT) {
+    return requireQueueUrl("SQS_INCIDENT_TRANSLATION_QUEUE_URL");
+  }
+  if (eventType === OutboxEventType.REPORT_SUBMITTED) {
+    return requireQueueUrl(
+      process.env.REPORT_VERIFICATION_ENABLED === "true"
+        ? "SQS_REPORT_VERIFICATION_QUEUE_URL"
+        : "SQS_AI_ANALYSIS_QUEUE_URL",
+    );
+  }
+  return requireQueueUrl("SQS_REWARD_INTAKE_QUEUE_URL");
+}
+
+/**
+ * Publishes outbox events onto the appropriate SQS queue. The envelope shape
+ * matches `@da2/queue` (jobId/version/jobType/payload) so downstream workers
+ * can consume it directly. Delivery is at-least-once.
  */
 export class SqsOutboxPublisher implements OutboxPublisher {
   private readonly sqs: SQSClient;
-  private readonly queueUrl: string;
 
   constructor() {
-    const queueUrl = process.env.SQS_REWARD_INTAKE_QUEUE_URL?.trim();
-    if (!queueUrl) {
-      throw new Error(
-        "SQS_REWARD_INTAKE_QUEUE_URL must be configured for the outbox relay",
-      );
-    }
-    this.queueUrl = queueUrl;
+    // Validate reward URL eagerly so misconfig fails at relay start for the
+    // common path; AI URL is validated on first REPORT_SUBMITTED publish.
+    requireQueueUrl("SQS_REWARD_INTAKE_QUEUE_URL");
     this.sqs = new SQSClient({
       region: process.env.AWS_REGION || "us-east-1",
       endpoint: process.env.AWS_SQS_ENDPOINT || process.env.AWS_ENDPOINT_URL,
@@ -45,6 +71,7 @@ export class SqsOutboxPublisher implements OutboxPublisher {
   }
 
   async publish(event: OutboxEventMessage): Promise<void> {
+    const queueUrl = resolveOutboxQueueUrl(event.eventType);
     const envelope = {
       jobId: event.id,
       version: 1,
@@ -54,7 +81,7 @@ export class SqsOutboxPublisher implements OutboxPublisher {
     };
     await this.sqs.send(
       new SendMessageCommand({
-        QueueUrl: this.queueUrl,
+        QueueUrl: queueUrl,
         MessageBody: JSON.stringify(envelope),
       }),
     );
