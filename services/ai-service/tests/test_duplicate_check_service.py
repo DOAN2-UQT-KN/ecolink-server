@@ -166,7 +166,7 @@ def test_recompressed_copy_from_another_user_matches_globally(images) -> None:
     assert result.reasons == ["DUP_NEAR_IMAGE_MATCH"]
     assert signal(result, "phash").raw <= 6
     assert signal(result, "orb").status == "SKIPPED"
-    assert signal(result, "internet").status == "NOT_AVAILABLE"
+    assert signal(result, "internet").status == "SKIPPED"
     match = result.evidence["match"]
     assert match["report_id"] == "r-old" and match["same_user"] is False and match["method"] == "phash"
     assert 1990 < match["distance_m"] < 2010 and match["time_delta_hours"] == 720
@@ -261,7 +261,7 @@ def test_all_downloads_failing_is_a_failed_check(images) -> None:
     corpus = FakeCorpus()
     result = run(request(["missing"]), corpus)
     assert result.status == "FAILED" and result.error["code"] == "DOWNLOAD_FAILED"
-    assert signal(result, "internet").status == "NOT_AVAILABLE"
+    assert signal(result, "internet").status == "SKIPPED"
     assert corpus.upserted == []
 
 
@@ -289,3 +289,75 @@ def test_report_without_location_only_runs_global_tier(images) -> None:
     assert result.risk == 0
     assert signal(result, "orb").status == "SKIPPED"
     assert result.evidence["candidates_scanned"] == 0
+
+
+# ── specs/011: signal `internet` inside the check ─────────────────────────────
+
+
+def web_request(urls: list[str], **web) -> DuplicateCheckRequest:
+    body = request(urls).model_dump()
+    for m in body["media"]:
+        m["capture_source"] = "GALLERY"
+    body["config"]["web"] = {"enabled": True, "daily_limit": 100, **web}
+    return DuplicateCheckRequest.model_validate(body)
+
+
+def run_web(req: DuplicateCheckRequest, corpus: FakeCorpus, vision, fetcher_blobs: Optional[dict] = None):
+    from test_internet_signal import FakeFetcher, FakeStore
+
+    from app.verification.duplicate_check.internet import WebDeps
+
+    deps = WebDeps(store=FakeStore(), vision=vision, fetcher=FakeFetcher(fetcher_blobs or {}))
+    return asyncio.run(service.run_duplicate_check(req, corpus, deps))
+
+
+def test_web_match_sets_reason_risk_and_keeps_the_image_out_of_the_corpus(images) -> None:
+    from test_internet_signal import FakeVision, detection
+
+    original = textured(1)
+    images["a"], images["b"] = to_bytes(original, "JPEG", quality=70), to_bytes(textured(9))
+    url = "https://news.example/rac.jpg"
+    corpus = FakeCorpus()
+
+    result = run_web(
+        web_request(["a", "b"]),
+        corpus,
+        FakeVision(answers={images["a"]: detection(url)}),
+        {url: to_bytes(original)},
+    )
+
+    assert result.status == "COMPLETED" and result.risk == 0.85
+    assert result.reasons == ["DUP_WEB_IMAGE_MATCH"]
+    assert signal(result, "internet").status == "COMPLETED"
+    assert result.evidence["match"]["method"] == "internet" and result.evidence["match"]["source_url"] == url
+    assert result.evidence["web"]["gallery_sent"] == 2
+    assert [img.media_id for img in corpus.upserted] == ["m-new-1"]
+
+
+def test_internal_match_never_calls_vision(images) -> None:
+    from test_internet_signal import FakeVision
+
+    corpus = FakeCorpus()
+    corpus.add("r-old", textured(1))
+    images["a"] = to_bytes(textured(1), "JPEG", quality=70)
+    vision = FakeVision()
+
+    result = run_web(web_request(["a"]), corpus, vision)
+
+    assert result.reasons == ["DUP_NEAR_IMAGE_MATCH"]
+    assert signal(result, "internet").status == "SKIPPED" and vision.calls == 0
+    assert "web" not in result.evidence
+
+
+def test_vision_failure_keeps_the_check_result(images) -> None:
+    from test_internet_signal import FakeVision
+
+    from app.verification.duplicate_check.vision import VisionError
+
+    images["a"] = to_bytes(textured(1))
+    without_web = run(request(["a"]), FakeCorpus())
+    failing = run_web(web_request(["a"]), FakeCorpus(), FakeVision(default=VisionError("HTTP 500")))
+
+    assert failing.status == "COMPLETED"
+    assert signal(failing, "internet").status == "FAILED"
+    assert (failing.risk, failing.reasons) == (without_web.risk, without_web.reasons) == (0, [])

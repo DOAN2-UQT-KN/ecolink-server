@@ -4,7 +4,7 @@ Cheapest first, stop at the first matching tier:
   1. pHash <= phash_global_max against the whole corpus (one XOR per row in Postgres)
   2. pHash <= phash_candidate_max against candidates (radius / days around the report)
   3. ORB + RANSAC against the same candidates
-  4. internet: not implemented, always NOT_AVAILABLE
+  4. internet: reverse image search of library photos, only when 1-3 found nothing (internet.py, specs/011)
 The new image is also compared as a horizontal mirror. Location and time only select
 candidates; they never add risk.
 """
@@ -21,8 +21,7 @@ from typing import Any, Optional, Sequence, TypeVar
 from starlette.concurrency import run_in_threadpool
 
 from app.clients.incident_internal import inactive_report_ids_sync
-from app.config import settings
-from app.verification.duplicate.orb import OrbFeatures, OrbMatchConfig, extract_orb, verify_orb_pair
+from app.verification.duplicate.orb import OrbMatchConfig, verify_orb_pair
 from app.verification.duplicate_check.corpus import (
     CorpusImage,
     CorpusPort,
@@ -32,6 +31,8 @@ from app.verification.duplicate_check.corpus import (
     PhashHit,
 )
 from app.verification.duplicate_check.geo import haversine_m, hours_between
+from app.verification.duplicate_check.images import PreparedImage, ensure_orb, orb_match_config
+from app.verification.duplicate_check.internet import REASON_WEB_IMAGE, WebDeps, run_internet_signal
 from app.verification.duplicate_check.models import CheckResultOut, DuplicateCheckRequest, SignalOut
 from app.verification.hash_compute import (
     compute_phash_hex,
@@ -51,30 +52,16 @@ Row = TypeVar("Row", PhashHit, PhashCandidate, OrbCandidate)
 
 
 @dataclass
-class _Image:
-    index: int
-    media_id: str
-    report_media_file_id: str
-    phash_hex: str
-    q: int
-    q_flip: int
-    data: bytes
-    flipped_data: Optional[bytes]
-    orb: Optional[OrbFeatures] = None
-    orb_flipped: Optional[OrbFeatures] = None
-
-
-@dataclass
 class _Match:
     method: str
-    image: _Image
+    image: PreparedImage
     row: Any
     flipped: bool
     phash_distance: Optional[int] = None
     inliers: Optional[int] = None
 
 
-def _prepare(index: int, media_id: str, rmf_id: str, url: str) -> Optional[_Image]:
+def _prepare(index: int, media_id: str, rmf_id: str, url: str) -> Optional[PreparedImage]:
     data = download_image_bytes(url, timeout=DOWNLOAD_TIMEOUT_S)
     if not data:
         return None
@@ -84,7 +71,7 @@ def _prepare(index: int, media_id: str, rmf_id: str, url: str) -> Optional[_Imag
     flipped = mirror_image_bytes(data)
     flipped_phash = compute_phash_hex(flipped) if flipped else None
     q = phash_hex_to_int(phash)
-    return _Image(
+    return PreparedImage(
         index=index,
         media_id=media_id,
         report_media_file_id=rmf_id,
@@ -96,18 +83,11 @@ def _prepare(index: int, media_id: str, rmf_id: str, url: str) -> Optional[_Imag
     )
 
 
-def _ensure_orb(img: _Image) -> None:
-    if img.orb is None:
-        img.orb = extract_orb(img.data, media_id=img.media_id)
-    if img.orb_flipped is None and img.flipped_data:
-        img.orb_flipped = extract_orb(img.flipped_data, media_id=img.media_id)
-
-
-def _best_orb(images: Sequence[_Image], candidates: Sequence[OrbCandidate], cfg: OrbMatchConfig) -> Optional[_Match]:
+def _best_orb(images: Sequence[PreparedImage], candidates: Sequence[OrbCandidate], cfg: OrbMatchConfig) -> Optional[_Match]:
     """CPU-bound: runs in a worker thread."""
     best: Optional[_Match] = None
     for img in images:
-        _ensure_orb(img)
+        ensure_orb(img)
         for flipped, query in ((False, img.orb), (True, img.orb_flipped)):
             if query is None or query.keypoint_count == 0:
                 continue
@@ -127,8 +107,8 @@ async def _drop_inactive(rows: list[Row]) -> list[Row]:
     return [row for row in rows if row.report_id not in inactive]
 
 
-def _signals(phash: SignalOut, orb: SignalOut) -> list[SignalOut]:
-    return [phash, orb, SignalOut(name="internet", status="NOT_AVAILABLE")]
+def _signals(phash: SignalOut, orb: SignalOut, internet: SignalOut) -> list[SignalOut]:
+    return [phash, orb, internet]
 
 
 def _match_evidence(req: DuplicateCheckRequest, m: _Match) -> dict[str, Any]:
@@ -158,13 +138,19 @@ def _failed(req: DuplicateCheckRequest, code: str, message: str, started: float)
     return CheckResultOut(
         version=req.config.version,
         status="FAILED",
-        signals=_signals(SignalOut(name="phash", status="FAILED"), SignalOut(name="orb", status="FAILED")),
+        signals=_signals(
+            SignalOut(name="phash", status="FAILED"),
+            SignalOut(name="orb", status="FAILED"),
+            SignalOut(name="internet", status="SKIPPED"),
+        ),
         error={"code": code, "message": message},
         duration_ms=round((time.perf_counter() - started) * 1000),
     )
 
 
-async def run_duplicate_check(req: DuplicateCheckRequest, corpus: CorpusPort) -> CheckResultOut:
+async def run_duplicate_check(
+    req: DuplicateCheckRequest, corpus: CorpusPort, web: Optional[WebDeps] = None
+) -> CheckResultOut:
     started = time.perf_counter()
     cfg = req.config
 
@@ -186,6 +172,7 @@ async def run_duplicate_check(req: DuplicateCheckRequest, corpus: CorpusPort) ->
         return _failed(req, "ERROR", str(err), started)
 
     has_geo = req.latitude is not None and req.longitude is not None
+    internet = None
     if match is not None and match.method == "phash":
         phash = SignalOut(name="phash", status="COMPLETED", risk=risk, raw=match.phash_distance)
         orb = SignalOut(name="orb", status="SKIPPED")
@@ -202,25 +189,36 @@ async def run_duplicate_check(req: DuplicateCheckRequest, corpus: CorpusPort) ->
             else SignalOut(name="orb", status="SKIPPED")
         )
         reasons = []
+        internet = await run_internet_signal(req, images, web)
+
+    web_match = internet.match if internet is not None else None
+    evidence: dict[str, Any] = {
+        "candidates_scanned": candidates_scanned,
+        "images_failed": images_failed,
+        "match": _match_evidence(req, match) if match is not None else web_match,
+    }
+    if internet is not None and internet.web is not None:
+        evidence["web"] = internet.web
+    if web_match is not None:
+        risk = internet.risk
+        reasons = [REASON_WEB_IMAGE]
 
     result = CheckResultOut(
         version=cfg.version,
+        # An `internet` failure stays in its signal: the check keeps the phash / orb result (FR-019).
         status="COMPLETED",
-        risk=risk if match is not None else 0,
+        risk=risk if (match is not None or web_match is not None) else 0,
         reasons=reasons,
-        signals=_signals(phash, orb),
-        evidence={
-            "candidates_scanned": candidates_scanned,
-            "images_failed": images_failed,
-            "match": _match_evidence(req, match) if match is not None else None,
-        },
+        signals=_signals(phash, orb, internet.signal if internet is not None else SignalOut(name="internet", status="SKIPPED")),
+        evidence=evidence,
         duration_ms=round((time.perf_counter() - started) * 1000),
     )
 
     # Matched images stay out of the corpus; a failed write must not change the verdict.
-    keep = [img for img in images if match is None or img.media_id != match.image.media_id]
+    matched_index = match.image.index if match is not None else (web_match["image_index"] if web_match else None)
+    keep = [img for img in images if img.index != matched_index]
     try:
-        await run_in_threadpool(lambda: [_ensure_orb(img) for img in keep])
+        await run_in_threadpool(lambda: [ensure_orb(img) for img in keep])
         await corpus.upsert(
             report=CorpusReport(
                 report_id=req.report_id,
@@ -240,7 +238,7 @@ async def run_duplicate_check(req: DuplicateCheckRequest, corpus: CorpusPort) ->
 
 
 async def _cascade(
-    req: DuplicateCheckRequest, images: list[_Image], corpus: CorpusPort
+    req: DuplicateCheckRequest, images: list[PreparedImage], corpus: CorpusPort
 ) -> tuple[Optional[_Match], Optional[float], Optional[int], int, Optional[int]]:
     """Returns (match, risk, smallest candidate pHash distance seen, candidates scanned, best ORB inliers)."""
     cfg = req.config
@@ -291,13 +289,7 @@ async def _cascade(
     # Tier 3: ORB + RANSAC over candidates.
     orb_cands = await _drop_inactive(await corpus.list_orb_candidates(**geo))
     scanned = len({c.media_id for c in phash_cands} | {c.media_id for c in orb_cands})
-    orb_cfg = OrbMatchConfig(
-        ratio_threshold=settings.orb_ratio_threshold,
-        min_good_matches=settings.orb_min_good_matches,
-        min_inlier_count=cfg.orb_min_inliers,
-        min_inlier_ratio=cfg.orb_min_inlier_ratio,
-        ransac_reproj_threshold=settings.orb_ransac_reproj_threshold,
-    )
+    orb_cfg = orb_match_config(cfg.orb_min_inliers, cfg.orb_min_inlier_ratio)
     best = await run_in_threadpool(_best_orb, images, orb_cands, orb_cfg) if orb_cands else None
     if best is not None:
         return best, cfg.risk.orb, min_distance, scanned, best.inliers

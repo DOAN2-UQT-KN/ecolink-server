@@ -28,6 +28,18 @@ function evidenceOf(checks: Check[], name: Check["check"]): Record<string, unkno
 
 /** Minimal evidence an owner may see: never another user's identity, never a score. */
 function ownerEvidence(code: string, checks: Check[]): Record<string, unknown> {
+  // A web match: the public page the photo was found on, no scores (specs/011 FR-023, revised).
+  if (code === "DUP_WEB_IMAGE_MATCH") {
+    const match = evidenceOf(checks, "DUPLICATE").match as Record<string, unknown> | null | undefined;
+    const https = (v: unknown) => (typeof v === "string" && v.startsWith("https://") ? v : null);
+    if (!match || match.method !== "internet" || !https(match.source_url)) return {};
+    return {
+      image_index: typeof match.image_index === "number" ? match.image_index : null,
+      source_url: https(match.source_url),
+      page_url: https(match.page_url),
+      page_title: typeof match.page_title === "string" ? match.page_title : null,
+    };
+  }
   if (code.startsWith("DUP_")) {
     const match = evidenceOf(checks, "DUPLICATE").match as Record<string, unknown> | null | undefined;
     if (!match) return {};

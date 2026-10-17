@@ -32,5 +32,9 @@ class Settings(BaseSettings):
     orb_min_inlier_ratio: float = 0.30
     orb_ransac_reproj_threshold: float = 5.0
 
+    # Google Cloud Vision WEB_DETECTION for the duplicate signal `internet` (specs/011).
+    # shortcut: API key instead of a service account; switch to google-auth when running on GCP or when keys must rotate automatically.
+    google_vision_api_key: str = ""
+
 
 settings = Settings()

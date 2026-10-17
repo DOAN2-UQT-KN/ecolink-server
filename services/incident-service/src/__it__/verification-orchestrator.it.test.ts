@@ -103,7 +103,7 @@ describe("[it] verification orchestrator (P05)", () => {
 
     expect(outcome).toBe("COMPLETED");
     const v = await prisma.reportVerification.findFirstOrThrow({ where: { reportId: report.id }, include: { checks: true } });
-    expect(v).toMatchObject({ status: "COMPLETED", flag: "ACCEPT", pipelineVersion: "2.3.0", engineVersion: "rules@3.0.0" });
+    expect(v).toMatchObject({ status: "COMPLETED", flag: "ACCEPT", pipelineVersion: "2.4.0", engineVersion: "rules@3.0.0" });
     expect(v.checks).toHaveLength(3);
     const after = await prisma.report.findUniqueOrThrow({ where: { id: report.id } });
     expect(after).toMatchObject({ status: 21, isVerify: true, latestVerificationId: v.id });
@@ -124,6 +124,37 @@ describe("[it] verification orchestrator (P05)", () => {
     expect(v.flag).toBe("REVIEW");
     expect(v.reasons).toEqual(["DUP_NEAR_IMAGE_MATCH", "TRUST_NOT_LIVE_CAPTURE"]);
     expect((await prisma.report.findUniqueOrThrow({ where: { id: report.id } })).status).toBe(9);
+  });
+
+  it("an `internet` signal failure inside a completed DuplicateCheck does not force review (specs/011)", async () => {
+    const report = await seedReport();
+    const duplicateWebFailed: CheckRunner = {
+      name: "DUPLICATE",
+      signalNames: ["phash", "orb", "internet"],
+      version: () => "duplicate@test",
+      run: async (): Promise<CheckResult> => ({
+        check: "DUPLICATE",
+        version: "duplicate@test",
+        status: "COMPLETED",
+        risk: 0,
+        reasons: [],
+        signals: [
+          { name: "phash", status: "COMPLETED", risk: 0 },
+          { name: "orb", status: "COMPLETED", risk: 0 },
+          { name: "internet", status: "FAILED", risk: null },
+        ],
+        evidence: { match: null, web: { status: "FAILED", gallery_sent: 1 } },
+        durationMs: 1,
+      }),
+    };
+    await orchestrator([duplicateWebFailed, fake("TRUST", 0), fake("CONTEXT", 0)]).handle({
+      reportId: report.id,
+      attempt: 1,
+    });
+
+    const v = await prisma.reportVerification.findFirstOrThrow({ where: { reportId: report.id } });
+    expect(v.flag).toBe("ACCEPT");
+    expect(v.reasons).not.toContain("SYS_CHECK_FAILED_DUPLICATE");
   });
 
   it("a late result keeps a report that is no longer pending", async () => {

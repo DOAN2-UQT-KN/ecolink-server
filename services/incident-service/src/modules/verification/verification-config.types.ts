@@ -26,6 +26,21 @@ export interface ChecksConfig {
     nearbyRadiusM: number;
     nearbyHours: number;
     risk: { phashStrict: number; phashLoose: number; orb: number; internet: number };
+    /** Signal `internet` (specs/011); absent in checks@1.0.0, which means disabled. */
+    web?: {
+      enabled: boolean;
+      dailyLimit: number;
+      maxImages: number;
+      batchSize: number;
+      maxCandidates: number;
+      maxResults: number;
+      callTimeoutMs: number;
+      totalTimeoutMs: number;
+      fetchTimeoutMs: number;
+      fetchMaxBytes: number;
+      cacheTtlDays: number;
+      blockedHosts: string[];
+    };
   };
   trust: {
     version: string;

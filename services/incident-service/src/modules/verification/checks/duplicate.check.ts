@@ -2,6 +2,7 @@ import axios from "axios";
 import type { ReasonCode } from "../../../constants/report-verification";
 import type { CheckResult, CheckStatus, Signal } from "../verification.types";
 import type { CheckRunner, VerificationContext } from "./check-runner";
+import { ecolinkCloudNames } from "../../report/report.validator";
 import { findNearbyReports } from "./nearby-reports";
 
 /** CheckResult as ai-service returns it (snake_case, contracts/internal-duplicate-check.md). */
@@ -15,6 +16,25 @@ interface AiCheckResult {
   evidence: Record<string, unknown>;
   error?: { code: string; message: string } | null;
   duration_ms: number;
+}
+
+function webConfig(web: NonNullable<VerificationContext["checksConfig"]["duplicate"]["web"]>) {
+  return {
+    enabled: web.enabled,
+    daily_limit: web.dailyLimit,
+    max_images: web.maxImages,
+    batch_size: web.batchSize,
+    max_candidates: web.maxCandidates,
+    max_results: web.maxResults,
+    call_timeout_ms: web.callTimeoutMs,
+    total_timeout_ms: web.totalTimeoutMs,
+    fetch_timeout_ms: web.fetchTimeoutMs,
+    fetch_max_bytes: web.fetchMaxBytes,
+    cache_ttl_days: web.cacheTtlDays,
+    blocked_hosts: web.blockedHosts,
+    // Public Ecolink reports are indexed by Google and would match themselves.
+    blocked_url_prefixes: ecolinkCloudNames().map((name) => `https://res.cloudinary.com/${name}/`),
+  };
 }
 
 function requestBody(ctx: VerificationContext) {
@@ -31,6 +51,7 @@ function requestBody(ctx: VerificationContext) {
       media_id: m.mediaId,
       report_media_file_id: m.reportMediaFileId,
       url: m.url,
+      capture_source: m.captureSource,
     })),
     config: {
       version: cfg.version,
@@ -46,6 +67,7 @@ function requestBody(ctx: VerificationContext) {
         orb: cfg.risk.orb,
         internet: cfg.risk.internet,
       },
+      ...(cfg.web ? { web: webConfig(cfg.web) } : {}),
     },
   };
 }

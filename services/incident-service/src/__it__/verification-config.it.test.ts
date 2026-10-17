@@ -32,7 +32,13 @@ describe("[it] verification config (P04)", () => {
     expect(engine.value.weights).toEqual({ DUPLICATE: 0.6, TRUST: 0.4, CONTEXT: 0.1 });
 
     const pipeline = await verificationConfigService.get("pipeline");
-    expect(pipeline.value).toEqual({ maxAttempts: 3, checkTimeoutMs: 10000 });
+    expect(pipeline.version).toBe("2.4.0");
+    expect(pipeline.value).toEqual({ maxAttempts: 3, checkTimeoutMs: 20000 });
+
+    const checks = await verificationConfigService.get("checks");
+    expect(checks.version).toBe("checks@1.1.0");
+    expect(checks.value.duplicate.version).toBe("duplicate@2.1.0");
+    expect(checks.value.duplicate.web).toMatchObject({ enabled: false, maxImages: 10, batchSize: 3 });
 
     const rules = await verificationConfigService.get("category-rules");
     expect(rules.version).toBe("category-rules@1.0.0");
@@ -82,7 +88,7 @@ describe("[it] verification config (P04)", () => {
       await expect(service.get("pipeline")).rejects.toThrow("verification config 'pipeline' has no active version");
     } finally {
       await prisma.verificationConfig.update({
-        where: { key_version: { key: "pipeline", version: "2.3.0" } },
+        where: { key_version: { key: "pipeline", version: "2.4.0" } },
         data: { isActive: true },
       });
     }

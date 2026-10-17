@@ -20,7 +20,7 @@ BODY = {
     "longitude": 106.68,
     "created_at": "2026-10-16T08:00:00Z",
     "category": "WATERWAY",
-    "media": [{"media_id": "m1", "report_media_file_id": "rmf1", "url": "https://x/a.jpg"}],
+    "media": [{"media_id": "m1", "report_media_file_id": "rmf1", "url": "https://x/a.jpg", "capture_source": "LIVE"}],
     "config": {
         "version": "duplicate@2.0.0",
         "phash_global_max": 6,
@@ -30,6 +30,7 @@ BODY = {
         "orb_min_inliers": 25,
         "orb_min_inlier_ratio": 0.3,
         "risk": {"phash_strict": 0.9, "phash_loose": 0.75, "orb": 0.7, "internet": 0.85},
+        "web": {"enabled": True, "daily_limit": 100, "max_images": 10, "batch_size": 3},
     },
 }
 
@@ -37,9 +38,13 @@ BODY = {
 @pytest.fixture
 def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(settings, "internal_ai_api_key", KEY)
+    monkeypatch.setattr(settings, "google_vision_api_key", "")
 
-    async def fake_check(body, corpus):
+    async def fake_check(body, corpus, web=None):
         assert body.report_id == "r1"
+        assert body.media[0].capture_source == "LIVE"
+        assert body.config.web is not None and body.config.web.batch_size == 3
+        assert web is not None and web.vision is None  # no GOOGLE_VISION_API_KEY in tests
         return CheckResultOut(
             version=body.config.version,
             status="COMPLETED",

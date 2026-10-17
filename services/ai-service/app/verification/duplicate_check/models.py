@@ -15,6 +15,24 @@ class DuplicateRisk(BaseModel):
     internet: float
 
 
+class WebConfig(BaseModel):
+    """Signal `internet` (specs/011). Missing from the request means disabled."""
+
+    enabled: bool = False
+    daily_limit: int = 0
+    max_images: int = 10
+    batch_size: int = 3
+    max_candidates: int = 5
+    max_results: int = 20
+    call_timeout_ms: int = 4000
+    total_timeout_ms: int = 8000
+    fetch_timeout_ms: int = 2000
+    fetch_max_bytes: int = 5_000_000
+    cache_ttl_days: int = 30
+    blocked_hosts: list[str] = []
+    blocked_url_prefixes: list[str] = []
+
+
 class DuplicateCheckConfig(BaseModel):
     version: str
     phash_global_max: int
@@ -24,12 +42,14 @@ class DuplicateCheckConfig(BaseModel):
     orb_min_inliers: int
     orb_min_inlier_ratio: float
     risk: DuplicateRisk
+    web: Optional[WebConfig] = None
 
 
 class DuplicateCheckMedia(BaseModel):
     media_id: str
     report_media_file_id: str
     url: str
+    capture_source: Literal["LIVE", "GALLERY"] = "GALLERY"
 
 
 class DuplicateCheckRequest(BaseModel):

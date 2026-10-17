@@ -6,21 +6,27 @@ const REPORT_IMAGES_MAX = 10;
 
 let warnedMissingCloudName = false;
 
+/** Ecolink's Cloudinary accounts; empty when CLOUDINARY_CLOUD_NAME is not set. */
+export function ecolinkCloudNames(): string[] {
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME?.trim();
+  if (!cloudName) return [];
+  // The web client may upload to its own Cloudinary account (CLOUDINARY_ALLOWED_CLOUD_NAMES).
+  return [
+    cloudName,
+    ...(process.env.CLOUDINARY_ALLOWED_CLOUD_NAMES ?? "").split(",").map((c) => c.trim()).filter(Boolean),
+  ];
+}
+
 /** Report images must be uploads to Ecolink's own Cloudinary account (specs/006 BR-100). */
 export function isEcolinkImageUrl(url: string): boolean {
-  const cloudName = process.env.CLOUDINARY_CLOUD_NAME?.trim();
-  if (!cloudName) {
+  const allowed = ecolinkCloudNames();
+  if (allowed.length === 0) {
     if (!warnedMissingCloudName) {
       console.warn("[report] CLOUDINARY_CLOUD_NAME is not set; only checking that image URLs use https");
       warnedMissingCloudName = true;
     }
     return url.startsWith("https://");
   }
-  // The web client may upload to its own Cloudinary account (CLOUDINARY_ALLOWED_CLOUD_NAMES).
-  const allowed = [
-    cloudName,
-    ...(process.env.CLOUDINARY_ALLOWED_CLOUD_NAMES ?? "").split(",").map((c) => c.trim()).filter(Boolean),
-  ];
   return allowed.some((name) => url.startsWith(`https://res.cloudinary.com/${name}/image/upload/`));
 }
 

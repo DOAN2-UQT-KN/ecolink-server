@@ -52,6 +52,44 @@ describe("toUserView", () => {
     expect(view.flag).toBe("REVIEW");
   });
 
+  it("gives the owner the web source of a web match, without scores (specs/011)", () => {
+    const [dup] = verification().checks;
+    const view = toUserView(
+      verification({
+        reasons: ["DUP_WEB_IMAGE_MATCH"],
+        checks: [
+          {
+            ...dup,
+            reasons: ["DUP_WEB_IMAGE_MATCH"],
+            evidence: {
+              match: { method: "internet", source_url: "https://news.example/a.jpg", page_url: "https://news.example/p", phash_distance: 3 },
+            },
+          },
+        ],
+      }),
+      report(9),
+    );
+    expect(view.issues).toEqual([
+      {
+        code: "DUP_WEB_IMAGE_MATCH",
+        primary: false,
+        evidence: { image_index: null, source_url: "https://news.example/a.jpg", page_url: "https://news.example/p", page_title: null },
+      },
+    ]);
+  });
+
+  it("drops a web source that is not https", () => {
+    const [dup] = verification().checks;
+    const view = toUserView(
+      verification({
+        reasons: ["DUP_WEB_IMAGE_MATCH"],
+        checks: [{ ...dup, evidence: { match: { method: "internet", source_url: "javascript:alert(1)" } } }],
+      }),
+      report(9),
+    );
+    expect(view.issues[0].evidence).toEqual({});
+  });
+
   it("shows no issue when only admin-only reasons remain", () => {
     const view = toUserView(verification({ reasons: ["TRUST_NEW_ACCOUNT", "SYS_CHECK_FAILED_DUPLICATE"] }), report(9));
     expect(view.issues).toEqual([]);

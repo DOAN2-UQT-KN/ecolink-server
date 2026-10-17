@@ -7,10 +7,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_internal_api_key
 from app.chat.service import translate_text
+from app.config import settings
 from app.db.session import get_session
 from app.verification.duplicate_check.corpus import SqlCorpus
 from app.verification.duplicate_check.models import DuplicateCheckRequest
+from app.verification.duplicate_check.internet import WebDeps
+from app.verification.duplicate_check.safe_fetch import SafeFetcher
 from app.verification.duplicate_check.service import run_duplicate_check
+from app.verification.duplicate_check.vision import VisionClient
+from app.verification.duplicate_check.web_store import SqlWebStore
 
 logger = logging.getLogger(__name__)
 
@@ -73,5 +78,7 @@ async def verification_duplicate(
     incident-service's orchestrator. Always 200 with a CheckResult; processing errors
     come back as status FAILED (contracts/internal-duplicate-check.md).
     """
-    result = await run_duplicate_check(body, SqlCorpus(session))
+    key = settings.google_vision_api_key.strip()
+    web = WebDeps(store=SqlWebStore(), vision=VisionClient(key) if key else None, fetcher=SafeFetcher())
+    result = await run_duplicate_check(body, SqlCorpus(session), web)
     return result.model_dump()

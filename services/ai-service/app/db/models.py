@@ -1,10 +1,11 @@
 import enum
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Optional, Union
 
 from sqlalchemy import (
     BigInteger,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -160,3 +161,24 @@ class AiMediaOrbFeature(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class AiWebDetectionCache(Base):
+    """Filtered Vision WEB_DETECTION candidates per pHash (specs/011). No image bytes, no verdict."""
+
+    __tablename__ = "ai_web_detection_cache"
+    __table_args__ = (Index("ix_ai_web_detection_cache_expires_at", "expires_at"),)
+
+    phash: Mapped[str] = mapped_column(String(16), primary_key=True)
+    candidates: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class AiWebDetectionUsage(Base):
+    """Vision calls per day (Asia/Ho_Chi_Minh), for the daily limit of the signal `internet`."""
+
+    __tablename__ = "ai_web_detection_usage"
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    calls: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")

@@ -77,10 +77,33 @@ describe("duplicateCheck (calls ai-service)", () => {
       user_id: "u1",
       attempt: 2,
       created_at: "2026-10-16T08:00:00.000Z",
-      media: [{ media_id: "m1", report_media_file_id: "rmf1", url: "https://x/a.jpg" }],
+      media: [{ media_id: "m1", report_media_file_id: "rmf1", url: "https://x/a.jpg", capture_source: "GALLERY" }],
       config: { version: "duplicate@2.0.0", phash_global_max: 6, orb_min_inliers: 25, risk: { phash_strict: 0.9 } },
     });
+    expect(body.config).not.toHaveProperty("web");
     expect(options).toMatchObject({ headers: { "x-internal-api-key": "k" }, signal });
+  });
+
+  it("sends config.web with Ecolink's Cloudinary folders blocked (specs/011)", async () => {
+    postMock.mockResolvedValue({ data: aiResult("COMPLETED") });
+    process.env.CLOUDINARY_CLOUD_NAME = "eco";
+    process.env.CLOUDINARY_ALLOWED_CLOUD_NAMES = "web-eco";
+    const web = {
+      enabled: true, dailyLimit: 100, maxImages: 10, batchSize: 3, maxCandidates: 5, maxResults: 20,
+      callTimeoutMs: 4000, totalTimeoutMs: 8000, fetchTimeoutMs: 2000, fetchMaxBytes: 5_000_000,
+      cacheTtlDays: 30, blockedHosts: ["ecolink.example"],
+    };
+    await duplicateCheck.run(
+      { ...ctx, checksConfig: { duplicate: { ...checksConfig.duplicate, web } } as ChecksConfig },
+      new AbortController().signal,
+    );
+
+    expect(postMock.mock.calls[0][1].config.web).toEqual({
+      enabled: true, daily_limit: 100, max_images: 10, batch_size: 3, max_candidates: 5, max_results: 20,
+      call_timeout_ms: 4000, total_timeout_ms: 8000, fetch_timeout_ms: 2000, fetch_max_bytes: 5_000_000,
+      cache_ttl_days: 30, blocked_hosts: ["ecolink.example"],
+      blocked_url_prefixes: ["https://res.cloudinary.com/eco/", "https://res.cloudinary.com/web-eco/"],
+    });
   });
 
   it("maps the result and adds nearby_reports when COMPLETED", async () => {
