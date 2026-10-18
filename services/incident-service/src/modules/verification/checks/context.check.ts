@@ -1,7 +1,10 @@
 import { verificationConfigService } from "../verification-config.service";
-import { judgeFit, searchRadiusM } from "../geo/category-fit";
+import { fittingCategories, judgeFit, searchRadiusM } from "../geo/category-fit";
 import { osmContextSource, type OsmContextSource } from "../geo/osm-context.source";
 import { notAvailableResult, type CheckRunner } from "./check-runner";
+
+/** How many fitting categories a MISMATCH names (admin card + owner issue). */
+const MAX_SUGGESTED = 3;
 
 export const contextEnabled = (): boolean => process.env.CONTEXT_CHECK_ENABLED === "true";
 
@@ -46,6 +49,19 @@ export function createContextCheck(source: OsmContextSource = osmContextSource):
       const poi = !fitsRadius && rule.requireCoverage ? await source.countPoi(latitude, longitude, radiusM, timeoutMs) : null;
       const { verdict, nearest } = judgeFit(rule, found, poi, minPoi);
 
+      // Which category would fit here; a hint only, so a failure here never fails the check.
+      let suggestedCategories: { category: string; nearest: { name: string | null; distance_m: number } }[] | null = null;
+      if (verdict === "MISMATCH") {
+        try {
+          suggestedCategories = (await fittingCategories(source, rulesCfg, latitude, longitude, timeoutMs))
+            .filter((c) => c.category !== category)
+            .slice(0, MAX_SUGGESTED)
+            .map((c) => ({ category: c.category, nearest: { name: c.nearest.name, distance_m: c.nearest.distanceM } }));
+        } catch (err) {
+          console.warn("[context] suggested categories failed:", err instanceof Error ? err.message : err);
+        }
+      }
+
       const evidence = {
         category,
         rule: rule.kind,
@@ -56,6 +72,7 @@ export function createContextCheck(source: OsmContextSource = osmContextSource):
           : null,
         candidatesChecked: found.length,
         coverage: poi === null ? null : { poi, radiusM },
+        ...(verdict === "MISMATCH" ? { suggestedCategories } : {}),
         osmDataAt: data.dataAt.toISOString(),
         styleVersion: data.styleVersion,
         queryMs: Date.now() - started,

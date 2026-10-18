@@ -177,6 +177,10 @@ describe("[it] OSM context (specs/012)", () => {
       const mismatch = await check().run(ctx("SCHOOL", MARKET.lat, MARKET.lng, cfg), signal);
       expect(mismatch).toMatchObject({ status: "COMPLETED", risk: 0.35, reasons: ["CTX_CATEGORY_LOCATION_MISMATCH"] });
       expect(mismatch.evidence).toMatchObject({ verdict: "MISMATCH", coverage: { poi: 20, radiusM: 300 } });
+      // At the market the MARKET rule fits: that is the category to suggest.
+      expect(mismatch.evidence.suggestedCategories).toEqual(
+        expect.arrayContaining([{ category: "MARKET", nearest: { name: "Chợ Tân Định", distance_m: 0 } }]),
+      );
 
       const sparse = await check().run(ctx("SCHOOL", EMPTY.lat, EMPTY.lng, cfg), signal);
       expect(sparse).toMatchObject({ status: "SKIPPED", risk: null, evidence: { verdict: "SPARSE_DATA", coverage: { poi: 0 } } });

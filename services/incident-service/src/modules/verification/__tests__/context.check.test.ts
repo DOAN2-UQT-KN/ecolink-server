@@ -77,12 +77,34 @@ describe("contextCheck on OSM (specs/012)", () => {
     });
     expect(s.nearest).toHaveBeenCalledWith(["waterway"], 10.79, 106.69, 500, 1000);
     expect(s.countPoi).not.toHaveBeenCalled();
+    expect(r.evidence).not.toHaveProperty("suggestedCategories");
   });
 
   it("is MISMATCH for a market 420 m away in a well-mapped area", async () => {
     const r = await run(source([feature(420, "market", "node/9")], 20), ctx({ category: "MARKET" }));
     expect(r).toMatchObject({ status: "COMPLETED", risk: 0.35, reasons: ["CTX_CATEGORY_LOCATION_MISMATCH"] });
     expect(r.evidence).toMatchObject({ verdict: "MISMATCH", coverage: { poi: 20, radiusM: 300 }, nearest: { osm: "node/9", distance_m: 420 } });
+  });
+
+  it("names up to 3 other categories that fit on a MISMATCH", async () => {
+    const s = source([feature(420, "market", "node/9")], 20);
+    s.nearestPerClass.mockResolvedValue([
+      feature(35, "waterway", "way/1"),
+      feature(0, "market", "node/9"), // MARKET is the chosen category: left out even if it were a fit
+      feature(90, "school", "node/2"),
+    ]);
+    const r = await run(s, ctx({ category: "MARKET" }));
+    expect(r.evidence.suggestedCategories).toEqual([
+      { category: "WATERWAY", nearest: { name: "Kênh Nhiêu Lộc", distance_m: 35 } },
+      { category: "SCHOOL", nearest: { name: "Chợ Tân Định", distance_m: 90 } },
+    ]);
+  });
+
+  it("keeps the MISMATCH when the suggestion lookup fails", async () => {
+    const s = source([feature(420, "market")], 20);
+    s.nearestPerClass.mockRejectedValue(new Error("timeout"));
+    const r = await run(s, ctx({ category: "MARKET" }));
+    expect(r).toMatchObject({ status: "COMPLETED", risk: 0.35, evidence: { verdict: "MISMATCH", suggestedCategories: null } });
   });
 
   it("is SKIPPED with SPARSE_DATA for a school where the map is thin", async () => {

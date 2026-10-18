@@ -50,8 +50,17 @@ function ownerEvidence(code: string, checks: Check[]): Record<string, unknown> {
     };
   }
   if (code === "CTX_CATEGORY_LOCATION_MISMATCH") {
-    const nearest = evidenceOf(checks, "CONTEXT").nearest as Record<string, unknown> | null | undefined;
-    return { nearest: nearest ? { name: nearest.name ?? null, distance_m: nearest.distance_m ?? null } : null };
+    const evidence = evidenceOf(checks, "CONTEXT");
+    const nearest = evidence.nearest as Record<string, unknown> | null | undefined;
+    // Categories that would fit here (specs/012): label, place name and distance only.
+    const suggested = Array.isArray(evidence.suggestedCategories) ? (evidence.suggestedCategories as Record<string, unknown>[]) : [];
+    return {
+      nearest: nearest ? { name: nearest.name ?? null, distance_m: nearest.distance_m ?? null } : null,
+      suggested_categories: suggested.map((c) => {
+        const n = c.nearest as Record<string, unknown> | null | undefined;
+        return { category: c.category, nearest: n ? { name: n.name ?? null, distance_m: n.distance_m ?? null } : null };
+      }),
+    };
   }
   return {};
 }
