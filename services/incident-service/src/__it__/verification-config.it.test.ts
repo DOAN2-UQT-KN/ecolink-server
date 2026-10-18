@@ -36,15 +36,23 @@ describe("[it] verification config (P04)", () => {
     expect(pipeline.value).toEqual({ maxAttempts: 3, checkTimeoutMs: 20000 });
 
     const checks = await verificationConfigService.get("checks");
-    expect(checks.version).toBe("checks@1.1.0");
+    expect(checks.version).toBe("checks@1.2.0");
     expect(checks.value.duplicate.version).toBe("duplicate@2.1.0");
     expect(checks.value.duplicate.web).toMatchObject({ enabled: false, maxImages: 10, batchSize: 3 });
+    expect(checks.value.context).toEqual({ version: "context@2.0.0", queryTimeoutMs: 1000, suggestTimeoutMs: 2000 });
 
     const rules = await verificationConfigService.get("category-rules");
-    expect(rules.version).toBe("category-rules@1.0.0");
-    expect(Object.keys(rules.value)).toHaveLength(12);
-    expect(rules.value.MARKET).toEqual({ kind: "NEARBY_PLACE", keywords: ["chợ"], maxDistanceM: 150, missRisk: 0.5 });
-    expect(rules.value.DRAIN).toEqual({ kind: "NONE" });
+    expect(rules.version).toBe("category-rules@2.0.0");
+    expect(Object.keys(rules.value.rules)).toHaveLength(12);
+    expect(rules.value.rules.MARKET).toEqual({
+      kind: "NEAR_FEATURE",
+      classes: ["market"],
+      maxDistanceM: 100,
+      missRisk: 0.35,
+      requireCoverage: true,
+    });
+    expect(rules.value.rules.DRAIN).toEqual({ kind: "NONE" });
+    expect(rules.value.coverage).toEqual({ radiusM: 300, minPoi: 15 });
   });
 
   it("rejects a second active row for the same key", async () => {

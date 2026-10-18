@@ -1,3 +1,6 @@
 node_modules/
 dist/
 .env
+
+# OSM extract downloaded by npm run osm:import (specs/012)
+.osm/

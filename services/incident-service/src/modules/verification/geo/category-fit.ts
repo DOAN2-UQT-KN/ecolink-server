@@ -1,45 +1,26 @@
-import { normalizeVi } from "../../../utils/geo";
 import type { FitRule } from "../verification-config.types";
+import type { OsmFeature } from "./osm-context.source";
 
-export interface GeoEvidence {
-  name: string;
-  keyword: string | null;
-  /** Null for address-based evidence (e.g. WATERWAY address hint): counts as a fit. */
-  distanceM: number | null;
-  source: "goong_place" | "goong_geocode";
-}
-
-const HOUSE_NUMBER_WITH_SLASH = /^\s*\d+[a-z]?\/\d+/;
-
-function fits(rule: FitRule, e: GeoEvidence): boolean {
-  switch (rule.kind) {
-    case "NEARBY_PLACE":
-      return e.distanceM === null || e.distanceM <= rule.maxDistanceM;
-    case "ADDRESS_PATTERN": {
-      const address = normalizeVi(e.name);
-      return (
-        HOUSE_NUMBER_WITH_SLASH.test(address) ||
-        rule.patterns.some((p) => p !== "/" && address.includes(normalizeVi(p)))
-      );
-    }
-    case "ON_STREET":
-      // shortcut: "có tên đường" được hiểu là Geocode có kết quả trong bán kính; đổi sang kiểm address_components khi có dữ liệu thật (T151)
-      return e.distanceM !== null && e.distanceM <= rule.maxDistanceM;
-    default:
-      return false;
-  }
-}
+export type NearFeatureRule = Extract<FitRule, { kind: "NEAR_FEATURE" }>;
+export type FitVerdict = "FIT" | "MISMATCH" | "SPARSE_DATA";
 
 /**
- * FIT when some evidence satisfies the rule, MISMATCH otherwise. `nearest` is kept even when it
- * lies outside the radius, so a moderator sees "nearest market 900 m away" (specs/006 US5 AS2).
+ * FIT when the nearest feature of the rule's classes lies within its radius (0 inside an area).
+ * Otherwise a rule that needs coverage gives SPARSE_DATA where the map holds fewer than `minPoi`
+ * points (not mapped is not "not there"), else MISMATCH. `nearest` is kept even outside the radius,
+ * so a moderator sees "nearest market 420 m away". `coveragePoi` is null when it was not counted.
  */
-export function judgeFit(rule: FitRule, evidence: GeoEvidence[]): { verdict: "FIT" | "MISMATCH"; nearest: GeoEvidence | null } {
-  const matching = evidence.filter((e) => fits(rule, e));
-  const fit = matching.length > 0;
-  // FIT: address evidence (no distance) first; MISMATCH: the closest measured place first.
-  const missing = fit ? -1 : Number.POSITIVE_INFINITY;
-  const byDistance = (a: GeoEvidence, b: GeoEvidence) => (a.distanceM ?? missing) - (b.distanceM ?? missing);
-  const nearest = [...(fit ? matching : evidence)].sort(byDistance)[0] ?? null;
-  return { verdict: fit ? "FIT" : "MISMATCH", nearest };
+export function judgeFit(
+  rule: NearFeatureRule,
+  found: OsmFeature[],
+  coveragePoi: number | null,
+  minPoi: number,
+): { verdict: FitVerdict; nearest: OsmFeature | null } {
+  const nearest = found[0] ?? null;
+  if (nearest && nearest.distanceM <= rule.maxDistanceM) return { verdict: "FIT", nearest };
+  if (rule.requireCoverage && coveragePoi !== null && coveragePoi < minPoi) return { verdict: "SPARSE_DATA", nearest };
+  return { verdict: "MISMATCH", nearest };
 }
+
+/** Search wider than the rule so a MISMATCH still names the nearest feature (design doc: 500 m). */
+export const searchRadiusM = (rule: NearFeatureRule) => Math.max(rule.maxDistanceM, 500);
