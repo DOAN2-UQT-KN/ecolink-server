@@ -90,6 +90,30 @@ describe("toUserView", () => {
     expect(view.issues[0].evidence).toEqual({});
   });
 
+  it("gives the owner the categories that would fit on a context mismatch (specs/012)", () => {
+    const view = toUserView(
+      verification({
+        reasons: ["CTX_CATEGORY_LOCATION_MISMATCH"],
+        checks: [
+          {
+            ...verification().checks[0],
+            check: "CONTEXT",
+            reasons: ["CTX_CATEGORY_LOCATION_MISMATCH"],
+            evidence: {
+              nearest: { name: "Chợ Bến Thành", class: "market", osm: "way/1", distance_m: 420 },
+              suggestedCategories: [{ category: "PARK", nearest: { name: "Công viên Tao Đàn", distance_m: 0 } }],
+            },
+          },
+        ],
+      }),
+      report(9),
+    );
+    expect(view.issues[0].evidence).toEqual({
+      nearest: { name: "Chợ Bến Thành", distance_m: 420 },
+      suggested_categories: [{ category: "PARK", nearest: { name: "Công viên Tao Đàn", distance_m: 0 } }],
+    });
+  });
+
   it("shows no issue when only admin-only reasons remain", () => {
     const view = toUserView(verification({ reasons: ["TRUST_NEW_ACCOUNT", "SYS_CHECK_FAILED_DUPLICATE"] }), report(9));
     expect(view.issues).toEqual([]);

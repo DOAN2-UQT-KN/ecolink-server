@@ -1,45 +1,63 @@
-import { normalizeVi } from "../../../utils/geo";
-import type { FitRule } from "../verification-config.types";
+import type { ReportCategory } from "@prisma/client";
+import type { CategoryRulesConfig, FeatureClass, FitRule } from "../verification-config.types";
+import type { OsmContextSource, OsmFeature } from "./osm-context.source";
 
-export interface GeoEvidence {
-  name: string;
-  keyword: string | null;
-  /** Null for address-based evidence (e.g. WATERWAY address hint): counts as a fit. */
-  distanceM: number | null;
-  source: "goong_place" | "goong_geocode";
+export type NearFeatureRule = Extract<FitRule, { kind: "NEAR_FEATURE" }>;
+export type FitVerdict = "FIT" | "MISMATCH" | "SPARSE_DATA";
+
+/**
+ * FIT when the nearest feature of the rule's classes lies within its radius (0 inside an area).
+ * Otherwise a rule that needs coverage gives SPARSE_DATA where the map holds fewer than `minPoi`
+ * points (not mapped is not "not there"), else MISMATCH. `nearest` is kept even outside the radius,
+ * so a moderator sees "nearest market 420 m away". `coveragePoi` is null when it was not counted.
+ */
+export function judgeFit(
+  rule: NearFeatureRule,
+  found: OsmFeature[],
+  coveragePoi: number | null,
+  minPoi: number,
+): { verdict: FitVerdict; nearest: OsmFeature | null } {
+  const nearest = found[0] ?? null;
+  if (nearest && nearest.distanceM <= rule.maxDistanceM) return { verdict: "FIT", nearest };
+  if (rule.requireCoverage && coveragePoi !== null && coveragePoi < minPoi) return { verdict: "SPARSE_DATA", nearest };
+  return { verdict: "MISMATCH", nearest };
 }
 
-const HOUSE_NUMBER_WITH_SLASH = /^\s*\d+[a-z]?\/\d+/;
+/** Search wider than the rule so a MISMATCH still names the nearest feature (design doc: 500 m). */
+export const searchRadiusM = (rule: NearFeatureRule) => Math.max(rule.maxDistanceM, 500);
 
-function fits(rule: FitRule, e: GeoEvidence): boolean {
-  switch (rule.kind) {
-    case "NEARBY_PLACE":
-      return e.distanceM === null || e.distanceM <= rule.maxDistanceM;
-    case "ADDRESS_PATTERN": {
-      const address = normalizeVi(e.name);
-      return (
-        HOUSE_NUMBER_WITH_SLASH.test(address) ||
-        rule.patterns.some((p) => p !== "/" && address.includes(normalizeVi(p)))
-      );
-    }
-    case "ON_STREET":
-      // shortcut: "có tên đường" được hiểu là Geocode có kết quả trong bán kính; đổi sang kiểm address_components khi có dữ liệu thật (T151)
-      return e.distanceM !== null && e.distanceM <= rule.maxDistanceM;
-    default:
-      return false;
-  }
+export interface FittingCategory {
+  category: ReportCategory;
+  nearest: { name: string | null; distanceM: number };
 }
 
 /**
- * FIT when some evidence satisfies the rule, MISMATCH otherwise. `nearest` is kept even when it
- * lies outside the radius, so a moderator sees "nearest market 900 m away" (specs/006 US5 AS2).
+ * Every category whose rule is a FIT at the point, nearest first: one query for all classes, plus a
+ * coverage count only when a coverage rule found nothing in range. Used by the form suggestions and,
+ * on a MISMATCH, by ContextCheck to tell which category would fit (specs/012).
  */
-export function judgeFit(rule: FitRule, evidence: GeoEvidence[]): { verdict: "FIT" | "MISMATCH"; nearest: GeoEvidence | null } {
-  const matching = evidence.filter((e) => fits(rule, e));
-  const fit = matching.length > 0;
-  // FIT: address evidence (no distance) first; MISMATCH: the closest measured place first.
-  const missing = fit ? -1 : Number.POSITIVE_INFINITY;
-  const byDistance = (a: GeoEvidence, b: GeoEvidence) => (a.distanceM ?? missing) - (b.distanceM ?? missing);
-  const nearest = [...(fit ? matching : evidence)].sort(byDistance)[0] ?? null;
-  return { verdict: fit ? "FIT" : "MISMATCH", nearest };
+export async function fittingCategories(
+  source: OsmContextSource,
+  rulesCfg: CategoryRulesConfig,
+  lat: number,
+  lng: number,
+  timeoutMs: number,
+): Promise<FittingCategory[]> {
+  const rules = (Object.entries(rulesCfg.rules) as [ReportCategory, FitRule][]).filter(
+    (entry): entry is [ReportCategory, NearFeatureRule] => entry[1].kind === "NEAR_FEATURE",
+  );
+  if (!rules.length) return [];
+  const classes = [...new Set(rules.flatMap(([, rule]) => rule.classes))] as FeatureClass[];
+  const searchM = Math.max(...rules.map(([, rule]) => searchRadiusM(rule)));
+
+  const perClass = await source.nearestPerClass(classes, lat, lng, searchM, timeoutMs);
+  const foundFor = (rule: NearFeatureRule) =>
+    perClass.filter((f) => rule.classes.includes(f.class as FeatureClass)).sort((a, b) => a.distanceM - b.distanceM);
+  const needsCoverage = rules.some(([, rule]) => rule.requireCoverage && !(foundFor(rule)[0]?.distanceM <= rule.maxDistanceM));
+  const poi = needsCoverage ? await source.countPoi(lat, lng, rulesCfg.coverage.radiusM, timeoutMs) : null;
+
+  return rules
+    .map(([category, rule]) => ({ category, ...judgeFit(rule, foundFor(rule), poi, rulesCfg.coverage.minPoi) }))
+    .flatMap((r) => (r.verdict === "FIT" && r.nearest ? [{ category: r.category, nearest: { name: r.nearest.name, distanceM: r.nearest.distanceM } }] : []))
+    .sort((a, b) => a.nearest.distanceM - b.nearest.distanceM);
 }

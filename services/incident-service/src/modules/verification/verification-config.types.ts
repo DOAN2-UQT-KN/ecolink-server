@@ -55,26 +55,31 @@ export interface ChecksConfig {
   };
   context: {
     version: string;
-    goongTimeoutMs: number;
-    cacheTtlDays: number;
+    /** Postgres statement_timeout for each OSM query (specs/012). */
+    queryTimeoutMs: number;
     suggestTimeoutMs: number;
   };
 }
 
+/** OSM feature classes assigned at import time (scripts/osm/osm-context.lua, specs/012). */
+export type FeatureClass = "waterway" | "beach" | "market" | "school" | "park" | "industrial" | "alley" | "street";
+
 export type FitRule =
   | { kind: "NONE" }
   | {
-      kind: "NEARBY_PLACE";
-      keywords: string[];
+      kind: "NEAR_FEATURE";
+      classes: FeatureClass[];
       maxDistanceM: number;
       missRisk: number;
-      /** WATERWAY only: address words that also count as evidence. */
-      addressHints?: string[];
-    }
-  | { kind: "ADDRESS_PATTERN"; patterns: string[]; missRisk: number }
-  | { kind: "ON_STREET"; maxDistanceM: number; missRisk: number };
+      /** Only conclude MISMATCH where the map is drawn densely enough (coverage). */
+      requireCoverage?: boolean;
+    };
 
-export type CategoryRulesConfig = Record<ReportCategory, FitRule>;
+export interface CategoryRulesConfig {
+  rules: Record<ReportCategory, FitRule>;
+  /** Fewer than `minPoi` amenity/shop points within `radiusM` = not enough data to conclude. */
+  coverage: { radiusM: number; minPoi: number };
+}
 
 export interface ConfigValueByKey {
   pipeline: PipelineConfig;

@@ -1,80 +1,124 @@
-const findEvidenceMock = jest.fn();
-jest.mock("../geo/geo-context.service", () => ({
-  findEvidence: (...a: unknown[]) => findEvidenceMock(...a),
-  geoDeps: () => ({}),
-}));
 jest.mock("../verification-config.service", () => ({
   verificationConfigService: {
     get: jest.fn().mockResolvedValue({
-      version: "category-rules@1.0.0",
+      version: "category-rules@2.0.0",
       value: {
-        MARKET: { kind: "NEARBY_PLACE", keywords: ["chợ"], maxDistanceM: 150, missRisk: 0.5 },
-        DRAIN: { kind: "NONE" },
+        rules: {
+          WATERWAY: { kind: "NEAR_FEATURE", classes: ["waterway"], maxDistanceM: 80, missRisk: 0.4 },
+          MARKET: { kind: "NEAR_FEATURE", classes: ["market"], maxDistanceM: 100, missRisk: 0.35, requireCoverage: true },
+          SCHOOL: { kind: "NEAR_FEATURE", classes: ["school"], maxDistanceM: 100, missRisk: 0.35, requireCoverage: true },
+          DRAIN: { kind: "NONE" },
+        },
+        coverage: { radiusM: 300, minPoi: 15 },
       },
     }),
   },
 }));
 
-import { contextCheck } from "../checks/context.check";
+import { createContextCheck } from "../checks/context.check";
 import type { VerificationContext } from "../checks/check-runner";
+import { OsmDataUnavailable, type OsmContextSource, type OsmFeature } from "../geo/osm-context.source";
 import type { ChecksConfig } from "../verification-config.types";
 
-const cfg = { context: { version: "context@1.0.0", goongTimeoutMs: 3000, cacheTtlDays: 30, suggestTimeoutMs: 2000 } } as ChecksConfig;
+const cfg = { context: { version: "context@2.0.0", queryTimeoutMs: 1000, suggestTimeoutMs: 2000 } } as ChecksConfig;
 const ctx = (over: Partial<VerificationContext["report"]> = {}): VerificationContext => ({
-  report: { id: "r1", userId: "u1", category: "MARKET", latitude: 10.77, longitude: 106.69, createdAt: new Date(), ...over },
+  report: { id: "r1", userId: "u1", category: "WATERWAY", latitude: 10.79, longitude: 106.69, createdAt: new Date(), ...over },
   media: [],
   attempt: 1,
   checksConfig: cfg,
 });
-const evidence = (distanceM: number) => ({
-  evidence: [{ name: "Chợ Bến Thành", keyword: "chợ", distanceM, source: "goong_place" }],
-  goongCalls: 2,
-  cacheHit: false,
+const DATA_AT = new Date("2026-10-11T20:21:00Z");
+const feature = (distanceM: number, cls: string, osm = "way/123"): OsmFeature => ({
+  name: cls === "waterway" ? "Kênh Nhiêu Lộc" : "Chợ Tân Định", class: cls, tag: `${cls}=x`, osm, distanceM,
 });
-const run = (c: VerificationContext) => contextCheck.run(c, new AbortController().signal);
 
-describe("contextCheck", () => {
+function source(found: OsmFeature[], poi = 20): jest.Mocked<OsmContextSource> {
+  return {
+    activeImport: jest.fn().mockResolvedValue({ dataAt: DATA_AT, styleVersion: "osm-context@1.0.0" }),
+    nearest: jest.fn().mockResolvedValue(found),
+    nearestPerClass: jest.fn(),
+    countPoi: jest.fn().mockResolvedValue(poi),
+  };
+}
+const run = (s: OsmContextSource, c = ctx()) => createContextCheck(s).run(c, new AbortController().signal);
+
+describe("contextCheck on OSM (specs/012)", () => {
   const saved = process.env.CONTEXT_CHECK_ENABLED;
-  beforeEach(() => {
-    process.env.CONTEXT_CHECK_ENABLED = "true";
-    findEvidenceMock.mockReset();
-  });
-  afterAll(() => {
-    process.env.CONTEXT_CHECK_ENABLED = saved;
-  });
+  beforeEach(() => (process.env.CONTEXT_CHECK_ENABLED = "true"));
+  afterAll(() => (process.env.CONTEXT_CHECK_ENABLED = saved));
 
-  it("is NOT_AVAILABLE while disabled", async () => {
+  it("is NOT_AVAILABLE while the flag is off", async () => {
     process.env.CONTEXT_CHECK_ENABLED = "false";
-    expect((await run(ctx())).status).toBe("NOT_AVAILABLE");
+    const s = source([]);
+    expect((await run(s)).status).toBe("NOT_AVAILABLE");
+    expect(s.activeImport).not.toHaveBeenCalled();
   });
 
-  it("skips categories without a rule, without calling Goong", async () => {
-    const r = await run(ctx({ category: "DRAIN" }));
-    expect(r).toMatchObject({ status: "SKIPPED", risk: null, signals: [{ name: "category_fit", status: "SKIPPED" }] });
-    expect(findEvidenceMock).not.toHaveBeenCalled();
+  it("skips NONE rules and reports without coordinates without querying", async () => {
+    const s = source([]);
+    expect((await run(s, ctx({ category: "DRAIN" }))).status).toBe("SKIPPED");
+    expect((await run(s, ctx({ latitude: null }))).status).toBe("SKIPPED");
+    expect(s.nearest).not.toHaveBeenCalled();
   });
 
-  it("skips reports without a location", async () => {
-    expect((await run(ctx({ latitude: null }))).status).toBe("SKIPPED");
-  });
-
-  it("FIT -> risk 0", async () => {
-    findEvidenceMock.mockResolvedValue(evidence(120));
-    const r = await run(ctx());
+  it("is FIT next to a canal, with the OSM evidence", async () => {
+    const s = source([feature(35, "waterway")]);
+    const r = await run(s);
     expect(r).toMatchObject({ status: "COMPLETED", risk: 0, reasons: [] });
-    expect(r.evidence).toMatchObject({ verdict: "FIT", goongCalls: 2, cacheHit: false, rulesVersion: "category-rules@1.0.0" });
+    expect(r.signals[0]).toMatchObject({ name: "category_fit", status: "COMPLETED", risk: 0, raw: 35 });
+    expect(r.evidence).toMatchObject({
+      verdict: "FIT",
+      rulesVersion: "category-rules@2.0.0",
+      nearest: { name: "Kênh Nhiêu Lộc", class: "waterway", osm: "way/123", distance_m: 35 },
+      candidatesChecked: 1,
+      coverage: null,
+      osmDataAt: DATA_AT.toISOString(),
+      styleVersion: "osm-context@1.0.0",
+    });
+    expect(s.nearest).toHaveBeenCalledWith(["waterway"], 10.79, 106.69, 500, 1000);
+    expect(s.countPoi).not.toHaveBeenCalled();
+    expect(r.evidence).not.toHaveProperty("suggestedCategories");
   });
 
-  it("MISMATCH -> missRisk, reason and the nearest place", async () => {
-    findEvidenceMock.mockResolvedValue(evidence(900));
-    const r = await run(ctx());
-    expect(r).toMatchObject({ status: "COMPLETED", risk: 0.5, reasons: ["CTX_CATEGORY_LOCATION_MISMATCH"] });
-    expect(r.evidence).toMatchObject({ verdict: "MISMATCH", nearest: { name: "Chợ Bến Thành", distance_m: 900 } });
-    expect(r.signals[0]).toMatchObject({ status: "COMPLETED", risk: 0.5, raw: 900 });
+  it("is MISMATCH for a market 420 m away in a well-mapped area", async () => {
+    const r = await run(source([feature(420, "market", "node/9")], 20), ctx({ category: "MARKET" }));
+    expect(r).toMatchObject({ status: "COMPLETED", risk: 0.35, reasons: ["CTX_CATEGORY_LOCATION_MISMATCH"] });
+    expect(r.evidence).toMatchObject({ verdict: "MISMATCH", coverage: { poi: 20, radiusM: 300 }, nearest: { osm: "node/9", distance_m: 420 } });
   });
 
-  it("propagates Goong errors (runCheckWithTimeout turns them into FAILED)", async () => {
-    findEvidenceMock.mockRejectedValue(new Error("OVER_QUERY_LIMIT"));
-    await expect(run(ctx())).rejects.toThrow("OVER_QUERY_LIMIT");
+  it("names up to 3 other categories that fit on a MISMATCH", async () => {
+    const s = source([feature(420, "market", "node/9")], 20);
+    s.nearestPerClass.mockResolvedValue([
+      feature(35, "waterway", "way/1"),
+      feature(0, "market", "node/9"), // MARKET is the chosen category: left out even if it were a fit
+      feature(90, "school", "node/2"),
+    ]);
+    const r = await run(s, ctx({ category: "MARKET" }));
+    expect(r.evidence.suggestedCategories).toEqual([
+      { category: "WATERWAY", nearest: { name: "Kênh Nhiêu Lộc", distance_m: 35 } },
+      { category: "SCHOOL", nearest: { name: "Chợ Tân Định", distance_m: 90 } },
+    ]);
+  });
+
+  it("keeps the MISMATCH when the suggestion lookup fails", async () => {
+    const s = source([feature(420, "market")], 20);
+    s.nearestPerClass.mockRejectedValue(new Error("timeout"));
+    const r = await run(s, ctx({ category: "MARKET" }));
+    expect(r).toMatchObject({ status: "COMPLETED", risk: 0.35, evidence: { verdict: "MISMATCH", suggestedCategories: null } });
+  });
+
+  it("is SKIPPED with SPARSE_DATA for a school where the map is thin", async () => {
+    const s = source([], 3);
+    const r = await run(s, ctx({ category: "SCHOOL" }));
+    expect(r).toMatchObject({ status: "SKIPPED", risk: null, reasons: [] });
+    expect(r.signals[0]).toMatchObject({ status: "SKIPPED" });
+    expect(r.evidence).toMatchObject({ verdict: "SPARSE_DATA", coverage: { poi: 3, radiusM: 300 }, nearest: null });
+    expect(s.countPoi).toHaveBeenCalledWith(10.79, 106.69, 300, 1000);
+  });
+
+  it("rejects without OSM data so the runner records FAILED", async () => {
+    const s = source([]);
+    s.activeImport.mockRejectedValue(new OsmDataUnavailable());
+    await expect(run(s)).rejects.toBeInstanceOf(OsmDataUnavailable);
   });
 });

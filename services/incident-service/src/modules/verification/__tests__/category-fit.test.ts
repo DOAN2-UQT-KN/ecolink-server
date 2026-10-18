@@ -1,50 +1,34 @@
-import { judgeFit, type GeoEvidence } from "../geo/category-fit";
-import type { FitRule } from "../verification-config.types";
+import { judgeFit, searchRadiusM, type NearFeatureRule } from "../geo/category-fit";
+import type { OsmFeature } from "../geo/osm-context.source";
 
-const place = (name: string, distanceM: number | null): GeoEvidence => ({
-  name,
-  keyword: "chợ",
-  distanceM,
-  source: distanceM === null ? "goong_geocode" : "goong_place",
+const WATERWAY: NearFeatureRule = { kind: "NEAR_FEATURE", classes: ["waterway"], maxDistanceM: 80, missRisk: 0.4 };
+const SCHOOL: NearFeatureRule = { kind: "NEAR_FEATURE", classes: ["school"], maxDistanceM: 100, missRisk: 0.35, requireCoverage: true };
+const feature = (distanceM: number, cls = "waterway"): OsmFeature => ({
+  name: "Kênh Nhiêu Lộc", class: cls, tag: "waterway=canal", osm: "way/1", distanceM,
 });
-const MARKET: FitRule = { kind: "NEARBY_PLACE", keywords: ["chợ"], maxDistanceM: 150, missRisk: 0.5 };
-const WATERWAY: FitRule = { kind: "NEARBY_PLACE", keywords: ["kênh"], maxDistanceM: 300, missRisk: 0.25, addressHints: ["Kênh"] };
-const ALLEY: FitRule = { kind: "ADDRESS_PATTERN", patterns: ["/", "Hẻm", "Ngõ", "Kiệt"], missRisk: 0.3 };
-const STREET: FitRule = { kind: "ON_STREET", maxDistanceM: 50, missRisk: 0.3 };
 
-describe("judgeFit", () => {
-  it("FIT when a market is within the radius", () => {
-    expect(judgeFit(MARKET, [place("Chợ Bàn Cờ", 120), place("Chợ Xa", 900)])).toEqual({
-      verdict: "FIT",
-      nearest: place("Chợ Bàn Cờ", 120),
-    });
+describe("judgeFit (specs/012)", () => {
+  it("is FIT within the radius, on the radius and inside an area", () => {
+    expect(judgeFit(WATERWAY, [feature(35)], null, 15).verdict).toBe("FIT");
+    expect(judgeFit(WATERWAY, [feature(80)], null, 15).verdict).toBe("FIT");
+    expect(judgeFit(WATERWAY, [feature(0)], null, 15)).toEqual({ verdict: "FIT", nearest: feature(0) });
   });
 
-  it("MISMATCH keeps the nearest place even outside the radius", () => {
-    const r = judgeFit(MARKET, [place("Chợ Xa", 900), place("Chợ Rất Xa", 1400)]);
-    expect(r.verdict).toBe("MISMATCH");
-    expect(r.nearest?.distanceM).toBe(900);
-    expect(judgeFit(MARKET, [])).toEqual({ verdict: "MISMATCH", nearest: null });
+  it("is MISMATCH outside the radius and keeps the nearest feature", () => {
+    expect(judgeFit(WATERWAY, [feature(420)], null, 15)).toEqual({ verdict: "MISMATCH", nearest: feature(420) });
+    expect(judgeFit(WATERWAY, [], null, 15)).toEqual({ verdict: "MISMATCH", nearest: null });
   });
 
-  it("an address hint counts as a fit for WATERWAY", () => {
-    const r = judgeFit(WATERWAY, [place("Cầu Xa", 800), place("12 Kênh Tẻ, Quận 7", null)]);
-    expect(r.verdict).toBe("FIT");
-    expect(r.nearest?.distanceM).toBeNull();
+  it("gives SPARSE_DATA only for a coverage rule in a sparsely mapped area", () => {
+    expect(judgeFit(SCHOOL, [], 3, 15).verdict).toBe("SPARSE_DATA");
+    expect(judgeFit(SCHOOL, [feature(300, "school")], 14, 15).verdict).toBe("SPARSE_DATA");
+    expect(judgeFit(SCHOOL, [], 15, 15).verdict).toBe("MISMATCH");
+    expect(judgeFit(SCHOOL, [feature(50, "school")], 0, 15).verdict).toBe("FIT");
+    expect(judgeFit(WATERWAY, [], 0, 15).verdict).toBe("MISMATCH");
   });
 
-  it.each([
-    ["123/45 Lê Văn Sỹ, Phường 13", "FIT"],
-    ["Hẻm 12 Trường Sa, Quận 3", "FIT"],
-    ["45 Trường Sa, Quận 3", "MISMATCH"],
-  ])("ALLEY %s -> %s", (address, verdict) => {
-    expect(judgeFit(ALLEY, [{ name: address, keyword: null, distanceM: 5, source: "goong_geocode" }]).verdict).toBe(verdict);
-  });
-
-  it.each([
-    [30, "FIT"],
-    [80, "MISMATCH"],
-  ])("ON_STREET geocode %s m away -> %s", (distanceM, verdict) => {
-    expect(judgeFit(STREET, [{ name: "Trường Sa", keyword: null, distanceM, source: "goong_geocode" }]).verdict).toBe(verdict);
+  it("searches at least 500 m so a MISMATCH names the nearest feature", () => {
+    expect(searchRadiusM(WATERWAY)).toBe(500);
+    expect(searchRadiusM({ ...WATERWAY, maxDistanceM: 1500 })).toBe(1500);
   });
 });
