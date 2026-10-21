@@ -403,7 +403,7 @@ router.patch(
 
 /**
  * @route   POST /api/v1/gifts/:id/redeem
- * @desc    Redeem a gift (SP wallet FIFO after badge discount; mirrors legacy green-point ledger)
+ * @desc    Redeem a gift at its listed price; points taken from green-point lots, earliest expiry first
  * @access  Private
  */
 router.post(

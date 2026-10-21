@@ -1,44 +1,33 @@
 import { Prisma } from "@prisma/client";
 import prisma from "../../config/prisma.client";
 import { fetchUsersByIds, getUserProfile } from "../../utils/identity-user.client";
-import { getSpendableSpBalance } from "../gamification/sp-wallet.util";
-import { GreenPointResourceType } from "../green-point/green-point-transaction.constants";
-import { isReportResourceType } from "../gamification/point-source.util";
+import { getBalance, getEarnedTotal, getExpiringSoon } from "../green-point/green-point-lot.util";
+import type { MyPointsResponse } from "./user-points.dto";
+import { GreenPointResourceType, GreenPointTransactionType } from "../green-point/green-point-transaction.constants";
 import {
   fetchCampaignsByIds,
   fetchReportsByIds,
 } from "../../utils/incident-resource.client";
 
 export class UserPointsService {
-  async getPoints(userId: string) {
+  async getPoints(userId: string): Promise<MyPointsResponse> {
     const now = new Date();
-    const [greenBalanceRow, earnedAggregate, spendablePoints] = await Promise.all([
-      prisma.userGreenPointBalance.findUnique({
-        where: { userId },
-      }),
-      prisma.greenPointTransaction.aggregate({
-        _sum: { points: true },
-        where: {
-          userId,
-          points: { gt: 0 },
-          deletedAt: null,
-        },
-      }),
-      prisma.$transaction((tx) => getSpendableSpBalance(tx, userId, now)),
+    const [balance, expiringSoon, earnedTotal] = await Promise.all([
+      getBalance(prisma, userId, now),
+      getExpiringSoon(prisma, userId, now),
+      getEarnedTotal(prisma, userId),
     ]);
-
-    const greenPoints = greenBalanceRow?.balance ?? 0;
-    const greenPointsEarnedTotal = earnedAggregate._sum.points ?? 0;
-
     return {
-      /** Spendable points (SP) — redeem gifts */
-      spendablePoints,
-      /** Current green points balance */
-      greenPoints,
-      /** Lifetime green points earned (positive ledger rows) */
-      greenPointsEarnedTotal,
-      /** @deprecated Use `spendablePoints` — kept for older clients */
-      balance: spendablePoints,
+      balance,
+      earnedTotal,
+      expiringSoon: {
+        amount: expiringSoon.amount,
+        earliestAt: expiringSoon.earliestAt?.toISOString() ?? null,
+      },
+      // Legacy fields for clients older than spec 014; removed in the cleanup release.
+      spendablePoints: balance,
+      greenPoints: balance,
+      greenPointsEarnedTotal: earnedTotal,
     };
   }
 
@@ -83,14 +72,14 @@ export class UserPointsService {
     const reportIds = [
       ...new Set(
         rows
-          .filter((row) => isReportResourceType(row.resourceType))
+          .filter((row) => row.resourceType === GreenPointResourceType.REPORT)
           .map((row) => row.resourceId),
       ),
     ];
     const referralUserIds = [
       ...new Set(
         rows
-          .filter((row) => row.resourceType === GreenPointResourceType.USER)
+          .filter((row) => row.resourceType === GreenPointResourceType.USER && row.type !== GreenPointTransactionType.MIGRATION_ADJUST)
           .map((row) => row.resourceId),
       ),
     ];
@@ -140,10 +129,10 @@ export class UserPointsService {
       if (row.resourceType === GreenPointResourceType.CAMPAIGN) {
         return { ...row, resource: campaignMap.get(row.resourceId) ?? null };
       }
-      if (isReportResourceType(row.resourceType)) {
+      if (row.resourceType === GreenPointResourceType.REPORT) {
         return { ...row, resource: reportMap.get(row.resourceId) ?? null };
       }
-      if (row.resourceType === GreenPointResourceType.USER) {
+      if (row.resourceType === GreenPointResourceType.USER && row.type !== GreenPointTransactionType.MIGRATION_ADJUST) {
         const profile = getUserProfile(referralUserMap, row.resourceId);
         return {
           ...row,
@@ -164,67 +153,6 @@ export class UserPointsService {
     });
 
     return { transactions, total };
-  }
-
-  async getLeaderboard(page: number, limit: number) {
-    const skip = (page - 1) * limit;
-    
-    const rows = await prisma.$queryRaw`
-      SELECT "user_id" as "userId", SUM("points") as "greenPoints"
-      FROM "green_point_transactions"
-      WHERE "points" > 0 AND "deleted_at" IS NULL
-      GROUP BY "user_id"
-      ORDER BY "greenPoints" DESC
-      LIMIT ${limit} OFFSET ${skip}
-    `;
-
-    const totalRaw = await prisma.$queryRaw`
-      SELECT COUNT(DISTINCT "user_id") as "total"
-      FROM "green_point_transactions"
-      WHERE "points" > 0 AND "deleted_at" IS NULL
-    `;
-    const total = Number((totalRaw as any)[0]?.total ?? 0);
-    const data = rows as any[];
-
-    if (data.length === 0) {
-      return { rows: [], total: 0 };
-    }
-
-    const userIds = data.map((r) => r.userId);
-    const profileMap = await fetchUsersByIds(userIds);
-
-    const enriched = data.map((r) => {
-      const profile = getUserProfile(profileMap, r.userId);
-      return {
-        userId: r.userId,
-        greenPoints: Number(r.greenPoints),
-        user: profile ? {
-          id: profile.id,
-          name: profile.name,
-          avatar: profile.avatar
-        } : null
-      };
-    });
-
-    return { rows: enriched, total };
-  }
-
-  async getLeaderboardMe(userId: string) {
-    const rows = await prisma.$queryRaw`
-      WITH Leaderboard AS (
-        SELECT "user_id" as "userId", SUM("points") as "greenPoints",
-               RANK() OVER(ORDER BY SUM("points") DESC) as "rank"
-        FROM "green_point_transactions"
-        WHERE "points" > 0 AND "deleted_at" IS NULL
-        GROUP BY "user_id"
-      )
-      SELECT * FROM Leaderboard WHERE "userId" = ${userId}::uuid
-    `;
-    const data = rows as any[];
-    if (data.length > 0) {
-      return { rank: Number(data[0].rank), greenPoints: Number(data[0].greenPoints) };
-    }
-    return null;
   }
 }
 

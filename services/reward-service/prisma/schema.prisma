@@ -48,8 +48,8 @@ model UserGreenPointBalance {
   @@map("user_green_point_balances")
 }
 
-/// Append-only style ledger for all green-point earnings (campaign, upvote, referral, …).
-/// Idempotency: unique (user, type, resource) while row is active — see partial index in migration.
+/// The only green-point ledger: every credit and debit (earnings, redeem, refund, expiry, migration adjust).
+/// Idempotency: unique (user_id, idempotency_key); write via insertLedgerOnce (ON CONFLICT DO NOTHING).
 model GreenPointTransaction {
   id String @id @default(uuid()) @db.Uuid
 
@@ -69,10 +69,16 @@ model GreenPointTransaction {
   /// Snapshot context (rule ids, thresholds, etc.) for audit/debug; never used to recompute points.
   metadata Json?
 
+  /// Stable per-user key, e.g. campaign_completion:<id>, vote_milestone:<reportId>:<n>, expire:<lotId>.
+  idempotencyKey String @map("idempotency_key") @db.VarChar(256)
+
+  lot GreenPointLot?
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
+  @@unique([userId, idempotencyKey])
   @@index([userId])
   @@index([resourceType, resourceId])
   @@index([type])
@@ -155,6 +161,8 @@ model GiftRedemption {
   createdAt DateTime @default(now()) @map("created_at")
 
   gift Gift @relation(fields: [giftId], references: [id], onDelete: Restrict)
+
+  lotSpends GreenPointLotSpend[]
 
   @@index([userId])
   @@index([giftId])
@@ -263,25 +271,49 @@ model Season {
   @@map("seasons")
 }
 
-/// FIFO SP buckets; `remaining` decreases on redemption. Expired batches are skipped by spend logic.
-model UserSpWalletEntry {
+/// Green-point lots (formerly user_sp_wallet). Balance = SUM(remaining) of lots with expires_at > now.
+/// CHECK (remaining >= 0 AND remaining <= amount); partial index (user_id, expires_at) WHERE remaining > 0 lives in SQL.
+model GreenPointLot {
   id     String @id @default(uuid()) @db.Uuid
   userId String @map("user_id") @db.Uuid
+
+  /// Ledger row that created the lot; null for lots carried over from the SP wallet.
+  transactionId String?                @unique @map("transaction_id") @db.Uuid
+  transaction   GreenPointTransaction? @relation(fields: [transactionId], references: [id])
 
   amount    Int
   remaining Int
 
-  sourceType PointSourceType @map("source_type")
-
-  /// Nullable when credit originates outside a concrete domain row (e.g. manual admin grant).
-  sourceId String? @map("source_id") @db.Uuid
+  /// Legacy SP source; null for lots created after step 2. Dropped in cleanup.
+  sourceType PointSourceType? @map("source_type")
+  sourceId   String?          @map("source_id") @db.Uuid
 
   createdAt DateTime @default(now()) @map("created_at")
   expiresAt DateTime @map("expires_at")
 
-  @@index([userId, expiresAt])
+  spends GreenPointLotSpend[]
+
   @@index([expiresAt])
-  @@map("user_sp_wallet")
+  @@map("green_point_lots")
+}
+
+/// How much a redemption took from each lot, so a cancel can give it back to the same lots.
+model GreenPointLotSpend {
+  id String @id @default(uuid()) @db.Uuid
+
+  redemptionId String         @map("redemption_id") @db.Uuid
+  redemption   GiftRedemption @relation(fields: [redemptionId], references: [id])
+
+  lotId String        @map("lot_id") @db.Uuid
+  lot   GreenPointLot @relation(fields: [lotId], references: [id])
+
+  amount Int
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([redemptionId, lotId])
+  @@index([redemptionId])
+  @@map("green_point_lot_spends")
 }
 
 /// Unified ledger: all CRP/VRP/SP movements (credits and debits). RP rows MUST set `seasonId`.
@@ -406,6 +438,9 @@ model GamificationPointRules {
 
   /// Points for a report the admin marks done.
   reportCompletionPoints Int @default(0) @map("report_completion_points")
+
+  /// Days until a newly created green-point lot expires.
+  pointExpirationDays Int @default(90) @map("point_expiration_days")
 
   history GamificationPointRuleHistory[]
 

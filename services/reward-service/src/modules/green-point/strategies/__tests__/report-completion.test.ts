@@ -10,6 +10,7 @@ const rules = (reportCompletionPoints: number): PointRulesSnapshot => ({
   baseReportPoint: 5,
   reportMilestoneThresholds: [],
   reportCompletionPoints,
+  pointExpirationDays: 90,
 });
 
 describe("resolveReportCompletionCredits", () => {
@@ -21,6 +22,7 @@ describe("resolveReportCompletionCredits", () => {
         transactionType: "REPORT_COMPLETION",
         resourceId: "r1",
         resourceType: "REPORT",
+        idempotencyKey: "report_completion:r1",
         metadata: { ruleId: "rule-1", reportCompletionPoints: 10 },
       },
     ]);

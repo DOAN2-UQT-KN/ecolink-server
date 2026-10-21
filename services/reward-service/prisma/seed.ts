@@ -1,6 +1,5 @@
 import { PrismaClient } from "@prisma/client";
 import { randomUUID } from "node:crypto";
-import { seedMetricMetadata } from "./seeds/metric-metadata.seed";
 
 const prisma = new PrismaClient();
 
@@ -57,7 +56,6 @@ async function main() {
     );
   }
 
-  await seedMetricMetadata(prisma);
 }
 
 main()

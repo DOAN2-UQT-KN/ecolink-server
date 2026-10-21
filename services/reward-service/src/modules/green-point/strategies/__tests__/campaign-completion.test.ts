@@ -10,6 +10,7 @@ const rules = (campaignCompletionPoints: number): PointRulesSnapshot => ({
   baseReportPoint: 5,
   reportMilestoneThresholds: [1, 2, 5, 10],
   reportCompletionPoints: 0,
+  pointExpirationDays: 90,
 });
 
 const points = (eligibleShifts: number, registeredShifts: number, rate = 20) =>
@@ -40,6 +41,7 @@ describe("resolveCampaignCompletionCredits", () => {
       resourceId: "c1",
       resourceType: "CAMPAIGN",
       transactionType: "CAMPAIGN_COMPLETION",
+      idempotencyKey: "campaign_completion:c1",
       metadata: { ruleId: "rule-1", campaignCompletionPoints: 20, eligibleShifts: 2, registeredShifts: 3 },
     });
   });

@@ -4,7 +4,11 @@ import {
   type PointRulesSnapshot,
 } from "../../gamification/gamification-config.service";
 import { applyResolvedCredits, warnNoPointRules } from "../green-point-ledger.util";
-import { GreenPointResourceType, GreenPointTransactionType } from "../green-point-transaction.constants";
+import {
+  GreenPointResourceType,
+  GreenPointTransactionType,
+  IdempotencyKey,
+} from "../green-point-transaction.constants";
 import {
   REPORT_COMPLETION_GREEN_POINT_JOB_TYPE,
   type ReportCompletionGreenPointsPayload,
@@ -28,6 +32,7 @@ export function resolveReportCompletionCredits(
       transactionType: GreenPointTransactionType.REPORT_COMPLETION,
       resourceId: payload.reportId,
       resourceType: GreenPointResourceType.REPORT,
+      idempotencyKey: IdempotencyKey.reportCompletion(payload.reportId),
       metadata: { ruleId: rules.id, reportCompletionPoints: rules.reportCompletionPoints },
     },
   ];

@@ -3,15 +3,17 @@ import { randomUUID } from "crypto";
 import prisma from "../../config/prisma.client";
 import { HTTP_STATUS, HttpError } from "../../constants/http-status";
 import { fetchUsersByIds, getUserProfile } from "../../utils/identity-user.client";
-import { badgeService } from "../gamification/badge.service";
-import {
-  getSpendableSpBalance,
-  spendSpFifo,
-} from "../gamification/sp-wallet.util";
 import {
   GreenPointResourceType,
   GreenPointTransactionType,
+  IdempotencyKey,
 } from "../green-point/green-point-transaction.constants";
+import {
+  insertLedgerOnce,
+  loadPointExpirationDays,
+  lotExpiresAt,
+} from "../green-point/green-point-ledger.util";
+import { getBalance, planRefund, spendLotsFifo } from "../green-point/green-point-lot.util";
 import {
   AdminGiftRedemptionListItemResponse,
   CreateGiftBody,
@@ -490,103 +492,80 @@ export class GiftService {
     giftId: string,
     body: RedeemGiftBody,
   ): Promise<GiftRedemptionResponse> {
-    const discountBps = await badgeService.getBestStoreDiscountBps(userId);
     const phoneNumber = body.phoneNumber.trim();
     const pickupLocation = body.pickupLocation.trim();
 
-    return prisma.$transaction(
-      async (tx) => {
-        const gift = await tx.gift.findFirst({
-          where: { id: giftId, deletedAt: null, isActive: true },
-        });
-        if (!gift) {
-          throw new HttpError(
-            HTTP_STATUS.NOT_FOUND.withMessage("Gift not found"),
-          );
-        }
-
-        if (gift.stockRemaining !== null) {
-          const stock = await tx.gift.updateMany({
-            where: { id: gift.id, stockRemaining: { gt: 0 } },
-            data: { stockRemaining: { decrement: 1 } },
+    try {
+      return await prisma.$transaction(
+        async (tx) => {
+          const gift = await tx.gift.findFirst({
+            where: { id: giftId, deletedAt: null, isActive: true },
           });
-          if (stock.count === 0) {
+          if (!gift) {
             throw new HttpError(
-              HTTP_STATUS.UNPROCESSABLE_ENTITY.withMessage(
-                "Gift is out of stock",
-              ),
+              HTTP_STATUS.NOT_FOUND.withMessage("Gift not found"),
             );
           }
-        }
 
-        const listPrice = gift.greenPoints;
-        const effectiveSp = Math.ceil(
-          (listPrice * Math.max(0, 10_000 - discountBps)) / 10_000,
-        );
+          if (gift.stockRemaining !== null) {
+            const stock = await tx.gift.updateMany({
+              where: { id: gift.id, stockRemaining: { gt: 0 } },
+              data: { stockRemaining: { decrement: 1 } },
+            });
+            if (stock.count === 0) {
+              throw new HttpError(
+                HTTP_STATUS.UNPROCESSABLE_ENTITY.withMessage(
+                  "Gift is out of stock",
+                ),
+              );
+            }
+          }
 
-        const now = new Date();
-        if (effectiveSp > 0) {
-          const spBal = await getSpendableSpBalance(tx, userId, now);
-          if (spBal < effectiveSp) {
+          // Listed price for everyone (spec 014 FR-043: no badge discount).
+          const price = gift.greenPoints;
+          const now = new Date();
+          if (price > 0 && (await getBalance(tx, userId, now)) < price) {
             throw new HttpError(
-              HTTP_STATUS.UNPROCESSABLE_ENTITY.withMessage(
-                "Insufficient spendable points (SP)",
-              ),
+              HTTP_STATUS.UNPROCESSABLE_ENTITY.withMessage("Insufficient green points"),
             );
           }
-        }
 
-        const redemption = await tx.giftRedemption.create({
-          data: {
-            userId,
-            giftId: gift.id,
-            greenPointsSpent: effectiveSp,
-            phoneNumber,
-            pickupLocation,
-            status: "PROCESSING",
-            statusUpdatedAt: now,
-          },
-        });
-
-        if (effectiveSp > 0) {
-          await spendSpFifo(tx, userId, effectiveSp, now);
-          await tx.userPointTransaction.create({
+          const redemption = await tx.giftRedemption.create({
             data: {
-              id: randomUUID(),
               userId,
-              kind: "SP",
-              amount: -effectiveSp,
-              sourceType: "STORE",
-              sourceId: redemption.id,
-              seasonId: null,
-              metadata: {
-                giftId: gift.id,
-                redemptionId: redemption.id,
-                listPrice,
-                discountBps,
-                effectiveSp,
-              } as Prisma.InputJsonValue,
-              idempotencyKey: `gift_redeem_sp:${redemption.id}`,
+              giftId: gift.id,
+              greenPointsSpent: price,
+              phoneNumber,
+              pickupLocation,
+              status: "PROCESSING",
+              statusUpdatedAt: now,
             },
           });
-        }
 
-        if (effectiveSp > 0) {
-          await tx.greenPointTransaction.create({
-            data: {
+          if (price > 0) {
+            await spendLotsFifo(tx, userId, redemption.id, price, now);
+            await insertLedgerOnce(tx, {
               userId,
+              points: -price,
               type: GreenPointTransactionType.GIFT_REDEEM,
               resourceId: redemption.id,
               resourceType: GreenPointResourceType.GIFT_REDEMPTION,
-              points: -effectiveSp,
-            },
-          });
-        }
+              idempotencyKey: IdempotencyKey.giftRedeem(redemption.id),
+              metadata: { giftId: gift.id, listPrice: price },
+            });
+          }
 
-        return toGiftRedemptionResponse(redemption);
-      },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-    );
+          return toGiftRedemptionResponse(redemption);
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+    } catch (error) {
+      // Serialization conflict with a concurrent redemption of the same user.
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") {
+        throw new HttpError(HTTP_STATUS.CONFLICT.withMessage("Please retry"));
+      }
+      throw error;
+    }
   }
 
   async updateRedemptionStatus(
@@ -624,66 +603,77 @@ export class GiftService {
         });
 
         if (nextStatus === "CANCELLED" && redemption.greenPointsSpent > 0) {
-          const idempotencyKey = `gift_redeem_refund_sp:${redemption.id}`;
-          const existingRefund = await tx.userPointTransaction.findFirst({
-            where: { userId: redemption.userId, idempotencyKey },
-          });
-
-          if (!existingRefund) {
-            const spRule = await tx.spendablePointRules.findFirst({
-              where: { isActive: true },
-              orderBy: { effectiveFrom: "desc" },
-            });
-            const expirationDays = spRule?.expirationDays ?? 90;
-            const expiresAt = new Date(now);
-            expiresAt.setUTCDate(expiresAt.getUTCDate() + expirationDays);
-
-            await tx.userPointTransaction.create({
-              data: {
-                id: randomUUID(),
-                userId: redemption.userId,
-                kind: "SP",
-                amount: redemption.greenPointsSpent,
-                sourceType: "STORE",
-                sourceId: redemption.id,
-                seasonId: null,
-                metadata: {
-                  giftId: redemption.giftId,
-                  redemptionId: redemption.id,
-                  refundReason: "GIFT_REDEMPTION_CANCELLED",
-                } as Prisma.InputJsonValue,
-                idempotencyKey,
-              },
-            });
-
-            await tx.userSpWalletEntry.create({
-              data: {
-                id: randomUUID(),
-                userId: redemption.userId,
-                amount: redemption.greenPointsSpent,
-                remaining: redemption.greenPointsSpent,
-                sourceType: "STORE",
-                sourceId: redemption.id,
-                expiresAt,
-              },
-            });
-
-            await tx.greenPointTransaction.create({
-              data: {
-                userId: redemption.userId,
-                type: GreenPointTransactionType.GIFT_REDEEM_REFUND,
-                resourceId: redemption.id,
-                resourceType: GreenPointResourceType.GIFT_REDEMPTION,
-                points: redemption.greenPointsSpent,
-              },
-            });
-          }
+          await refundRedemptionPoints(tx, redemption, now);
         }
 
         return toGiftRedemptionResponse(updated);
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     );
+  }
+}
+
+/**
+ * Gives a cancelled redemption's points back, once (spec 014 FR-042): to the same lots it took from,
+ * keeping their expiry; the share of lots already expired is written off at once (FR-042b). A
+ * redemption from before lots were tracked gets a new lot instead (FR-042a).
+ */
+async function refundRedemptionPoints(
+  tx: Prisma.TransactionClient,
+  redemption: GiftRedemption,
+  now: Date,
+): Promise<void> {
+  const refundId = await insertLedgerOnce(tx, {
+    userId: redemption.userId,
+    points: redemption.greenPointsSpent,
+    type: GreenPointTransactionType.GIFT_REDEEM_REFUND,
+    resourceId: redemption.id,
+    resourceType: GreenPointResourceType.GIFT_REDEMPTION,
+    idempotencyKey: IdempotencyKey.giftRedeemRefund(redemption.id),
+    metadata: { giftId: redemption.giftId, redemptionId: redemption.id },
+  });
+  if (!refundId) return;
+
+  const spends = await tx.greenPointLotSpend.findMany({
+    where: { redemptionId: redemption.id },
+    include: { lot: { select: { expiresAt: true } } },
+  });
+  if (spends.length === 0) {
+    const expirationDays = await loadPointExpirationDays(tx);
+    await tx.greenPointLot.create({
+      data: {
+        userId: redemption.userId,
+        transactionId: refundId,
+        amount: redemption.greenPointsSpent,
+        remaining: redemption.greenPointsSpent,
+        createdAt: now,
+        expiresAt: lotExpiresAt(now, expirationDays),
+      },
+    });
+    return;
+  }
+
+  const { restore, expire } = planRefund(
+    spends,
+    new Map(spends.map((sp) => [sp.lotId, sp.lot.expiresAt])),
+    now,
+  );
+  for (const r of restore) {
+    await tx.greenPointLot.update({
+      where: { id: r.lotId },
+      data: { remaining: { increment: r.amount } },
+    });
+  }
+  for (const e of expire) {
+    await insertLedgerOnce(tx, {
+      userId: redemption.userId,
+      points: -e.amount,
+      type: GreenPointTransactionType.EXPIRE,
+      resourceId: e.lotId,
+      resourceType: GreenPointResourceType.GREEN_POINT_LOT,
+      idempotencyKey: IdempotencyKey.expireOnRefund(e.lotId, redemption.id),
+      metadata: { lotId: e.lotId, redemptionId: redemption.id },
+    });
   }
 }
 

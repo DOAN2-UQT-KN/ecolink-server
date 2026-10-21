@@ -7,6 +7,7 @@ import { applyResolvedCredits, warnNoPointRules } from "../green-point-ledger.ut
 import {
   GreenPointResourceType,
   GreenPointTransactionType,
+  IdempotencyKey,
 } from "../green-point-transaction.constants";
 import { CAMPAIGN_COMPLETION_JOB_TYPE } from "../green-point.types";
 import type {
@@ -36,6 +37,7 @@ function credit(campaignId: string, userId: string, points: number, metadata: Pr
     transactionType: GreenPointTransactionType.CAMPAIGN_COMPLETION,
     resourceId: campaignId,
     resourceType: GreenPointResourceType.CAMPAIGN,
+    idempotencyKey: IdempotencyKey.campaignCompletion(campaignId),
     metadata,
   };
 }

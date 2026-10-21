@@ -15,6 +15,8 @@ export interface ResolvedCredit {
   transactionType: string;
   resourceId: string;
   resourceType: string;
+  /** Per-user ledger key from `IdempotencyKey` (spec 014 R1). */
+  idempotencyKey: string;
   metadata: Prisma.InputJsonValue;
 }
 

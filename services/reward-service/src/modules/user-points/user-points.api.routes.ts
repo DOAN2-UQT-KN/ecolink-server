@@ -9,7 +9,7 @@ const router = Router();
 
 /**
  * @route   GET /api/v1/me/points
- * @desc    SP wallet balance, green points balance, and lifetime green earned
+ * @desc    Green point balance, points expiring within 7 days, and total earned
  * @access  Private
  */
 router.get("/me/points", authenticate, async (req, res): Promise<void> => {
@@ -87,66 +87,6 @@ router.get(
     }
   }
 );
-
-/**
- * @route   GET /api/v1/leaderboard
- * @desc    Get leaderboard
- * @access  Public
- */
-router.get(
-  "/leaderboard",
-  query("page").optional().isInt({ min: 1 }).toInt(),
-  query("limit").optional().isInt({ min: 1, max: 100 }).toInt(),
-  async (req, res): Promise<void> => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      sendError(res, HTTP_STATUS.VALIDATION_ERROR, {
-        errors: errors.array(),
-      });
-      return;
-    }
-
-    const page = (req.query?.page as number | undefined) ?? 1;
-    const limit = (req.query?.limit as number | undefined) ?? 20;
-
-    try {
-      const { rows, total } = await userPointsService.getLeaderboard(page, limit);
-      const totalPages = total === 0 ? 0 : Math.ceil(total / limit);
-
-      sendSuccess(res, HTTP_STATUS.OK, {
-        leaderboard: rows,
-        page,
-        limit,
-        total,
-        totalPages,
-      });
-    } catch (error) {
-      console.error("Get leaderboard error:", error);
-      sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
-    }
-  }
-);
-
-/**
- * @route   GET /api/v1/leaderboard/me
- * @desc    Get current user's rank on leaderboard
- * @access  Private
- */
-router.get("/leaderboard/me", authenticate, async (req, res): Promise<void> => {
-  const userId = req.user?.userId;
-  if (!userId) {
-    sendError(res, HTTP_STATUS.UNAUTHORIZED);
-    return;
-  }
-
-  try {
-    const data = await userPointsService.getLeaderboardMe(userId);
-    sendSuccess(res, HTTP_STATUS.OK, { leaderboardMe: data });
-  } catch (error) {
-    console.error("Get leaderboard me error:", error);
-    sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
-  }
-});
 
 /**
  * @route   GET /api/v1/me/redemptions

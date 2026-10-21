@@ -4,7 +4,11 @@ import {
   type PointRulesSnapshot,
 } from "../../gamification/gamification-config.service";
 import { applyResolvedCredits, warnNoPointRules } from "../green-point-ledger.util";
-import { GreenPointTransactionType } from "../green-point-transaction.constants";
+import {
+  GreenPointResourceType,
+  GreenPointTransactionType,
+  IdempotencyKey,
+} from "../green-point-transaction.constants";
 import {
   REPORT_VOTE_MILESTONE_GREEN_POINT_JOB_TYPE,
   type ReportVoteMilestoneGreenPointsPayload,
@@ -14,13 +18,6 @@ import type {
   GreenPointCreditStrategy,
   ResolvedCredit,
 } from "./green-point-credit-strategy.types";
-
-export const REPORT_VOTE_MILESTONE_RESOURCE_PREFIX = "REPORT_VOTE_MILESTONE_";
-
-function encodeMilestoneResourceType(threshold: number): string {
-  // Per-report idempotency key: one payout per (report, threshold). Moves to idempotency_key in step 2.
-  return `${REPORT_VOTE_MILESTONE_RESOURCE_PREFIX}${threshold}`;
-}
 
 /**
  * Every milestone reached (threshold <= voteCount): the i-th (1-based, ascending) pays
@@ -41,7 +38,9 @@ export function resolveReportVoteMilestoneCredits(
         points: rules.baseReportPoint * milestoneIndex,
         transactionType: GreenPointTransactionType.REPORT_VOTE_MILESTONE,
         resourceId: payload.reportId,
-        resourceType: encodeMilestoneResourceType(threshold),
+        resourceType: GreenPointResourceType.REPORT,
+        // One payout per (report, threshold).
+        idempotencyKey: IdempotencyKey.voteMilestone(payload.reportId, threshold),
         metadata: {
           ruleId: rules.id,
           baseReportPoint: rules.baseReportPoint,
