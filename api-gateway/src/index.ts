@@ -332,6 +332,27 @@ app.use(
 );
 
 app.use(
+  "/api/v1/admin/gift-sources",
+  gatewayProxy(REWARD_SERVICE_URL, {
+    proxyReqPathResolver: (req) => `/api/v1/admin/gift-sources${req.url}`,
+  }),
+);
+
+app.use(
+  "/api/v1/admin/gifts",
+  gatewayProxy(REWARD_SERVICE_URL, {
+    proxyReqPathResolver: (req) => `/api/v1/admin/gifts${req.url}`,
+  }),
+);
+
+app.use(
+  "/api/v1/admin/stock-batches",
+  gatewayProxy(REWARD_SERVICE_URL, {
+    proxyReqPathResolver: (req) => `/api/v1/admin/stock-batches${req.url}`,
+  }),
+);
+
+app.use(
   "/api/v1/admin/gamification",
   gatewayProxy(REWARD_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/admin/gamification${req.url}`,
