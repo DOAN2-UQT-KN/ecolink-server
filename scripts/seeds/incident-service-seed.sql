@@ -25,14 +25,13 @@ VALUES
 ON CONFLICT ("id") DO NOTHING;
 
 -- campaigns
-INSERT INTO campaigns ("id", "title", "description", "status", "difficulty", "is_verify", "organization_id", "created_by", "updated_by", "created_at", "updated_at", "deleted_at")
+INSERT INTO campaigns ("id", "title", "description", "status", "is_verify", "organization_id", "created_by", "updated_by", "created_at", "updated_at", "deleted_at")
 VALUES
   (
     '44444444-4444-4444-a444-444444444411',
     'Weekend River Cleanup',
     'Seed campaign',
     1,
-    2,
     TRUE,
     '44444444-4444-4444-a444-444444444401',
     '11111111-1111-1111-1111-111111111141',

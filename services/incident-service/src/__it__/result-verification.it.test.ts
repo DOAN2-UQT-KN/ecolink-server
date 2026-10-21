@@ -45,12 +45,9 @@ jest.mock("../modules/organization/identity-user.client", () => ({
       savedLocationDistanceM: null,
     },
 }));
-jest.mock("../modules/reward/reward-service.client", () => {
-  const tier = async (level: number) => ({ level, maxVolunteers: 20, suggestedMinVolunteers: 10, greenPoints: level * 10 });
-  return {
-    rewardServiceClient: { getDifficultyByLevel: tier, getDifficultyByLevelStrict: tier, getDifficulties: async () => [] },
-  };
-});
+jest.mock("../modules/reward/reward-service.client", () => ({
+  rewardServiceClient: { getCampaignCompletionPoints: async () => 20 },
+}));
 jest.mock("../queue/register", () => ({
   backgroundJobDispatcher: {
     dispatch: jest.fn().mockResolvedValue(undefined),
@@ -137,7 +134,6 @@ async function seed(
       status: CampaignStatus.ACTIVE,
       organizationId: org.id,
       createdBy: OWNER,
-      difficulty: 1,
       approvedAt: start,
       ...POINT,
       campaignManagers: { create: [{ userId: OWNER, assignedBy: OWNER }, { userId: MGR, assignedBy: OWNER }] },
@@ -521,7 +517,7 @@ describe("voting", () => {
     const credits = await prisma.outboxEvent.findFirstOrThrow({
       where: { aggregateId: c.id, eventType: OutboxEventType.CAMPAIGN_COMPLETION_GREEN_POINTS },
     });
-    expect(credits.payload).toMatchObject({ credits: [{ userId: V1, points: 10 }] });
+    expect(credits.payload).toEqual({ campaignId: c.id, participants: [{ userId: V1, eligibleShifts: 2, registeredShifts: 2 }] });
     const log = await prisma.campaignStatusLog.findFirstOrThrow({ where: { campaignId: c.id, event: "approve_completion" } });
     expect(log).toMatchObject({ actorRole: "system", actorId: null });
     // Too late to vote now.

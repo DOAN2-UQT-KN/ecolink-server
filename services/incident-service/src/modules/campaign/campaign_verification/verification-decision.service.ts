@@ -14,7 +14,6 @@ import { GlobalStatus, ReportStatus } from "../../../constants/status.enum";
 import { emitOutbox } from "../../../outbox/outbox.writer";
 import { OutboxEventType } from "../../../outbox/outbox.types";
 import { organizationMemberRepository } from "../../organization/organization_member.repository";
-import { rewardServiceClient } from "../../reward/reward-service.client";
 import { getCampaignAdminNotifyUserIds } from "../campaign-completion-admin-notify.config";
 import { campaignNameNotificationPayload, campaignTitleNotificationPayload } from "../campaign-i18n";
 import { transitionCampaign, type CampaignActorRole } from "../campaign-state-machine";
@@ -88,26 +87,23 @@ export async function latestRounds(db: Db, campaignId: string): Promise<MeetingP
   return [...latest.values()];
 }
 
-/** What completing pays out, read before the transaction (reward-service is remote). */
+/** What completing reports to reward-service and who hears about it, read before the transaction. */
 export interface CompletionPayout {
-  difficulty: number;
-  credits: Array<{ userId: string; points: number }>;
+  /** Shifts attended per person (spec 4.1, 5.3); reward-service turns them into points (spec 013). */
+  participants: Array<{ userId: string; eligibleShifts: number; registeredShifts: number }>;
   /** Everyone registered or present hears the campaign is done (spec 5.4). */
   volunteerIds: string[];
 }
 
-export async function prepareCompletionPayout(campaignId: string, difficulty: number): Promise<CompletionPayout> {
-  const tier = await rewardServiceClient.getDifficultyByLevel(difficulty);
-  if (!tier) throw new Error("Campaign difficulty missing in reward service");
-  /** Green points per shift attended long enough (spec 4.1, 5.3), at the settled difficulty. */
-  const credits = await shiftAttendanceService.completionCredits(campaignId, tier.greenPoints);
+export async function prepareCompletionPayout(campaignId: string): Promise<CompletionPayout> {
+  const participants = await shiftAttendanceService.completionAttendance(campaignId);
   const volunteerIds = [
     ...new Set([
       ...(await campaignRegistrationRepository.findRegisteredUserIds(campaignId)),
-      ...credits.map((c) => c.userId),
+      ...participants.map((p) => p.userId),
     ]),
   ];
-  return { difficulty, credits, volunteerIds };
+  return { participants, volunteerIds };
 }
 
 /**
@@ -121,16 +117,14 @@ export async function completeCampaign(
   args: { actor: Extract<CampaignActorRole, "admin" | "system">; actorId: string | null; payout: CompletionPayout },
 ): Promise<void> {
   const id = campaign.id;
-  const { difficulty, credits } = args.payout;
-  const difficultyChanged = difficulty !== campaign.difficulty;
+  const { participants } = args.payout;
   await transitionCampaign(tx, {
     campaignId: id,
     event: "approve_completion",
     fromStatus: campaign.status,
     actor: args.actor,
     actorId: args.actorId,
-    data: { rejectReason: null, difficulty, completionAwaitingAdmin: false },
-    ...(difficultyChanged ? { changes: { difficulty: { from: campaign.difficulty, to: difficulty } } } : {}),
+    data: { rejectReason: null, completionAwaitingAdmin: false },
   });
 
   const by = args.actorId ? { updatedBy: args.actorId } : {};
@@ -181,12 +175,12 @@ export async function completeCampaign(
       data: { status: SOS_RESPONDER_STATUS.CANCELLED, cancelledAt: now },
     });
   }
-  if (credits.length > 0) {
+  if (participants.length > 0) {
     await emitOutbox(tx, {
       aggregateType: "campaign",
       aggregateId: id,
       eventType: OutboxEventType.CAMPAIGN_COMPLETION_GREEN_POINTS,
-      payload: { campaignId: id, credits },
+      payload: { campaignId: id, participants },
       dedupKey: `${OutboxEventType.CAMPAIGN_COMPLETION_GREEN_POINTS}:${id}`,
     });
   }
@@ -304,7 +298,7 @@ export class VerificationDecisionService {
   }
 
   private async complete(campaign: CampaignWithReports): Promise<void> {
-    const payout = await prepareCompletionPayout(campaign.id, campaign.difficulty);
+    const payout = await prepareCompletionPayout(campaign.id);
     const teamIds = await campaignTeamIds(campaign);
     await prisma.$transaction(
       async (tx) => {

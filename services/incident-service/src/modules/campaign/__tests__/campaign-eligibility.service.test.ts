@@ -23,17 +23,18 @@ const org = (
 });
 
 describe("computeCreateEligibility", () => {
-  it("verified organization: no difficulty or open limit", () => {
+  it("verified organization: no open limit", () => {
     const e = computeCreateEligibility({
       org: org(),
       role: "OWNER",
       openCount: 10,
       reviewQueueCount: 0,
     });
-    expect(e).toMatchObject({ canCreate: true, hidden: false, isVerified: true, maxDifficulty: null });
+    expect(e).toMatchObject({ canCreate: true, hidden: false, isVerified: true, openLimit: null });
+    expect(e).not.toHaveProperty("maxDifficulty");
   });
 
-  it("unverified (or suspended tick): lowest difficulty, 2 open campaigns", () => {
+  it("unverified (or suspended tick): only the 2 open campaigns limit (spec 013 FR-044)", () => {
     for (const o of [
       org({ trustTier: "BASIC" }),
       org({ tickSuspended: true }),
@@ -41,7 +42,8 @@ describe("computeCreateEligibility", () => {
       org({ verificationExpiresAt: new Date(Date.now() - 1000) }),
     ]) {
       const ok = computeCreateEligibility({ org: o, role: "OWNER", openCount: 1, reviewQueueCount: 0 });
-      expect(ok).toMatchObject({ canCreate: true, isVerified: false, maxDifficulty: 1, openLimit: 2 });
+      expect(ok).toMatchObject({ canCreate: true, isVerified: false, openLimit: 2 });
+      expect(ok).not.toHaveProperty("maxDifficulty");
       const full = computeCreateEligibility({ org: o, role: "OWNER", openCount: 2, reviewQueueCount: 0 });
       expect(full.reasons).toEqual(["UNVERIFIED_OPEN_LIMIT"]);
     }

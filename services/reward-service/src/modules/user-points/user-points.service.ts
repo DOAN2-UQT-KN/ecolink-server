@@ -3,6 +3,7 @@ import prisma from "../../config/prisma.client";
 import { fetchUsersByIds, getUserProfile } from "../../utils/identity-user.client";
 import { getSpendableSpBalance } from "../gamification/sp-wallet.util";
 import { GreenPointResourceType } from "../green-point/green-point-transaction.constants";
+import { isReportResourceType } from "../gamification/point-source.util";
 import {
   fetchCampaignsByIds,
   fetchReportsByIds,
@@ -82,7 +83,7 @@ export class UserPointsService {
     const reportIds = [
       ...new Set(
         rows
-          .filter((row) => row.resourceType === GreenPointResourceType.REPORT)
+          .filter((row) => isReportResourceType(row.resourceType))
           .map((row) => row.resourceId),
       ),
     ];
@@ -139,7 +140,7 @@ export class UserPointsService {
       if (row.resourceType === GreenPointResourceType.CAMPAIGN) {
         return { ...row, resource: campaignMap.get(row.resourceId) ?? null };
       }
-      if (row.resourceType === GreenPointResourceType.REPORT) {
+      if (isReportResourceType(row.resourceType)) {
         return { ...row, resource: reportMap.get(row.resourceId) ?? null };
       }
       if (row.resourceType === GreenPointResourceType.USER) {

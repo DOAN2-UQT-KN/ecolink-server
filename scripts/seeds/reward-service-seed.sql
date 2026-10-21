@@ -45,7 +45,8 @@ INSERT INTO gamification_point_rules (
   "id",
   "base_report_point",
   "report_milestone_thresholds",
-  "volunteer_bonus_cap_by_difficulty",
+  "campaign_completion_points",
+  "report_completion_points",
   "is_active",
   "effective_from",
   "created_at",
@@ -55,7 +56,8 @@ VALUES (
   'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1',
   5,
   ARRAY[10, 20, 50, 100]::INTEGER[],
-  '{"1": 30, "2": 60, "3": 90, "4": 120}'::JSONB,
+  20,
+  0,
   TRUE,
   '2026-01-01T00:00:00Z',
   '2026-01-01T00:00:00Z',
@@ -64,7 +66,8 @@ VALUES (
 ON CONFLICT ("id") DO UPDATE SET
   "base_report_point" = EXCLUDED."base_report_point",
   "report_milestone_thresholds" = EXCLUDED."report_milestone_thresholds",
-  "volunteer_bonus_cap_by_difficulty" = EXCLUDED."volunteer_bonus_cap_by_difficulty",
+  "campaign_completion_points" = EXCLUDED."campaign_completion_points",
+  "report_completion_points" = EXCLUDED."report_completion_points",
   "updated_at" = EXCLUDED."updated_at";
 
 INSERT INTO volunteer_org_multiplier_rules ("id", "code", "multiplier", "priority", "is_active", "created_at", "updated_at")

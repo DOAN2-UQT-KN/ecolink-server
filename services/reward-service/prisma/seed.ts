@@ -45,13 +45,15 @@ async function main() {
     await prisma.gamificationPointRules.create({
       data: {
         id: randomUUID(),
+        campaignCompletionPoints: 20,
         baseReportPoint,
         reportMilestoneThresholds,
+        reportCompletionPoints: 0,
         isActive: true,
       },
     });
     console.log(
-      "Reward-service: gamification point rules seeded (citizen report vote milestones).",
+      "Reward-service: gamification point rules seeded.",
     );
   }
 

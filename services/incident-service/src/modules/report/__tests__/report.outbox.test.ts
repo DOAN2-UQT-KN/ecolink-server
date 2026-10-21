@@ -50,7 +50,6 @@ import { OutboxEventType } from "../../../outbox/outbox.types";
 
 describe("adminMarkReportDone (outbox producer)", () => {
   beforeEach(() => {
-    process.env.REPORT_COMPLETION_GREEN_POINTS = "10";
     notifyMock.mockResolvedValue(undefined);
     emitOutboxMock.mockResolvedValue(undefined);
     findByIdMock.mockResolvedValue({
@@ -82,14 +81,22 @@ describe("adminMarkReportDone (outbox producer)", () => {
       aggregateType: "report",
       aggregateId: "report-1",
       eventType: OutboxEventType.REPORT_COMPLETION_GREEN_POINTS,
-      payload: { reportId: "report-1", userId: "user-1", points: 10 },
+      payload: { reportId: "report-1", userId: "user-1" },
       dedupKey: "REPORT_COMPLETION_GREEN_POINTS:report-1",
     });
+    // reward-service decides the amount (spec 013 FR-020).
+    expect(event.payload).not.toHaveProperty("points");
   });
 
   it("KHÔNG gọi reward qua hàng đợi/HTTP trong mark-done (đã tách rời)", async () => {
     await reportService.adminMarkReportDone("report-1");
     expect(enqueueMock).not.toHaveBeenCalled();
+  });
+
+  it("report không có người tạo -> không emit", async () => {
+    markReportAsDoneMock.mockResolvedValue({ id: "report-1", userId: null, title: "A report" });
+    await reportService.adminMarkReportDone("report-1");
+    expect(emitOutboxMock).not.toHaveBeenCalled();
   });
 
   it("emit throw -> mark-done reject (không nuốt lỗi)", async () => {

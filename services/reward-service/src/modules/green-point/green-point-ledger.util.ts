@@ -1,6 +1,10 @@
 import { Prisma } from "@prisma/client";
 import { applyRankingPointCredit } from "../gamification/rp-credit.util";
 import { applySpendablePointCredit } from "../gamification/sp-credit.util";
+import type {
+  GreenPointApplyResult,
+  ResolvedCredit,
+} from "./strategies/green-point-credit-strategy.types";
 
 export type LedgerApplyOutcome = "credited" | "skipped";
 
@@ -53,4 +57,25 @@ export async function applyGreenPointLedgerCredit(
   await applyRankingPointCredit(tx, params);
 
   return "credited";
+}
+
+/** Applies each resolved credit; duplicates and zero amounts count as skipped. */
+export async function applyResolvedCredits(
+  tx: Prisma.TransactionClient,
+  credits: ResolvedCredit[],
+): Promise<GreenPointApplyResult> {
+  let credited = 0;
+  let skipped = 0;
+  for (const credit of credits) {
+    const outcome = await applyGreenPointLedgerCredit(tx, credit);
+    if (outcome === "credited") credited++;
+    else skipped++;
+  }
+  return { credited, skipped };
+}
+
+/** No active point rules: nothing to credit (spec 013 FR-033). Not an error, so no retry. */
+export function warnNoPointRules(jobType: string, resourceId: string): GreenPointApplyResult {
+  console.warn(`[green-point] no active point rules; ${jobType} for ${resourceId} not credited`);
+  return { credited: 0, skipped: 0 };
 }

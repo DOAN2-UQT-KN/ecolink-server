@@ -110,6 +110,9 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
     requestBody: "PatchGamificationPointRulesBody",
     responseData: "GamificationPointRulesOneEnvelopeData",
   },
+  "GET /api/v1/admin/gamification/point-rules/history": {
+    responseData: "GamificationPointRuleHistoryEnvelopeData",
+  },
   "GET /api/v1/admin/gamification/sp-rules": {
     responseData: "SpendablePointRulesOneEnvelopeData",
   },

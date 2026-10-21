@@ -20,8 +20,6 @@ import {
 import { GlobalStatus } from "../../constants/status.enum";
 import {
   CAMPAIGN_COMPLETION_UNHANDLED_REASON_MAX,
-  CAMPAIGN_DIFFICULTY_MAX,
-  CAMPAIGN_DIFFICULTY_MIN,
   CAMPAIGN_DAY_MAX,
   CAMPAIGN_MEETING_POINT_MAX,
   CAMPAIGN_REVIEW_REASON_MAX_LENGTH,
@@ -124,11 +122,6 @@ const campaignDetailValidators = () => [
     .optional({ nullable: true })
     .isInt({ min: 1 })
     .withMessage("shift maxVolunteers must be a whole number ≥ 1"),
-  body("minVolunteersReason")
-    .optional({ nullable: true })
-    .isString()
-    .isLength({ max: 1000 })
-    .withMessage("minVolunteersReason must be at most 1000 characters"),
   body("shifts.*.startAt").optional({ nullable: true }).isISO8601(),
   body("shifts.*.endAt").optional({ nullable: true }).isISO8601(),
   body("shifts.*.gatherAt").optional({ nullable: true }).isISO8601(),
@@ -174,11 +167,6 @@ export class CampaignController {
       .withMessage("banner must be at most 2048 characters")
       .trim(),
     body("description").optional().trim(),
-    body("difficulty")
-      .isInt({ min: CAMPAIGN_DIFFICULTY_MIN, max: CAMPAIGN_DIFFICULTY_MAX })
-      .withMessage(
-        `difficulty must be between ${CAMPAIGN_DIFFICULTY_MIN} and ${CAMPAIGN_DIFFICULTY_MAX}`,
-      ),
     ...campaignDetailValidators(),
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -248,9 +236,6 @@ export class CampaignController {
     query("latitude").optional().isFloat({ min: -90, max: 90 }),
     query("longitude").optional().isFloat({ min: -180, max: 180 }),
     query("radiusKm").optional().isFloat({ min: 0 }),
-    query("difficulty").optional().isInt({ min: 1 }),
-    query("greenPointsFrom").optional().isInt({ min: 0 }),
-    query("greenPointsTo").optional().isInt({ min: 0 }),
     query("excludeMemberOrgs").optional().isBoolean(),
 
     async (req: Request, res: Response): Promise<void> => {
@@ -304,15 +289,6 @@ export class CampaignController {
             : undefined,
           radiusKm: req.query.radiusKm
             ? parseFloat(String(req.query.radiusKm))
-            : undefined,
-          difficulty: req.query.difficulty
-            ? parseInt(String(req.query.difficulty), 10)
-            : undefined,
-          greenPointsFrom: req.query.greenPointsFrom
-            ? parseInt(String(req.query.greenPointsFrom), 10)
-            : undefined,
-          greenPointsTo: req.query.greenPointsTo
-            ? parseInt(String(req.query.greenPointsTo), 10)
             : undefined,
           sortBy: req.query.sortBy as CampaignListQuery["sortBy"],
           sortOrder: req.query.sortOrder as CampaignListQuery["sortOrder"],
@@ -368,9 +344,6 @@ export class CampaignController {
     query("latitude").optional().isFloat({ min: -90, max: 90 }),
     query("longitude").optional().isFloat({ min: -180, max: 180 }),
     query("radiusKm").optional().isFloat({ min: 0 }),
-    query("difficulty").optional().isInt({ min: 1 }),
-    query("greenPointsFrom").optional().isInt({ min: 0 }),
-    query("greenPointsTo").optional().isInt({ min: 0 }),
     query("is_owner").optional().isBoolean(),
 
     async (req: Request, res: Response): Promise<void> => {
@@ -414,15 +387,6 @@ export class CampaignController {
             : undefined,
           radiusKm: req.query.radiusKm
             ? parseFloat(String(req.query.radiusKm))
-            : undefined,
-          difficulty: req.query.difficulty
-            ? parseInt(String(req.query.difficulty), 10)
-            : undefined,
-          greenPointsFrom: req.query.greenPointsFrom
-            ? parseInt(String(req.query.greenPointsFrom), 10)
-            : undefined,
-          greenPointsTo: req.query.greenPointsTo
-            ? parseInt(String(req.query.greenPointsTo), 10)
             : undefined,
           isOwner: req.query.is_owner !== undefined
             ? String(req.query.is_owner).toLowerCase() === "true"
@@ -773,7 +737,7 @@ export class CampaignController {
 
   /**
    * Admin decision on a campaign marked done: cancel (`rejectReason`) at any time, approve
-   * (optional `difficulty`) only once result verification handed it over (409
+   * only once result verification handed it over (409
    * CAMPAIGN_COMPLETION_NOT_AWAITING_ADMIN otherwise). Rejecting is decided per trash point now.
    */
   adminReviewCampaignCompletion = [
@@ -799,7 +763,6 @@ export class CampaignController {
       }
       return true;
     }),
-    body("difficulty").optional({ values: "null" }).isInt().withMessage("difficulty must be a whole number"),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -825,7 +788,7 @@ export class CampaignController {
           );
         }
 
-        const { decision, rejectReason, difficulty } =
+        const { decision, rejectReason } =
           req.body as AdminCompletionReviewBody;
         const campaign = await campaignService.adminReviewCampaignCompletion(
           req.params.id,
@@ -833,7 +796,6 @@ export class CampaignController {
           {
             decision,
             rejectReason: typeof rejectReason === "string" ? rejectReason.trim() : undefined,
-            difficulty: difficulty == null ? null : Number(difficulty),
           },
           userId,
         );
@@ -979,12 +941,6 @@ export class CampaignController {
               HTTP_STATUS.BAD_REQUEST.withMessage(error.message),
             );
           }
-          if (error.message.includes("difficulty missing")) {
-            return sendError(
-              res,
-              HTTP_STATUS.BAD_REQUEST.withMessage(error.message),
-            );
-          }
           if (error.message.includes("Reward service enqueue failed")) {
             return sendError(
               res,
@@ -1012,12 +968,6 @@ export class CampaignController {
       .exists()
       .withMessage(
         "status cannot be set here; use submit, review or mark-done",
-      ),
-    body("difficulty")
-      .optional()
-      .isInt({ min: CAMPAIGN_DIFFICULTY_MIN, max: CAMPAIGN_DIFFICULTY_MAX })
-      .withMessage(
-        `difficulty must be between ${CAMPAIGN_DIFFICULTY_MIN} and ${CAMPAIGN_DIFFICULTY_MAX}`,
       ),
     body("managerIds")
       .optional()

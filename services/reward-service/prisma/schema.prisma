@@ -1,6 +1,6 @@
 generator client {
-  provider        = "prisma-client-js"
-  binaryTargets   = ["native", "linux-musl-openssl-3.0.x"]
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
@@ -16,7 +16,7 @@ model Difficulty {
   /// Unique tier index (1 = easy … 4 = very hard).
   level Int @unique
 
-  name String @db.VarChar(64)
+  name   String  @db.VarChar(64)
   nameVi String? @map("name_vi") @db.VarChar(64)
   nameEn String? @map("name_en") @db.VarChar(64)
 
@@ -102,13 +102,13 @@ model Media {
 model Gift {
   id String @id @default(uuid()) @db.Uuid
 
-  name String @db.VarChar(255)
+  name   String  @db.VarChar(255)
   nameVi String? @map("name_vi") @db.VarChar(255)
   nameEn String? @map("name_en") @db.VarChar(255)
 
   mediaId String? @map("media_id") @db.Uuid
 
-  description String @db.Text
+  description   String  @db.Text
   descriptionVi String? @map("description_vi") @db.Text
   descriptionEn String? @map("description_en") @db.Text
 
@@ -238,10 +238,10 @@ enum BadgeCategory {
 
 /// Time-bounded competitive window for RP, badges, and leaderboard snapshots.
 model Season {
-  id     String       @id @default(uuid()) @db.Uuid
-  label  String?      @db.VarChar(128)
-  kind   SeasonKind   @map("season_kind")
-  status Int          @default(1)
+  id     String     @id @default(uuid()) @db.Uuid
+  label  String?    @db.VarChar(128)
+  kind   SeasonKind @map("season_kind")
+  status Int        @default(1)
 
   startsAt DateTime @map("starts_at")
   endsAt   DateTime @map("ends_at")
@@ -249,14 +249,14 @@ model Season {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  userRpTotals           UserSeasonRpTotal[]
-  organizationScores     OrganizationSeasonScore[]
-  leaderboardRows        LeaderboardSnapshot[]
-  badgeGrants            UserBadgeGrant[]
-  reportMilestones       ReportMilestoneAward[]
-  campaignRewardAwards   CampaignRewardAward[]
-  payoutTiers            SeasonLeaderboardPayoutTier[]
-  userPointTxSeason      UserPointTransaction[] @relation("SeasonUserPointTransactions")
+  userRpTotals         UserSeasonRpTotal[]
+  organizationScores   OrganizationSeasonScore[]
+  leaderboardRows      LeaderboardSnapshot[]
+  badgeGrants          UserBadgeGrant[]
+  reportMilestones     ReportMilestoneAward[]
+  campaignRewardAwards CampaignRewardAward[]
+  payoutTiers          SeasonLeaderboardPayoutTier[]
+  userPointTxSeason    UserPointTransaction[]        @relation("SeasonUserPointTransactions")
 
   @@index([status])
   @@index([startsAt, endsAt])
@@ -316,11 +316,11 @@ model UserPointTransaction {
 
 /// Materialized seasonal RP totals for fast leaderboard reads (updated after each RP ledger append).
 model UserSeasonRpTotal {
-  userId String @map("user_id") @db.Uuid
+  userId   String @map("user_id") @db.Uuid
   seasonId String @map("season_id") @db.Uuid
 
-  citizenRp    Int @default(0) @map("citizen_rp")
-  volunteerRp  Int @default(0) @map("volunteer_rp")
+  citizenRp   Int @default(0) @map("citizen_rp")
+  volunteerRp Int @default(0) @map("volunteer_rp")
 
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -401,17 +401,40 @@ model GamificationPointRules {
   /// Sorted ascending in application layer (e.g. [10, 20, 50, 100]).
   reportMilestoneThresholds Int[] @default([]) @map("report_milestone_thresholds")
 
-  /// Campaign public UI: max estimated bonus before multiplier (slug-based caps keyed by difficulty level).
-  volunteerBonusCapByDifficulty Json? @map("volunteer_bonus_cap_by_difficulty")
+  /// Points for a campaign completion at full participation (scaled by eligible / registered shifts).
+  campaignCompletionPoints Int @default(20) @map("campaign_completion_points")
+
+  /// Points for a report the admin marks done.
+  reportCompletionPoints Int @default(0) @map("report_completion_points")
+
+  history GamificationPointRuleHistory[]
 
   isActive Boolean @default(true) @map("is_active")
 
-  effectiveFrom DateTime  @default(now()) @map("effective_from")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
+  effectiveFrom DateTime @default(now()) @map("effective_from")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
 
   @@index([isActive, effectiveFrom(sort: Desc)])
   @@map("gamification_point_rules")
+}
+
+/// One row per admin save of the point rules (insert only).
+model GamificationPointRuleHistory {
+  id String @id @default(uuid()) @db.Uuid
+
+  ruleId String                 @map("rule_id") @db.Uuid
+  rule   GamificationPointRules @relation(fields: [ruleId], references: [id])
+
+  changedBy String @map("changed_by") @db.Uuid
+
+  before Json?
+  after  Json
+
+  changedAt DateTime @default(now()) @map("changed_at")
+
+  @@index([ruleId, changedAt(sort: Desc)])
+  @@map("gamification_point_rule_history")
 }
 
 /// Org relationship multipliers for VRP (no stacking — worker picks highest applicable).
@@ -522,8 +545,8 @@ model BadgeDefinition {
   /// Denormalized: set when slug becomes immutable (publish or first grant).
   slugLockedAt DateTime? @map("slug_locked_at")
 
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
   grants UserBadgeGrant[]
@@ -608,7 +631,9 @@ model MetricColumn {
 
   label String @db.VarChar(255)
 
-  /** FE hint: `integer`, `number`, etc. */
+  /**
+   * FE hint: `integer`, `number`, etc.
+   */
   valueType String @map("value_type") @db.VarChar(32)
 
   isActive Boolean @default(true) @map("is_active")
@@ -619,24 +644,4 @@ model MetricColumn {
   @@unique([tableId, key])
   @@index([tableId])
   @@map("metric_columns")
-}
-
-/// Config: when a report reaches a vote threshold, its creator earns bonus green points.
-/// Evaluated by a green-point worker job; idempotency is enforced in the ledger via resourceType encoding.
-model ReportVoteGreenPointRule {
-  id String @id @default(uuid()) @db.Uuid
-
-  /// Vote count threshold, e.g. 10 means ">= 10 votes".
-  threshold Int @unique
-
-  /// Bonus green points for report creator when threshold is reached.
-  points Int
-
-  isActive Boolean @default(true) @map("is_active")
-
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-
-  @@index([isActive, threshold])
-  @@map("report_vote_green_point_rules")
 }

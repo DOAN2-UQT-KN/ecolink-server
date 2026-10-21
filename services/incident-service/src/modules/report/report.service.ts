@@ -1172,8 +1172,6 @@ export class ReportService {
       return this.withReportVote(toReportResponse(existing), viewerUserId);
     }
 
-    const points = Number(process.env.REPORT_COMPLETION_GREEN_POINTS ?? 0) || 0;
-
     // Mark done and emit the green-point credit event atomically. The outbox
     // relay delivers it to reward-service, so "done" stays done even if reward
     // is down — no rollback of business state.
@@ -1184,7 +1182,8 @@ export class ReportService {
           aggregateType: "report",
           aggregateId: updated.id,
           eventType: OutboxEventType.REPORT_COMPLETION_GREEN_POINTS,
-          payload: { reportId: updated.id, userId: updated.userId, points },
+          // reward-service applies its report-completion points (spec 013 FR-020).
+          payload: { reportId: updated.id, userId: updated.userId },
           dedupKey: `${OutboxEventType.REPORT_COMPLETION_GREEN_POINTS}:${updated.id}`,
         });
       }

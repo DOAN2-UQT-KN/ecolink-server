@@ -55,8 +55,6 @@ export class CampaignRepository {
       latitude?: number;
       longitude?: number;
       radiusKm?: number;
-      difficulty?: number;
-      difficultyLevels?: number[];
       myCampaignsUserId?: string;
       excludeMyCampaignsUserId?: string;
       isOwner?: boolean;
@@ -119,9 +117,6 @@ export class CampaignRepository {
               },
             },
           }
-        : {}),
-      ...(filters.difficultyLevels && filters.difficultyLevels.length > 0
-        ? { difficulty: { in: filters.difficultyLevels } }
         : {}),
       ...(filters.myCampaignsUserId
         ? filters.isOwner

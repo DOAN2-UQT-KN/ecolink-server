@@ -570,14 +570,13 @@ export class ShiftAttendanceService {
   }
 
   /**
-   * Spec 5.3 (approval share still 100%): green points per person, the tier's points times the
-   * share of their registered shifts they attended long enough (shifts attended without
-   * registering count too; at most 100%). Nobody without an eligible shift.
+   * Spec 5.3: per person, the shifts attended long enough and the shifts registered (not left).
+   * Shifts attended without registering count as eligible. Only people with an eligible shift.
+   * reward-service turns these into points with its active point rules (spec 013 FR-010).
    */
-  async completionCredits(
+  async completionAttendance(
     campaignId: string,
-    greenPoints: number,
-  ): Promise<Array<{ userId: string; points: number }>> {
+  ): Promise<Array<{ userId: string; eligibleShifts: number; registeredShifts: number }>> {
     const [rows, registrations] = await Promise.all([
       prisma.campaignShiftAttendance.findMany({
         where: { campaignId },
@@ -594,12 +593,11 @@ export class ShiftAttendanceService {
     for (const row of rows) {
       if (isEligible(row, row.shift)) eligible.set(row.userId, (eligible.get(row.userId) ?? 0) + 1);
     }
-    return [...eligible.entries()]
-      .map(([userId, count]) => {
-        const share = Math.min(1, count / Math.max(1, registered.get(userId) ?? 0));
-        return { userId, points: Math.round(greenPoints * share) };
-      })
-      .filter((c) => c.points > 0);
+    return [...eligible.entries()].map(([userId, eligibleShifts]) => ({
+      userId,
+      eligibleShifts,
+      registeredShifts: registered.get(userId) ?? 0,
+    }));
   }
 }
 

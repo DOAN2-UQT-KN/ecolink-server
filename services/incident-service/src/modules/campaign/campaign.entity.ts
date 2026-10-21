@@ -111,11 +111,10 @@ export const campaignSpan = (
 
 export const toCampaignResponse = (
   entity: CampaignWithReports,
-  greenPoints: number,
+  greenPoints: number | null,
   currentMembers: number,
   maxMembers: number | null,
   locale?: AppLocale | null,
-  suggestedMinVolunteers: number | null = null,
 ): CampaignResponse => {
   const managerIds = entity.campaignManagers.map((manager) => manager.userId);
   const titleLoc = toLocalizedText({
@@ -148,7 +147,6 @@ export const toCampaignResponse = (
     latitude: entity.latitude,
     longitude: entity.longitude,
     radiusKm: entity.radiusKm,
-    difficulty: entity.difficulty,
     contactName: entity.contactName ?? null,
     // Hidden by default; the service reveals it to managers, admins and accepted volunteers.
     contactPhone: null,
@@ -160,8 +158,6 @@ export const toCampaignResponse = (
     completionSubmittedAt: entity.completionSubmittedAt ?? null,
     completionRejectionCount: entity.completionRejectionCount ?? 0,
     completionAwaitingAdmin: entity.completionAwaitingAdmin ?? false,
-    minVolunteersReason: entity.minVolunteersReason ?? null,
-    suggestedMinVolunteers,
     days: (entity.days ?? []).map(toCampaignDayResponse),
     meetingPoints: (entity.meetingPoints ?? []).map(toMeetingPointResponse),
     shifts: (entity.shifts ?? []).map((s) => toCampaignShiftResponse(s)),

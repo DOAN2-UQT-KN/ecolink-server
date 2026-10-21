@@ -1,19 +1,57 @@
 import { Prisma } from "@prisma/client";
-import { applyGreenPointLedgerCredit } from "../green-point-ledger.util";
+import {
+  loadActivePointRules,
+  type PointRulesSnapshot,
+} from "../../gamification/gamification-config.service";
+import { applyResolvedCredits, warnNoPointRules } from "../green-point-ledger.util";
 import { GreenPointTransactionType } from "../green-point-transaction.constants";
 import {
   REPORT_VOTE_MILESTONE_GREEN_POINT_JOB_TYPE,
   type ReportVoteMilestoneGreenPointsPayload,
 } from "../green-point.types";
-import { gamificationConfigService } from "../../gamification/gamification-config.service";
 import type {
   GreenPointApplyResult,
   GreenPointCreditStrategy,
+  ResolvedCredit,
 } from "./green-point-credit-strategy.types";
 
+export const REPORT_VOTE_MILESTONE_RESOURCE_PREFIX = "REPORT_VOTE_MILESTONE_";
+
 function encodeMilestoneResourceType(threshold: number): string {
-  // Per-report idempotency key: one payout per (report, threshold).
-  return `REPORT_VOTE_MILESTONE_${threshold}`;
+  // Per-report idempotency key: one payout per (report, threshold). Moves to idempotency_key in step 2.
+  return `${REPORT_VOTE_MILESTONE_RESOURCE_PREFIX}${threshold}`;
+}
+
+/**
+ * Every milestone reached (threshold <= voteCount): the i-th (1-based, ascending) pays
+ * base × i. Already-paid milestones are dropped by the ledger's unique key.
+ */
+export function resolveReportVoteMilestoneCredits(
+  payload: ReportVoteMilestoneGreenPointsPayload,
+  rules: PointRulesSnapshot,
+): ResolvedCredit[] {
+  if (rules.baseReportPoint <= 0 || payload.voteCount <= 0) return [];
+  const sorted = [...rules.reportMilestoneThresholds].sort((a, b) => a - b);
+  return sorted.flatMap((threshold, index) => {
+    if (threshold > payload.voteCount) return [];
+    const milestoneIndex = index + 1;
+    return [
+      {
+        userId: payload.reportCreatorUserId,
+        points: rules.baseReportPoint * milestoneIndex,
+        transactionType: GreenPointTransactionType.REPORT_VOTE_MILESTONE,
+        resourceId: payload.reportId,
+        resourceType: encodeMilestoneResourceType(threshold),
+        metadata: {
+          ruleId: rules.id,
+          baseReportPoint: rules.baseReportPoint,
+          threshold,
+          milestoneIndex,
+          voteCountAtAward: payload.voteCount,
+        },
+      },
+    ];
+  });
 }
 
 export class ReportVoteMilestoneGreenPointStrategy
@@ -50,39 +88,8 @@ export class ReportVoteMilestoneGreenPointStrategy
     tx: Prisma.TransactionClient,
     payload: ReportVoteMilestoneGreenPointsPayload,
   ): Promise<GreenPointApplyResult> {
-    const milestones =
-      await gamificationConfigService.resolveActiveReportVoteMilestoneCredits(
-        payload.voteCount,
-      );
-
-    if (milestones.length === 0) {
-      return { credited: 0, skipped: 0 };
-    }
-
-    let credited = 0;
-    let skipped = 0;
-
-    for (const milestone of milestones) {
-      const outcome = await applyGreenPointLedgerCredit(tx, {
-        userId: payload.reportCreatorUserId,
-        points: milestone.points,
-        transactionType: GreenPointTransactionType.REPORT_VOTE_MILESTONE,
-        resourceId: payload.reportId,
-        resourceType: encodeMilestoneResourceType(milestone.threshold),
-        metadata: {
-          threshold: milestone.threshold,
-          milestoneIndex: milestone.milestoneIndex,
-          voteCountAtAward: payload.voteCount,
-        },
-      });
-
-      if (outcome === "credited") {
-        credited += 1;
-      } else {
-        skipped += 1;
-      }
-    }
-
-    return { credited, skipped };
+    const rules = await loadActivePointRules(tx);
+    if (!rules) return warnNoPointRules(this.queueJobType, payload.reportId);
+    return applyResolvedCredits(tx, resolveReportVoteMilestoneCredits(payload, rules));
   }
 }

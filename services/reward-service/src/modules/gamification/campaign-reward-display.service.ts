@@ -1,5 +1,4 @@
 import prisma from "../../config/prisma.client";
-import { gamificationConfigService } from "./gamification-config.service";
 
 /**
  * Public UX: base from difficulty + estimated bonus cap (no multipliers).
@@ -19,15 +18,8 @@ export class CampaignRewardDisplayService {
       return null;
     }
 
-    const rules = await gamificationConfigService.getActivePointRules();
-    let bonusCap = 0;
-    const caps = rules?.volunteerBonusCapByDifficulty;
-    if (caps && typeof caps === "object" && !Array.isArray(caps)) {
-      const raw = (caps as Record<string, unknown>)[String(level)];
-      if (typeof raw === "number") {
-        bonusCap = raw;
-      }
-    }
+    // Bonus caps were removed with the point-rules refactor (spec 013); this endpoint goes in wave C.
+    const bonusCap = 0;
 
     const basePoints = difficulty.greenPoints;
     return {

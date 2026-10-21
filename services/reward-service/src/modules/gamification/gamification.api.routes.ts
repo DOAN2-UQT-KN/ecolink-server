@@ -179,7 +179,7 @@ router.get(
 
 /**
  * @route   GET /api/v1/admin/gamification/point-rules
- * @desc    Active citizen milestones / volunteer bonus caps
+ * @desc    Active point rules (campaign, report vote milestones, report completion)
  * @access  Private Admin
  */
 router.get(
@@ -191,7 +191,7 @@ router.get(
 
 /**
  * @route   PATCH /api/v1/admin/gamification/point-rules
- * @desc    Upsert point rules
+ * @desc    Replace the point rules (all four rates); records a history row
  * @access  Private Admin
  */
 router.patch(
@@ -199,6 +199,18 @@ router.patch(
   authenticate,
   requireAdmin,
   (req, res) => gc.adminPatchPointRules(er(req), res),
+);
+
+/**
+ * @route   GET /api/v1/admin/gamification/point-rules/history
+ * @desc    Point-rule saves, newest first (page, limit <= 100)
+ * @access  Private Admin
+ */
+router.get(
+  "/admin/gamification/point-rules/history",
+  authenticate,
+  requireAdmin,
+  (req, res) => gc.adminGetPointRuleHistory(er(req), res),
 );
 
 /**

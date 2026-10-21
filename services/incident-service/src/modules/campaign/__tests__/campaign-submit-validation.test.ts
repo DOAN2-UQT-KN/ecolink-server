@@ -43,7 +43,6 @@ function input(overrides: Partial<SubmitCampaignInput> = {}): SubmitCampaignInpu
     days: [{ startAt: START, endAt: END }],
     contactName: "Nguyễn Văn A",
     contactPhone: "0901234567",
-    difficulty: 1,
     requirements: null,
     meetingPoints: [
       {
@@ -60,8 +59,6 @@ function input(overrides: Partial<SubmitCampaignInput> = {}): SubmitCampaignInpu
 function ctx(overrides: Partial<SubmitValidationContext> = {}): SubmitValidationContext {
   return {
     now: NOW,
-    suggestedMinPerDay: 5,
-    maxDifficulty: null,
     reports: new Map([
       ["r1", { latitude: 10.771, longitude: 106.701 }],
       ["r2", { latitude: 10.772, longitude: 106.702 }],
@@ -148,12 +145,6 @@ describe("validateCampaignForSubmit", () => {
     );
   });
 
-  it("limits unverified organizations to the lowest difficulty", () => {
-    expect(codes(input({ difficulty: 2 }), ctx({ maxDifficulty: 1 }))).toContain(
-      "DIFFICULTY_NOT_ALLOWED",
-    );
-  });
-
   it("needs 1–5 meeting points", () => {
     expect(codes(input({ meetingPoints: [] }))).toContain("MEETING_POINT_COUNT");
     const six = Array.from({ length: 6 }, () => ({ ...input().meetingPoints[0], name: "P", reportIds: [] }));
@@ -212,34 +203,22 @@ describe("validateCampaignForSubmit", () => {
             { ...shift(1, 1, 0), gatherAt: null, leaderUserId: null },
           ],
         }),
-        ctx({ suggestedMinPerDay: 20 }),
+        ctx(),
       );
       expect(issues).toEqual([]);
     });
 
-    it("never caps the number of volunteers: totals above the suggestion are fine", () => {
-      expect(
-        codes(input({ shifts: [shift(0, 0, 500)] }), ctx({ suggestedMinPerDay: 10 })),
-      ).toEqual([]);
+    it("never caps the number of volunteers", () => {
+      expect(codes(input({ shifts: [shift(0, 0, 500)] }))).toEqual([]);
     });
 
-    it("a day below the suggested minimum needs a reason", () => {
+    it("a day with few volunteers needs no reason (spec 013 FR-045)", () => {
       const low = input({
         days: twoDays,
         meetingPoints: twoPoints,
-        shifts: [shift(0, 0, 3), shift(0, 1, 2), shift(1, 0, 20, twoDays[1].startAt)],
+        shifts: [shift(0, 0, 1), shift(0, 1, 0), shift(1, 0, 1, twoDays[1].startAt)],
       });
-      const issues = validateCampaignForSubmit(low, ctx({ suggestedMinPerDay: 10 }));
-      expect(issues).toContainEqual(
-        expect.objectContaining({
-          field: "minVolunteersReason",
-          code: "MIN_VOLUNTEERS_REASON_REQUIRED",
-        }),
-      );
-      expect(
-        codes({ ...low, minVolunteersReason: "Small canal, 5 people are enough" }, ctx({ suggestedMinPerDay: 10 })),
-      ).toEqual([]);
-      expect(codes(low, ctx({ suggestedMinPerDay: null }))).toEqual([]);
+      expect(codes(low)).toEqual([]);
     });
 
     it("the expected maximum, when set, is a whole number no lower than the minimum", () => {
@@ -329,11 +308,9 @@ describe("validateCampaignForSubmit", () => {
 });
 
 describe("helpers", () => {
-  it("withDefaultRequirements sets 18+ for high difficulty", () => {
-    expect(withDefaultRequirements(null, 3).minAge).toBe(18);
-    expect(withDefaultRequirements({ minAge: 16 }, 4).minAge).toBe(18);
-    expect(withDefaultRequirements({ minAge: 21 }, 3).minAge).toBe(21);
-    expect(withDefaultRequirements(null, 1).minAge).toBeUndefined();
+  it("withDefaultRequirements keeps what the creator entered, no implied 18+ (spec 013 FR-043)", () => {
+    expect(withDefaultRequirements(null)).toEqual({});
+    expect(withDefaultRequirements({ minAge: 16 }).minAge).toBe(16);
   });
 
   it("stripHtml and haversineKm", () => {
