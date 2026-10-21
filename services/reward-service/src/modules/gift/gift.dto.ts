@@ -19,8 +19,19 @@ export interface GiftResponse {
   descriptionVi?: string | null;
   descriptionEn?: string | null;
   greenPoints: number;
-  stockRemaining: number | null;
+  /** Items left in live batches (spec 015 FR-020); never null. */
+  stockRemaining: number;
   isActive: boolean;
+  /** Sources shown as "Sponsored by": showOnGift with a live batch of this gift. */
+  sponsors: GiftSponsorResponse[];
+  /** Admin only: items in live batches expiring within 7 days; null otherwise. */
+  expiringSoon: { quantity: number; earliestAt: string } | null;
+}
+
+export interface GiftSponsorResponse {
+  id: string;
+  name: string;
+  logoUrl: string | null;
 }
 
 export const toGiftResponse = (row: GiftWithOptionalMedia): GiftResponse => ({
@@ -42,6 +53,8 @@ export const toGiftResponse = (row: GiftWithOptionalMedia): GiftResponse => ({
   greenPoints: row.greenPoints,
   stockRemaining: row.stockRemaining,
   isActive: row.isActive,
+  sponsors: [],
+  expiringSoon: null,
 });
 
 export interface CreateGiftBody {
@@ -53,7 +66,6 @@ export interface CreateGiftBody {
   descriptionVi?: string;
   descriptionEn?: string;
   greenPoints: number;
-  stockRemaining?: number | null;
   isActive?: boolean;
 }
 
@@ -66,7 +78,6 @@ export interface UpdateGiftBody {
   descriptionVi?: string;
   descriptionEn?: string;
   greenPoints?: number;
-  stockRemaining?: number | null;
   isActive?: boolean;
 }
 
@@ -80,6 +91,8 @@ export interface GiftRedemptionResponse {
   statusUpdatedAt: string;
   cancelledAt: string | null;
   createdAt: string;
+  /** Stock batch the item came from; null for orders before spec 015. */
+  batchId: string | null;
 }
 
 export const toGiftRedemptionResponse = (
@@ -94,6 +107,7 @@ export const toGiftRedemptionResponse = (
   statusUpdatedAt: row.statusUpdatedAt.toISOString(),
   cancelledAt: row.cancelledAt?.toISOString() ?? null,
   createdAt: row.createdAt.toISOString(),
+  batchId: row.batchId,
 });
 
 export interface RedeemGiftBody {
@@ -108,7 +122,7 @@ export interface GiftListQuery {
   /** Case-insensitive substring match on `name`. */
   search?: string;
   /**
-   * When `true`, only gifts with unlimited stock (`stock_remaining` null) or remaining stock > 0.
+   * When `true`, only gifts whose stock cache (`stock_remaining`) is > 0.
    */
   inStock?: boolean;
   /**
@@ -165,6 +179,7 @@ export interface GiftRedemptionListItemResponse {
   statusUpdatedAt: string;
   cancelledAt: string | null;
   createdAt: string;
+  batchId: string | null;
   gift: GiftRedemptionGiftSnapshot | null;
 }
 
@@ -178,6 +193,8 @@ export interface AdminGiftRedemptionListItemResponse
   extends GiftRedemptionListItemResponse {
   userId: string;
   user: GiftRedemptionUserSnapshot | null;
+  /** Source of the batch the item came from; null for orders before spec 015. */
+  source: { id: string; name: string } | null;
 }
 
 export interface MyGreenPointsEnvelopeData {
@@ -197,6 +214,7 @@ export interface MyGiftRedemptionsEnvelopeData extends GiftListMeta {
 
 export interface AdminGiftRedemptionsQuery extends MyGiftRedemptionsQuery {
   status?: GiftRedemptionStatus;
+  sourceId?: string;
 }
 
 export interface AdminGiftRedemptionsEnvelopeData extends GiftListMeta {

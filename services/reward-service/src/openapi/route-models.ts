@@ -39,6 +39,45 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
     requestBody: "PatchGiftRedemptionStatusBody",
     responseData: "GiftRedemptionOneEnvelopeData",
   },
+  "GET /api/v1/admin/gift-sources": {
+    query: "GiftSourceListQuery",
+    responseData: "GiftSourcesListEnvelopeData",
+  },
+  "POST /api/v1/admin/gift-sources": {
+    requestBody: "CreateGiftSourceBody",
+    responseData: "GiftSourceOneEnvelopeData",
+  },
+  "GET /api/v1/admin/gift-sources/:id": {
+    responseData: "GiftSourceOneEnvelopeData",
+  },
+  "PUT /api/v1/admin/gift-sources/:id": {
+    requestBody: "UpdateGiftSourceBody",
+    responseData: "GiftSourceOneEnvelopeData",
+  },
+  "GET /api/v1/admin/gift-sources/:id/batches": {
+    query: "StockBatchListQuery",
+    responseData: "StockBatchesListEnvelopeData",
+  },
+  "GET /api/v1/admin/gift-sources/:id/report": {
+    query: "GiftSourceReportQuery",
+    responseData: "GiftSourceReportEnvelopeData",
+  },
+  "GET /api/v1/admin/gifts/:id/stock-batches": {
+    query: "StockBatchListQuery",
+    responseData: "StockBatchesListEnvelopeData",
+  },
+  "POST /api/v1/admin/gifts/:id/stock-batches": {
+    requestBody: "CreateStockBatchBody",
+    responseData: "StockBatchCreatedEnvelopeData",
+  },
+  "POST /api/v1/admin/stock-batches/:id/adjustments": {
+    requestBody: "AdjustStockBatchBody",
+    responseData: "StockAdjustedEnvelopeData",
+  },
+  "GET /api/v1/admin/gifts/:id/stock-movements": {
+    query: "StockMovementListQuery",
+    responseData: "StockMovementsListEnvelopeData",
+  },
   "GET /api/v1/me/points": {
     responseData: "MyPointsEnvelopeData",
   },

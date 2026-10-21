@@ -15,6 +15,13 @@ import {
 } from "../green-point/green-point-ledger.util";
 import { getBalance, planRefund, spendLotsFifo } from "../green-point/green-point-lot.util";
 import {
+  EXPIRING_SOON_DAYS,
+  loadLiveBatchesForGifts,
+  returnToBatch,
+  takeOneFromBatches,
+} from "./gift-stock.util";
+import { liveLogoUrl } from "./gift-source.service";
+import {
   AdminGiftRedemptionListItemResponse,
   CreateGiftBody,
   GiftRedemptionListItemResponse,
@@ -80,6 +87,7 @@ export type ListGiftRedemptionsParams = {
   page: number;
   limit: number;
   status?: GiftRedemptionStatus;
+  sourceId?: string;
   sortBy?: "createdAt" | "greenPointsSpent" | "statusUpdatedAt";
   sortOrder?: "asc" | "desc";
 };
@@ -126,6 +134,7 @@ function toGiftRedemptionListItem(
     statusUpdatedAt: r.statusUpdatedAt.toISOString(),
     cancelledAt: r.cancelledAt?.toISOString() ?? null,
     createdAt: r.createdAt.toISOString(),
+    batchId: r.batchId,
     gift: toGiftSnapshot(r.gift),
   };
 }
@@ -133,6 +142,7 @@ function toGiftRedemptionListItem(
 export class GiftService {
   private async mapGiftsWithMediaByMediaId(
     rows: Gift[],
+    isAdmin = false,
   ): Promise<GiftResponse[]> {
     const mediaIds = rows
       .map((row) => row.mediaId)
@@ -152,15 +162,37 @@ export class GiftService {
       mediaRows.map((media) => [media.id, media]),
     );
 
+    // Stock, sponsors and the admin expiry hint all come from the live batches (spec 015 R2, R9).
+    const now = new Date();
+    const soon = now.getTime() + EXPIRING_SOON_DAYS * 24 * 60 * 60 * 1000;
+    const batches = await loadLiveBatchesForGifts(prisma, rows.map((r) => r.id), now);
+
     return rows.map((row) => {
       const base = toGiftResponse({
         ...row,
         media: row.mediaId ? (mediaById.get(row.mediaId) ?? null) : null,
       });
+      const own = batches.filter((b) => b.giftId === row.id);
+      const sponsors = new Map<string, GiftResponse["sponsors"][number]>();
+      for (const b of own) {
+        if (b.source.showOnGift && !sponsors.has(b.source.id)) {
+          sponsors.set(b.source.id, { id: b.source.id, name: b.source.name, logoUrl: liveLogoUrl(b.source.logo) });
+        }
+      }
+      const expiring = own.filter((b) => b.expiresAt && b.expiresAt.getTime() <= soon);
       return {
         ...base,
         name: null,
         description: null,
+        stockRemaining: own.reduce((sum, b) => sum + b.remaining, 0),
+        sponsors: [...sponsors.values()],
+        expiringSoon:
+          isAdmin && expiring.length > 0
+            ? {
+                quantity: expiring.reduce((sum, b) => sum + b.remaining, 0),
+                earliestAt: new Date(Math.min(...expiring.map((b) => b.expiresAt!.getTime()))).toISOString(),
+              }
+            : null,
       };
     });
   }
@@ -190,7 +222,7 @@ export class GiftService {
 
     if (params.inStockOnly) {
       andParts.push({
-        OR: [{ stockRemaining: null }, { stockRemaining: { gt: 0 } }],
+        stockRemaining: { gt: 0 },
       });
     }
 
@@ -220,11 +252,11 @@ export class GiftService {
       prisma.gift.count({ where }),
     ]);
 
-    const gifts = await this.mapGiftsWithMediaByMediaId(rows);
+    const gifts = await this.mapGiftsWithMediaByMediaId(rows, params.isAdmin);
     return { gifts, total };
   }
 
-  async getGiftById(id: string): Promise<GiftResponse | null> {
+  async getGiftById(id: string, isAdmin = false): Promise<GiftResponse | null> {
     const row = await prisma.gift.findFirst({
       where: { id, deletedAt: null },
     });
@@ -232,7 +264,7 @@ export class GiftService {
       return null;
     }
 
-    const [gift] = await this.mapGiftsWithMediaByMediaId([row]);
+    const [gift] = await this.mapGiftsWithMediaByMediaId([row], isAdmin);
     return gift ?? null;
   }
 
@@ -275,6 +307,7 @@ export class GiftService {
     const skip = (params.page - 1) * params.limit;
     const where: Prisma.GiftRedemptionWhereInput = {
       ...(params.status ? { status: params.status } : {}),
+      ...(params.sourceId ? { batch: { sourceId: params.sourceId } } : {}),
     };
     const sortBy = params.sortBy ?? "createdAt";
     const sortOrder = params.sortOrder ?? "desc";
@@ -285,7 +318,7 @@ export class GiftService {
         orderBy: { [sortBy]: sortOrder },
         skip,
         take: params.limit,
-        include: { gift: true },
+        include: { gift: true, batch: { select: { source: { select: { id: true, name: true } } } } },
       }),
       prisma.giftRedemption.count({ where }),
     ]);
@@ -303,6 +336,7 @@ export class GiftService {
               avatar: profile.avatar,
             }
           : null,
+        source: r.batch ? { id: r.batch.source.id, name: r.batch.source.name } : null,
       };
     });
 
@@ -344,8 +378,6 @@ export class GiftService {
           descriptionVi: userDescriptionVi || sourceDescription,
           descriptionEn: userDescriptionEn || sourceDescription,
           greenPoints: body.greenPoints,
-          stockRemaining:
-            body.stockRemaining === undefined ? null : body.stockRemaining,
           isActive: body.isActive ?? true,
         } as any,
       });
@@ -427,9 +459,6 @@ export class GiftService {
       ...(body.greenPoints !== undefined
         ? { greenPoints: body.greenPoints }
         : {}),
-      ...(body.stockRemaining !== undefined
-        ? { stockRemaining: body.stockRemaining }
-        : {}),
       ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
     };
 
@@ -507,20 +536,6 @@ export class GiftService {
             );
           }
 
-          if (gift.stockRemaining !== null) {
-            const stock = await tx.gift.updateMany({
-              where: { id: gift.id, stockRemaining: { gt: 0 } },
-              data: { stockRemaining: { decrement: 1 } },
-            });
-            if (stock.count === 0) {
-              throw new HttpError(
-                HTTP_STATUS.UNPROCESSABLE_ENTITY.withMessage(
-                  "Gift is out of stock",
-                ),
-              );
-            }
-          }
-
           // Listed price for everyone (spec 014 FR-043: no badge discount).
           const price = gift.greenPoints;
           const now = new Date();
@@ -530,7 +545,7 @@ export class GiftService {
             );
           }
 
-          const redemption = await tx.giftRedemption.create({
+          const created = await tx.giftRedemption.create({
             data: {
               userId,
               giftId: gift.id,
@@ -540,6 +555,12 @@ export class GiftService {
               status: "PROCESSING",
               statusUpdatedAt: now,
             },
+          });
+          // One item from a live batch (spec 015 R3); out of stock rolls the order back.
+          const batchId = await takeOneFromBatches(tx, gift.id, created.id, userId, now);
+          const redemption = await tx.giftRedemption.update({
+            where: { id: created.id },
+            data: { batchId },
           });
 
           if (price > 0) {
@@ -571,6 +592,7 @@ export class GiftService {
   async updateRedemptionStatus(
     id: string,
     nextStatus: GiftRedemptionStatus,
+    adminId: string | null = null,
   ): Promise<GiftRedemptionResponse | null> {
     return prisma.$transaction(
       async (tx) => {
@@ -604,6 +626,10 @@ export class GiftService {
 
         if (nextStatus === "CANCELLED" && redemption.greenPointsSpent > 0) {
           await refundRedemptionPoints(tx, redemption, now);
+        }
+        // Only an order still being prepared returns its item; shipped ones are decided in step 5-6.
+        if (nextStatus === "CANCELLED" && redemption.status === "PROCESSING") {
+          await returnToBatch(tx, redemption, adminId, now);
         }
 
         return toGiftRedemptionResponse(updated);

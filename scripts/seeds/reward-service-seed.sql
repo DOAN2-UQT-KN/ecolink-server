@@ -22,9 +22,27 @@ VALUES
   ('22222222-2222-2222-2222-222222222221', 'Eco Bottle', '33333333-3333-3333-3333-333333333331', 'Reusable water bottle reward', 100, 50, TRUE, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', NULL)
 ON CONFLICT ("id") DO NOTHING;
 
-INSERT INTO gift_redemptions ("id", "user_id", "gift_id", "green_points_spent", "created_at")
+-- Stock comes from batches (spec 015): one sponsor batch of 51, one item already redeemed below.
+INSERT INTO gift_sources ("id", "name", "type", "contact_name", "show_on_gift", "status", "created_at", "updated_at")
 VALUES
-  ('22222222-2222-2222-2222-222222222241', '11111111-1111-1111-1111-111111111142', '22222222-2222-2222-2222-222222222221', 100, '2026-01-01T00:00:00Z')
+  ('22222222-2222-2222-2222-222222222251', 'Green Co.', 'SPONSOR', 'Partnership team', TRUE, 'ACTIVE', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')
+ON CONFLICT ("id") DO NOTHING;
+
+INSERT INTO gift_stock_batches ("id", "gift_id", "source_id", "quantity", "remaining", "unit_value_vnd", "received_at", "reference", "created_at")
+VALUES
+  ('22222222-2222-2222-2222-222222222261', '22222222-2222-2222-2222-222222222221', '22222222-2222-2222-2222-222222222251', 51, 50, 120000, '2026-01-01T00:00:00Z', 'SEED-0001', '2026-01-01T00:00:00Z')
+ON CONFLICT ("id") DO NOTHING;
+
+INSERT INTO gift_redemptions ("id", "user_id", "gift_id", "green_points_spent", "batch_id", "created_at")
+VALUES
+  ('22222222-2222-2222-2222-222222222241', '11111111-1111-1111-1111-111111111142', '22222222-2222-2222-2222-222222222221', 100, '22222222-2222-2222-2222-222222222261', '2026-01-01T00:00:00Z')
+ON CONFLICT ("id") DO NOTHING;
+
+-- Per batch the movements sum to remaining: +51 - 1 = 50 = gifts.stock_remaining.
+INSERT INTO gift_stock_movements ("id", "gift_id", "batch_id", "type", "quantity", "redemption_id", "actor_id", "created_at")
+VALUES
+  ('22222222-2222-2222-2222-222222222271', '22222222-2222-2222-2222-222222222221', '22222222-2222-2222-2222-222222222261', 'STOCK_IN', 51, NULL, NULL, '2026-01-01T00:00:00Z'),
+  ('22222222-2222-2222-2222-222222222272', '22222222-2222-2222-2222-222222222221', '22222222-2222-2222-2222-222222222261', 'REDEEM_OUT', -1, '22222222-2222-2222-2222-222222222241', '11111111-1111-1111-1111-111111111142', '2026-01-01T00:00:00Z')
 ON CONFLICT ("id") DO NOTHING;
 
 -- Earned 100, spent 100 on the redemption above: ledger sums to 0, matching no lots left (spec 014).

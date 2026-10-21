@@ -128,6 +128,7 @@ router.get(
  */
 router.get(
   "/gifts/:id",
+  tryAuthenticate,
   param("id").isUUID().withMessage("id must be a valid UUID"),
   async (req, res): Promise<void> => {
     const errors = validationResult(req);
@@ -140,7 +141,8 @@ router.get(
 
     try {
       const id = req.params?.id;
-      const gift = await giftService.getGiftById(id);
+      const isAdmin = req.user?.role?.toLowerCase() === "admin";
+      const gift = await giftService.getGiftById(id, isAdmin);
       if (!gift) {
         sendError(res, HTTP_STATUS.NOT_FOUND.withMessage("Gift not found"));
         return;
@@ -172,10 +174,6 @@ router.post(
   body("greenPoints")
     .isInt({ min: 0 })
     .withMessage("greenPoints must be an integer >= 0"),
-  body("stockRemaining")
-    .optional({ values: "null" })
-    .custom((v) => v === null || (Number.isInteger(v) && v >= 0))
-    .withMessage("stockRemaining must be null or an integer >= 0"),
   body("isActive").optional().isBoolean(),
 
   async (req, res): Promise<void> => {
@@ -197,7 +195,6 @@ router.post(
         descriptionVi: req.body.descriptionVi,
         descriptionEn: req.body.descriptionEn,
         greenPoints: req.body.greenPoints,
-        stockRemaining: req.body.stockRemaining,
         isActive: req.body.isActive,
       });
       sendSuccess(res, HTTP_STATUS.CREATED, { gift });
@@ -229,10 +226,6 @@ router.put(
     .optional()
     .isInt({ min: 0 })
     .withMessage("greenPoints must be an integer >= 0"),
-  body("stockRemaining")
-    .optional({ values: "null" })
-    .custom((v) => v === null || (Number.isInteger(v) && v >= 0))
-    .withMessage("stockRemaining must be null or an integer >= 0"),
   body("isActive").optional().isBoolean(),
 
   async (req, res): Promise<void> => {
@@ -259,7 +252,6 @@ router.put(
         descriptionVi: req.body.descriptionVi,
         descriptionEn: req.body.descriptionEn,
         greenPoints: req.body.greenPoints,
-        stockRemaining: req.body.stockRemaining,
         isActive: req.body.isActive,
       }, req.headers.authorization);
       if (!updated) {
@@ -320,6 +312,7 @@ router.get(
   query("page").optional().isInt({ min: 1 }).toInt(),
   query("limit").optional().isInt({ min: 1, max: 100 }).toInt(),
   query("status").optional().isIn(GIFT_REDEMPTION_STATUSES),
+  query("sourceId").optional().isUUID(),
   query("sortBy").optional().isIn(["createdAt", "greenPointsSpent", "statusUpdatedAt"]),
   query("sortOrder").optional().isIn(["asc", "desc"]),
   async (req, res): Promise<void> => {
@@ -344,6 +337,7 @@ router.get(
         page,
         limit,
         status,
+        sourceId: req.query.sourceId as string | undefined,
         sortBy,
         sortOrder,
       });
@@ -364,12 +358,13 @@ router.get(
 
 /**
  * @route   PATCH /api/v1/admin/gift-redemptions/:id/status
- * @desc    Update gift redemption order status
- * @access  Private
+ * @desc    Update gift redemption order status; cancelling a PROCESSING order returns its item to its batch
+ * @access  Private (Admin)
  */
 router.patch(
   "/admin/gift-redemptions/:id/status",
   authenticate,
+  requireAdmin,
   param("id").isUUID().withMessage("id must be a UUID"),
   body("status").isIn(GIFT_REDEMPTION_STATUSES),
   async (req, res): Promise<void> => {
@@ -385,6 +380,7 @@ router.patch(
       const updated = await giftService.updateRedemptionStatus(
         req.params.id,
         req.body.status,
+        req.user?.userId ?? null,
       );
       if (!updated) {
         sendError(res, HTTP_STATUS.NOT_FOUND.withMessage("Redemption not found"));

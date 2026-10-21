@@ -97,7 +97,8 @@ model Media {
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
-  gifts Gift[]
+  gifts       Gift[]
+  giftSources GiftSource[]
 
   @@index([type])
   @@index([deletedAt])
@@ -121,8 +122,8 @@ model Gift {
   /// Green points required to redeem once.
   greenPoints Int @map("green_points")
 
-  /// Remaining stock; null means unlimited.
-  stockRemaining Int? @map("stock_remaining")
+  /// Cache of the live batches' remaining (spec 015 R2); updated with every stock movement.
+  stockRemaining Int @default(0) @map("stock_remaining")
 
   isActive Boolean @default(true) @map("is_active")
 
@@ -131,6 +132,8 @@ model Gift {
   deletedAt DateTime? @map("deleted_at")
 
   redemptions GiftRedemption[]
+  batches     GiftStockBatch[]
+  movements   GiftStockMovement[]
   media       Media?           @relation(fields: [mediaId], references: [id], onDelete: Restrict)
 
   @@index([deletedAt])
@@ -160,12 +163,18 @@ model GiftRedemption {
 
   createdAt DateTime @default(now()) @map("created_at")
 
-  gift Gift @relation(fields: [giftId], references: [id], onDelete: Restrict)
+  /// Stock batch the item came from; null for redemptions made before spec 015.
+  batchId String? @map("batch_id") @db.Uuid
 
-  lotSpends GreenPointLotSpend[]
+  gift  Gift            @relation(fields: [giftId], references: [id], onDelete: Restrict)
+  batch GiftStockBatch? @relation(fields: [batchId], references: [id], onDelete: Restrict)
+
+  lotSpends      GreenPointLotSpend[]
+  stockMovements GiftStockMovement[]
 
   @@index([userId])
   @@index([giftId])
+  @@index([batchId])
   @@index([status, createdAt])
   @@map("gift_redemptions")
 }
@@ -679,4 +688,108 @@ model MetricColumn {
   @@unique([tableId, key])
   @@index([tableId])
   @@map("metric_columns")
+}
+
+enum GiftSourceType {
+  SPONSOR
+  ECOLINK
+  DONATION
+}
+
+enum GiftSourceStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum GiftStockMovementType {
+  STOCK_IN
+  REDEEM_OUT
+  CANCEL_RETURN
+  ADJUST_OUT
+  EXPIRED
+}
+
+enum GiftStockAdjustReason {
+  DAMAGED
+  LOST
+  COUNT_SHORTAGE
+  RETURN_TO_SOURCE
+}
+
+/// Where gifts come from (spec 015). Never hard-deleted; INACTIVE sources take no new batches.
+model GiftSource {
+  id String @id @default(uuid()) @db.Uuid
+
+  name         String           @db.VarChar(255)
+  type         GiftSourceType
+  contactName  String?          @map("contact_name") @db.VarChar(255)
+  contactPhone String?          @map("contact_phone") @db.VarChar(32)
+  contactEmail String?          @map("contact_email") @db.VarChar(255)
+  logoMediaId  String?          @map("logo_media_id") @db.Uuid
+  showOnGift   Boolean          @default(false) @map("show_on_gift")
+  status       GiftSourceStatus @default(ACTIVE)
+  note         String?          @db.Text
+  createdBy    String?          @map("created_by") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  logo    Media?           @relation(fields: [logoMediaId], references: [id], onDelete: SetNull)
+  batches GiftStockBatch[]
+
+  @@index([status, type])
+  @@index([name])
+  @@map("gift_sources")
+}
+
+/// One receipt of a gift from a source. 0 <= remaining <= quantity (DB CHECK).
+model GiftStockBatch {
+  id String @id @default(uuid()) @db.Uuid
+
+  giftId       String    @map("gift_id") @db.Uuid
+  sourceId     String    @map("source_id") @db.Uuid
+  quantity     Int
+  remaining    Int
+  unitValueVnd Int       @map("unit_value_vnd")
+  receivedAt   DateTime  @map("received_at")
+  expiresAt    DateTime? @map("expires_at")
+  /// Document number; may be empty when the proof is only in `attachmentUrls`.
+  reference      String    @db.VarChar(255)
+  /// Uploaded proof files (contract, sponsor letter, invoice, receipt), at most 5 URLs.
+  attachmentUrls String[]  @default([]) @map("attachment_urls")
+  note           String?   @db.Text
+  createdBy      String?   @map("created_by") @db.Uuid
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  gift        Gift                @relation(fields: [giftId], references: [id], onDelete: Restrict)
+  source      GiftSource          @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  movements   GiftStockMovement[]
+  redemptions GiftRedemption[]
+
+  @@index([sourceId, receivedAt])
+  @@map("gift_stock_batches")
+}
+
+/// Append-only stock history; per batch SUM(quantity) = remaining.
+model GiftStockMovement {
+  id String @id @default(uuid()) @db.Uuid
+
+  giftId       String                 @map("gift_id") @db.Uuid
+  batchId      String                 @map("batch_id") @db.Uuid
+  type         GiftStockMovementType
+  quantity     Int
+  reason       GiftStockAdjustReason?
+  note         String?                @db.Text
+  redemptionId String?                @map("redemption_id") @db.Uuid
+  actorId      String?                @map("actor_id") @db.Uuid
+  createdAt    DateTime               @default(now()) @map("created_at")
+
+  gift       Gift            @relation(fields: [giftId], references: [id], onDelete: Restrict)
+  batch      GiftStockBatch  @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  redemption GiftRedemption? @relation(fields: [redemptionId], references: [id], onDelete: Restrict)
+
+  @@unique([redemptionId, type])
+  @@index([giftId, createdAt(sort: Desc)])
+  @@index([batchId])
+  @@map("gift_stock_movements")
 }
