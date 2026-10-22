@@ -65,10 +65,10 @@ export type ReportInput = {
     receivedAt: Date;
     expiresAt: Date | null;
   }>;
-  /** Redemptions DELIVERED within the range from this source's batches. */
-  delivered: Array<{ batchId: string; userId: string }>;
-  /** Redemptions currently PROCESSING or SHIPPED from this source's batches. */
-  holding: Array<{ batchId: string }>;
+  /** Items of orders DELIVERED within the range, per batch they came from (spec 018: items, not orders). */
+  delivered: Array<{ batchId: string; userId: string; quantity: number }>;
+  /** Items of orders currently PROCESSING or SHIPPED, per batch they came from. */
+  holding: Array<{ batchId: string; quantity: number }>;
   /** ADJUST_OUT and EXPIRED movements within the range on this source's batches. */
   writeOffs: Array<{ batchId: string; type: "ADJUST_OUT" | "EXPIRED"; reason: GiftStockAdjustReason | null; quantity: number }>;
 };
@@ -110,8 +110,8 @@ export function buildSourceReport(input: ReportInput): SourceReport {
   for (const d of input.delivered) {
     const hit = rowFor(d.batchId);
     if (!hit) continue;
-    hit.row.delivered += 1;
-    hit.row.valueDeliveredVnd += hit.batch.unitValueVnd;
+    hit.row.delivered += d.quantity;
+    hit.row.valueDeliveredVnd += hit.batch.unitValueVnd * d.quantity;
     const set = recipientsByGift.get(hit.batch.giftId) ?? new Set<string>();
     set.add(d.userId);
     recipientsByGift.set(hit.batch.giftId, set);
@@ -119,7 +119,7 @@ export function buildSourceReport(input: ReportInput): SourceReport {
   }
   for (const h of input.holding) {
     const hit = rowFor(h.batchId);
-    if (hit) hit.row.holding += 1;
+    if (hit) hit.row.holding += h.quantity;
   }
   for (const w of input.writeOffs) {
     const hit = rowFor(w.batchId);
@@ -203,18 +203,20 @@ export async function loadSourceReport(sourceId: string, range: ReportRange, now
     include: { gift: { select: { name: true, nameVi: true } } },
   });
   const batchIds = batchRows.map((b) => b.id);
-  const [delivered, holding, writeOffs] = await Promise.all([
-    prisma.giftRedemption.findMany({
+  const [taken, writeOffs] = await Promise.all([
+    // What each order took from each batch; one order may span several batches (spec 018 R5).
+    prisma.giftStockMovement.findMany({
       where: {
         batchId: { in: batchIds },
-        status: "DELIVERED",
-        statusUpdatedAt: { gte: range.start, lte: range.end },
+        type: "REDEEM_OUT",
+        redemption: {
+          OR: [
+            { status: "DELIVERED", statusUpdatedAt: { gte: range.start, lte: range.end } },
+            { status: { in: ["PROCESSING", "SHIPPED"] } },
+          ],
+        },
       },
-      select: { batchId: true, userId: true },
-    }),
-    prisma.giftRedemption.findMany({
-      where: { batchId: { in: batchIds }, status: { in: ["PROCESSING", "SHIPPED"] } },
-      select: { batchId: true },
+      select: { batchId: true, quantity: true, redemption: { select: { status: true, userId: true } } },
     }),
     prisma.giftStockMovement.findMany({
       where: {
@@ -240,8 +242,12 @@ export async function loadSourceReport(sourceId: string, range: ReportRange, now
       receivedAt: b.receivedAt,
       expiresAt: b.expiresAt,
     })),
-    delivered: delivered.map((d) => ({ batchId: d.batchId!, userId: d.userId })),
-    holding: holding.map((h) => ({ batchId: h.batchId! })),
+    delivered: taken
+      .filter((t) => t.redemption?.status === "DELIVERED")
+      .map((t) => ({ batchId: t.batchId, userId: t.redemption!.userId, quantity: -t.quantity })),
+    holding: taken
+      .filter((t) => t.redemption && t.redemption.status !== "DELIVERED")
+      .map((t) => ({ batchId: t.batchId, quantity: -t.quantity })),
     writeOffs: writeOffs.map((w) => ({
       batchId: w.batchId,
       type: w.type as "ADJUST_OUT" | "EXPIRED",

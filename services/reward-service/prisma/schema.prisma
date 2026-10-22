@@ -134,7 +134,7 @@ model Gift {
   redemptions GiftRedemption[]
   batches     GiftStockBatch[]
   movements   GiftStockMovement[]
-  media       Media?           @relation(fields: [mediaId], references: [id], onDelete: Restrict)
+  media       Media?              @relation(fields: [mediaId], references: [id], onDelete: Restrict)
 
   @@index([deletedAt])
   @@index([isActive])
@@ -145,15 +145,33 @@ model Gift {
 model GiftRedemption {
   id String @id @default(uuid()) @db.Uuid
 
+  /// Public order code "EL-" + 8 chars (no 0 O 1 I L), set at creation and never changed (spec 017).
+  code String @unique @db.VarChar(11)
+
   userId String @map("user_id") @db.Uuid
 
   giftId String @map("gift_id") @db.Uuid
 
+  /// Total points paid = unitPoints * quantity (DB CHECK).
   greenPointsSpent Int @map("green_points_spent")
+
+  /// Items of the gift in this order, 1..10 (spec 018); the upper bound is a service rule.
+  quantity   Int @default(1)
+  /// Listed price of one item when ordered.
+  unitPoints Int @map("unit_points")
 
   phoneNumber String @map("phone_number") @db.VarChar(32)
 
+  /// Delivery address as picked on the map (Goong place or reverse-geocoded pin).
   pickupLocation String @map("pickup_location") @db.Text
+
+  /// Delivery details; required for new orders, null on orders made before they were asked for.
+  recipientName     String? @map("recipient_name") @db.VarChar(100)
+  /// House number, building, floor, room — what the map address does not carry.
+  addressDetail     String? @map("address_detail") @db.VarChar(255)
+  deliveryLatitude  Float?  @map("delivery_latitude")
+  deliveryLongitude Float?  @map("delivery_longitude")
+  deliveryNote      String? @map("delivery_note") @db.VarChar(500)
 
   status GiftRedemptionStatus @default(PROCESSING)
 
@@ -163,14 +181,26 @@ model GiftRedemption {
 
   createdAt DateTime @default(now()) @map("created_at")
 
-  /// Stock batch the item came from; null for redemptions made before spec 015.
+  /// Deprecated (spec 018): not written for new orders; read the REDEEM_OUT movements instead.
   batchId String? @map("batch_id") @db.Uuid
+
+  /// Required when cancelled from spec 016 on; null for older cancellations.
+  cancelReason String? @map("cancel_reason") @db.VarChar(500)
+
+  /// Whether the item went back to its batch on cancel; null unless cancelled.
+  restocked Boolean?
+
+  /// Third-party carrier and its tracking code; required when the order is shipped (spec 017).
+  carrier      String?   @db.VarChar(100)
+  trackingCode String?   @map("tracking_code") @db.VarChar(100)
+  shippedAt    DateTime? @map("shipped_at")
 
   gift  Gift            @relation(fields: [giftId], references: [id], onDelete: Restrict)
   batch GiftStockBatch? @relation(fields: [batchId], references: [id], onDelete: Restrict)
 
   lotSpends      GreenPointLotSpend[]
   stockMovements GiftStockMovement[]
+  events         GiftRedemptionEvent[]
 
   @@index([userId])
   @@index([giftId])
@@ -184,6 +214,48 @@ enum GiftRedemptionStatus {
   SHIPPED
   DELIVERED
   CANCELLED
+}
+
+enum GiftRedemptionEventType {
+  CREATED
+  SHIPPED
+  TRACKING_UPDATED
+  DELIVERED
+  CANCELLED
+}
+
+enum GiftRedemptionActorRole {
+  USER
+  ADMIN
+}
+
+/// Append-only order history (spec 017); rows are never updated or deleted.
+model GiftRedemptionEvent {
+  id String @id @default(uuid()) @db.Uuid
+
+  redemptionId String @map("redemption_id") @db.Uuid
+
+  type GiftRedemptionEventType
+
+  fromStatus GiftRedemptionStatus? @map("from_status")
+  toStatus   GiftRedemptionStatus? @map("to_status")
+
+  actorRole GiftRedemptionActorRole @map("actor_role")
+  /// Null on rows rebuilt for orders made before spec 017.
+  actorId   String?                 @map("actor_id") @db.Uuid
+
+  /// carrier / trackingCode / previous* / cancelReason / restocked, by type.
+  data Json?
+
+  /// Rebuilt from timestamps for orders made before spec 017.
+  reconstructed Boolean @default(false)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  redemption GiftRedemption @relation(fields: [redemptionId], references: [id], onDelete: Cascade)
+
+  @@index([redemptionId, createdAt])
+  @@map("gift_redemption_events")
 }
 
 /// Outbox + tracking for reward-service background jobs (e.g. green-point SQS worker, @da2/queue).
@@ -746,13 +818,13 @@ model GiftSource {
 model GiftStockBatch {
   id String @id @default(uuid()) @db.Uuid
 
-  giftId       String    @map("gift_id") @db.Uuid
-  sourceId     String    @map("source_id") @db.Uuid
-  quantity     Int
-  remaining    Int
-  unitValueVnd Int       @map("unit_value_vnd")
-  receivedAt   DateTime  @map("received_at")
-  expiresAt    DateTime? @map("expires_at")
+  giftId         String    @map("gift_id") @db.Uuid
+  sourceId       String    @map("source_id") @db.Uuid
+  quantity       Int
+  remaining      Int
+  unitValueVnd   Int       @map("unit_value_vnd")
+  receivedAt     DateTime  @map("received_at")
+  expiresAt      DateTime? @map("expires_at")
   /// Document number; may be empty when the proof is only in `attachmentUrls`.
   reference      String    @db.VarChar(255)
   /// Uploaded proof files (contract, sponsor letter, invoice, receipt), at most 5 URLs.
@@ -788,7 +860,8 @@ model GiftStockMovement {
   batch      GiftStockBatch  @relation(fields: [batchId], references: [id], onDelete: Restrict)
   redemption GiftRedemption? @relation(fields: [redemptionId], references: [id], onDelete: Restrict)
 
-  @@unique([redemptionId, type])
+  /// One REDEEM_OUT and one CANCEL_RETURN per order and batch (spec 018).
+  @@unique([redemptionId, batchId, type])
   @@index([giftId, createdAt(sort: Desc)])
   @@index([batchId])
   @@map("gift_stock_movements")

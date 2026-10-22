@@ -109,6 +109,7 @@ export class UserPointsService {
             id: redemption.id,
             giftId: redemption.giftId,
             greenPointsSpent: redemption.greenPointsSpent,
+            quantity: redemption.quantity,
             createdAt: redemption.createdAt.toISOString(),
             gift: redemption.gift
               ? {

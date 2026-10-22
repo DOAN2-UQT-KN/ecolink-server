@@ -83,7 +83,7 @@ type MovementRow = {
 };
 
 /**
- * Inserts the movement unless (redemption_id, type) exists; true when written. ON CONFLICT DO NOTHING
+ * Inserts the movement unless (redemption_id, batch_id, type) exists; true when written. ON CONFLICT DO NOTHING
  * instead of catching P2002, which would abort the surrounding Postgres transaction (spec 014 R1).
  */
 export async function insertMovementOnce(
@@ -140,67 +140,120 @@ export async function loadLiveBatchesForGifts(
 
 const outOfStock = () =>
   new HttpError(HTTP_STATUS.UNPROCESSABLE_ENTITY.withMessage("Gift is out of stock"));
+const notEnoughStock = () =>
+  new HttpError(HTTP_STATUS.UNPROCESSABLE_ENTITY.withMessage("Not enough stock"));
+
+/** Items an order took from one batch; the order's REDEEM_OUT movement for that batch. */
+export type BatchTake = { batchId: string; quantity: number };
 
 /**
- * Takes one item for a redemption: earliest expiry first, batches without expiry last, then earliest
- * received. The decrement is conditional, so a batch emptied by another request is skipped.
+ * Takes `quantity` items for a redemption: earliest expiry first, batches without expiry last, then
+ * earliest received, possibly across several batches (one warehouse, so this is bookkeeping only).
+ * Each decrement is conditional; a batch drained by another request is re-read. Too few items throws,
+ * and the caller's transaction rolls back whatever was taken (all or nothing, spec 018 FR-004).
  */
-export async function takeOneFromBatches(
+export async function takeFromBatches(
   tx: Prisma.TransactionClient,
   giftId: string,
   redemptionId: string,
   userId: string,
+  quantity: number,
   now: Date,
-): Promise<string> {
+): Promise<BatchTake[]> {
   const batches = await tx.giftStockBatch.findMany({
     where: { giftId, ...liveBatchWhere(now) },
     orderBy: [{ expiresAt: { sort: "asc", nulls: "last" } }, { receivedAt: "asc" }, { id: "asc" }],
-    select: { id: true },
+    select: { id: true, remaining: true },
   });
-  for (const { id } of batches) {
-    const { count } = await tx.giftStockBatch.updateMany({
-      where: { id, remaining: { gt: 0 } },
-      data: { remaining: { decrement: 1 } },
-    });
-    if (count === 0) continue;
-    await insertMovementOnce(tx, {
-      giftId,
-      batchId: id,
-      type: "REDEEM_OUT",
-      quantity: -1,
-      redemptionId,
-      actorId: userId,
-    });
-    await bumpStockCache(tx, giftId, -1);
-    return id;
+  const taken: BatchTake[] = [];
+  let need = quantity;
+  for (const batch of batches) {
+    let available = batch.remaining;
+    while (need > 0 && available > 0) {
+      const take = Math.min(need, available);
+      const { count } = await tx.giftStockBatch.updateMany({
+        where: { id: batch.id, remaining: { gte: take } },
+        data: { remaining: { decrement: take } },
+      });
+      if (count === 1) {
+        await insertMovementOnce(tx, {
+          giftId,
+          batchId: batch.id,
+          type: "REDEEM_OUT",
+          quantity: -take,
+          redemptionId,
+          actorId: userId,
+        });
+        taken.push({ batchId: batch.id, quantity: take });
+        need -= take;
+        break;
+      }
+      const fresh = await tx.giftStockBatch.findUnique({ where: { id: batch.id }, select: { remaining: true } });
+      available = fresh?.remaining ?? 0;
+    }
+    if (need === 0) break;
   }
-  throw outOfStock();
+  if (need > 0) throw taken.length === 0 ? outOfStock() : notEnoughStock();
+  await bumpStockCache(tx, giftId, -quantity);
+  return taken;
 }
 
-/** Puts a cancelled redemption's item back into its batch, once (spec 015 R5). */
-export async function returnToBatch(
+/** What an order needs from its REDEEM_OUT movements to name the sources its items came from. */
+export const REDEEM_SOURCES_INCLUDE = {
+  where: { type: "REDEEM_OUT" },
+  orderBy: { createdAt: "asc" },
+  select: { quantity: true, batch: { select: { source: { select: { id: true, name: true } } } } },
+} satisfies Prisma.GiftRedemption$stockMovementsArgs;
+
+/** Items per source, in the order they were taken; empty for orders before spec 015. */
+export function toRedemptionSources(
+  movements: Array<{ quantity: number; batch: { source: { id: string; name: string } } }>,
+): Array<{ id: string; name: string; quantity: number }> {
+  const bySource = new Map<string, { id: string; name: string; quantity: number }>();
+  for (const m of movements) {
+    const { id, name } = m.batch.source;
+    const row = bySource.get(id) ?? { id, name, quantity: 0 };
+    row.quantity += Math.abs(m.quantity);
+    bySource.set(id, row);
+  }
+  return [...bySource.values()];
+}
+
+/**
+ * Puts a cancelled redemption's items back into the batches they came from, once per batch
+ * (spec 015 R5, spec 018 R3). Returns how many items went back; 0 for orders before spec 015.
+ */
+export async function returnToBatches(
   tx: Prisma.TransactionClient,
-  redemption: Pick<GiftRedemption, "id" | "giftId" | "batchId">,
+  redemption: Pick<GiftRedemption, "id" | "giftId">,
   actorId: string | null,
   now: Date,
-): Promise<boolean> {
-  if (!redemption.batchId) return false;
-  const written = await insertMovementOnce(tx, {
-    giftId: redemption.giftId,
-    batchId: redemption.batchId,
-    type: "CANCEL_RETURN",
-    quantity: 1,
-    redemptionId: redemption.id,
-    actorId,
+): Promise<number> {
+  const outs = await tx.giftStockMovement.findMany({
+    where: { redemptionId: redemption.id, type: "REDEEM_OUT" },
+    select: { batchId: true, quantity: true },
   });
-  if (!written) return false;
-  const batch = await tx.giftStockBatch.update({
-    where: { id: redemption.batchId },
-    data: { remaining: { increment: 1 } },
-  });
-  // An expired batch no longer counts; the expiry job writes this item off on its next run.
-  if (isLive(batch, now)) await bumpStockCache(tx, redemption.giftId, 1);
-  return true;
+  let returned = 0;
+  for (const out of outs) {
+    const quantity = -out.quantity;
+    const written = await insertMovementOnce(tx, {
+      giftId: redemption.giftId,
+      batchId: out.batchId,
+      type: "CANCEL_RETURN",
+      quantity,
+      redemptionId: redemption.id,
+      actorId,
+    });
+    if (!written) continue;
+    const batch = await tx.giftStockBatch.update({
+      where: { id: out.batchId },
+      data: { remaining: { increment: quantity } },
+    });
+    // An expired batch no longer counts; the expiry job writes these items off on its next run.
+    if (isLive(batch, now)) await bumpStockCache(tx, redemption.giftId, quantity);
+    returned += quantity;
+  }
+  return returned;
 }
 
 /** Writes `quantity` items off a batch with a reason; never below zero. */

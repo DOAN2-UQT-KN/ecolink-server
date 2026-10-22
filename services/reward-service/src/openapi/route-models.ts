@@ -27,10 +27,6 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
     requestBody: "RedeemGiftBody",
     responseData: "GiftRedemptionOneEnvelopeData",
   },
-  "POST /api/v1/gifts/:id/exchange": {
-    requestBody: "RedeemGiftBody",
-    responseData: "GiftRedemptionOneEnvelopeData",
-  },
   "GET /api/v1/admin/gift-redemptions": {
     query: "AdminGiftRedemptionsQuery",
     responseData: "AdminGiftRedemptionsEnvelopeData",
@@ -38,6 +34,13 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
   "PATCH /api/v1/admin/gift-redemptions/:id/status": {
     requestBody: "PatchGiftRedemptionStatusBody",
     responseData: "GiftRedemptionOneEnvelopeData",
+  },
+  "PATCH /api/v1/admin/gift-redemptions/:id/tracking": {
+    requestBody: "UpdateTrackingBody",
+    responseData: "GiftRedemptionOneEnvelopeData",
+  },
+  "GET /api/v1/admin/gift-redemptions/:code": {
+    responseData: "AdminGiftRedemptionDetailEnvelopeData",
   },
   "GET /api/v1/admin/gift-sources": {
     query: "GiftSourceListQuery",
@@ -88,6 +91,16 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
   "GET /api/v1/me/redemptions": {
     query: "MyGiftRedemptionsQuery",
     responseData: "MyGiftRedemptionsEnvelopeData",
+  },
+  "GET /api/v1/me/redemptions/:code": {
+    responseData: "MyGiftRedemptionDetailEnvelopeData",
+  },
+  "POST /api/v1/me/redemptions/:code/cancel": {
+    requestBody: "CancelMyRedemptionBody",
+    responseData: "MyGiftRedemptionDetailEnvelopeData",
+  },
+  "POST /api/v1/me/redemptions/:code/confirm-delivery": {
+    responseData: "MyGiftRedemptionDetailEnvelopeData",
   },
 
   "GET /api/v1/admin/gamification/point-rules": {

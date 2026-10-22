@@ -23,8 +23,8 @@ function designInput(): ReportInput {
         expiresAt: null,
       },
     ],
-    delivered: Array.from({ length: 41 }, (_, i) => ({ batchId: "b1", userId: `u${i}` })),
-    holding: [{ batchId: "b1" }, { batchId: "b1" }],
+    delivered: Array.from({ length: 41 }, (_, i) => ({ batchId: "b1", userId: `u${i}`, quantity: 1 })),
+    holding: [{ batchId: "b1", quantity: 1 }, { batchId: "b1", quantity: 1 }],
     writeOffs: [{ batchId: "b1", type: "ADJUST_OUT", reason: "DAMAGED", quantity: -1 }],
   };
 }
@@ -49,10 +49,27 @@ describe("buildSourceReport", () => {
   it("counts one recipient once across several orders", () => {
     const input = designInput();
     input.delivered = [
-      { batchId: "b1", userId: "an" },
-      { batchId: "b1", userId: "an" },
+      { batchId: "b1", userId: "an", quantity: 1 },
+      { batchId: "b1", userId: "an", quantity: 1 },
     ];
     expect(buildSourceReport(input).totals.recipients).toBe(1);
+  });
+
+  it("counts items, not orders, including an order spread over two batches", () => {
+    const input = designInput();
+    input.batches = [
+      { ...input.batches[0], id: "b1", quantity: 10, remaining: 6 },
+      { ...input.batches[0], id: "b2", quantity: 5, remaining: 4 },
+    ];
+    // An order of 3 delivered: 2 from b1, 1 from b2. An order of 1 still being prepared, from b1.
+    input.delivered = [
+      { batchId: "b1", userId: "an", quantity: 2 },
+      { batchId: "b2", userId: "an", quantity: 1 },
+    ];
+    input.holding = [{ batchId: "b1", quantity: 1 }];
+    input.writeOffs = [];
+    const { totals } = buildSourceReport(input);
+    expect(totals).toMatchObject({ delivered: 3, holding: 1, inStock: 10, recipients: 1, valueDeliveredVnd: 360000 });
   });
 
   it("gives all zeros for a source without batches", () => {
