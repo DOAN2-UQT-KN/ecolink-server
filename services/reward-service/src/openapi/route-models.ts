@@ -27,10 +27,6 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
     requestBody: "RedeemGiftBody",
     responseData: "GiftRedemptionOneEnvelopeData",
   },
-  "POST /api/v1/gifts/:id/exchange": {
-    requestBody: "RedeemGiftBody",
-    responseData: "GiftRedemptionOneEnvelopeData",
-  },
   "GET /api/v1/admin/gift-redemptions": {
     query: "AdminGiftRedemptionsQuery",
     responseData: "AdminGiftRedemptionsEnvelopeData",
@@ -39,6 +35,52 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
     requestBody: "PatchGiftRedemptionStatusBody",
     responseData: "GiftRedemptionOneEnvelopeData",
   },
+  "PATCH /api/v1/admin/gift-redemptions/:id/tracking": {
+    requestBody: "UpdateTrackingBody",
+    responseData: "GiftRedemptionOneEnvelopeData",
+  },
+  "GET /api/v1/admin/gift-redemptions/:code": {
+    responseData: "AdminGiftRedemptionDetailEnvelopeData",
+  },
+  "GET /api/v1/admin/gift-sources": {
+    query: "GiftSourceListQuery",
+    responseData: "GiftSourcesListEnvelopeData",
+  },
+  "POST /api/v1/admin/gift-sources": {
+    requestBody: "CreateGiftSourceBody",
+    responseData: "GiftSourceOneEnvelopeData",
+  },
+  "GET /api/v1/admin/gift-sources/:id": {
+    responseData: "GiftSourceOneEnvelopeData",
+  },
+  "PUT /api/v1/admin/gift-sources/:id": {
+    requestBody: "UpdateGiftSourceBody",
+    responseData: "GiftSourceOneEnvelopeData",
+  },
+  "GET /api/v1/admin/gift-sources/:id/batches": {
+    query: "StockBatchListQuery",
+    responseData: "StockBatchesListEnvelopeData",
+  },
+  "GET /api/v1/admin/gift-sources/:id/report": {
+    query: "GiftSourceReportQuery",
+    responseData: "GiftSourceReportEnvelopeData",
+  },
+  "GET /api/v1/admin/gifts/:id/stock-batches": {
+    query: "StockBatchListQuery",
+    responseData: "StockBatchesListEnvelopeData",
+  },
+  "POST /api/v1/admin/gifts/:id/stock-batches": {
+    requestBody: "CreateStockBatchBody",
+    responseData: "StockBatchCreatedEnvelopeData",
+  },
+  "POST /api/v1/admin/stock-batches/:id/adjustments": {
+    requestBody: "AdjustStockBatchBody",
+    responseData: "StockAdjustedEnvelopeData",
+  },
+  "GET /api/v1/admin/gifts/:id/stock-movements": {
+    query: "StockMovementListQuery",
+    responseData: "StockMovementsListEnvelopeData",
+  },
   "GET /api/v1/me/points": {
     responseData: "MyPointsEnvelopeData",
   },
@@ -46,61 +88,19 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
     query: "MyPointsTransactionsQuery",
     responseData: "MyPointsTransactionsEnvelopeData",
   },
-  "GET /api/v1/leaderboard": {
-    query: "LeaderboardQuery",
-    responseData: "LeaderboardEnvelopeData",
-  },
-  "GET /api/v1/leaderboard/me": {
-    responseData: "LeaderboardMeEnvelopeData",
-  },
   "GET /api/v1/me/redemptions": {
     query: "MyGiftRedemptionsQuery",
     responseData: "MyGiftRedemptionsEnvelopeData",
   },
-
-  "GET /api/v1/seasons/current": {
-    responseData: "SeasonCurrentEnvelopeData",
+  "GET /api/v1/me/redemptions/:code": {
+    responseData: "MyGiftRedemptionDetailEnvelopeData",
   },
-  "GET /api/v1/seasons/:id": {
-    responseData: "SeasonOneEnvelopeData",
+  "POST /api/v1/me/redemptions/:code/cancel": {
+    requestBody: "CancelMyRedemptionBody",
+    responseData: "MyGiftRedemptionDetailEnvelopeData",
   },
-  "GET /api/v1/me/gamification/summary": {
-    responseData: "GamificationSummaryEnvelopeData",
-  },
-  "GET /api/v1/me/gamification/point-transactions": {
-    query: "GamificationPointTransactionsQuery",
-    responseData: "GamificationPointTransactionsEnvelopeData",
-  },
-  "GET /api/v1/me/gamification/points-by-season": {
-    query: "PointsBySeasonQuery",
-    responseData: "PointsBySeasonEnvelopeData",
-  },
-  /** Response uses `BadgeGrantItemDto` (`MyBadgeNestedDto`, optional `BadgeGrantSeasonDto`). */
-  "GET /api/v1/me/badges": {
-    query: "MyBadgesQuery",
-    responseData: "MyBadgesEnvelopeData",
-  },
-  /** Logical metric tables for badge rule builder (`MetricTableDto[]`). */
-  "GET /api/v1/metric-tables": {
-    query: "MetricTablesQuery",
-    responseData: "MetricTablesEnvelopeData",
-  },
-  /** Metric columns (`MetricColumnDto[]`, optional `metricTableId` UUID filter). */
-  "GET /api/v1/metric-columns": {
-    query: "MetricColumnsQuery",
-    responseData: "MetricColumnsEnvelopeData",
-  },
-  "GET /api/v1/gamification/campaign-reward-estimate": {
-    query: "CampaignRewardEstimateQuery",
-    responseData: "CampaignRewardEstimateEnvelopeData",
-  },
-  "GET /api/v1/gamification/leaderboards/:metric": {
-    query: "GamificationLeaderboardQuery",
-    responseData: "GamificationLeaderboardEnvelopeData",
-  },
-  "GET /api/v1/gamification/leaderboards/:metric/me": {
-    query: "GamificationLeaderboardQuery",
-    responseData: "GamificationLeaderboardMeEnvelopeData",
+  "POST /api/v1/me/redemptions/:code/confirm-delivery": {
+    responseData: "MyGiftRedemptionDetailEnvelopeData",
   },
 
   "GET /api/v1/admin/gamification/point-rules": {
@@ -110,72 +110,7 @@ export const OPENAPI_ROUTE_MODELS: OpenapiRouteModels = {
     requestBody: "PatchGamificationPointRulesBody",
     responseData: "GamificationPointRulesOneEnvelopeData",
   },
-  "GET /api/v1/admin/gamification/sp-rules": {
-    responseData: "SpendablePointRulesOneEnvelopeData",
-  },
-  "PATCH /api/v1/admin/gamification/sp-rules": {
-    requestBody: "PatchSpendablePointRulesBody",
-    responseData: "SpendablePointRulesOneEnvelopeData",
-  },
-  "GET /api/v1/admin/gamification/multipliers": {
-    responseData: "VolunteerMultipliersListEnvelopeData",
-  },
-  "PUT /api/v1/admin/gamification/multipliers": {
-    requestBody: "PutVolunteerMultiplierBody",
-    responseData: "VolunteerMultiplierOneEnvelopeData",
-  },
-  "GET /api/v1/admin/gamification/season-schedules": {
-    responseData: "SeasonSchedulesListEnvelopeData",
-  },
-  "PUT /api/v1/admin/gamification/season-schedules": {
-    requestBody: "PutSeasonScheduleBody",
-    responseData: "SeasonScheduleOneEnvelopeData",
-  },
-  "GET /api/v1/admin/gamification/payout-tiers": {
-    query: "AdminPayoutTiersQuery",
-    responseData: "PayoutTiersListEnvelopeData",
-  },
-  "POST /api/v1/admin/gamification/payout-tiers": {
-    requestBody: "CreateSeasonPayoutTierBody",
-    responseData: "PayoutTierOneEnvelopeData",
-  },
-  "PATCH /api/v1/admin/gamification/payout-tiers/:id": {
-    requestBody: "PatchSeasonPayoutTierBody",
-    responseData: "PayoutTierOneEnvelopeData",
-  },
-  "DELETE /api/v1/admin/gamification/payout-tiers/:id": {
-    responseData: "DeletePayoutTierEnvelopeData",
-  },
-  /** `badges`: `GamificationBadgeDefinitionDto[]` (rules engine fields). */
-  "GET /api/v1/admin/gamification/badges": {
-    query: "AdminBadgeDefinitionsQuery",
-    responseData: "BadgeDefinitionsListEnvelopeData",
-  },
-  "POST /api/v1/admin/gamification/badges": {
-    requestBody: "CreateBadgeDefinitionBody",
-    /** `badge`: `GamificationBadgeDefinitionDto` */
-    responseData: "BadgeDefinitionOneEnvelopeData",
-  },
-  "PATCH /api/v1/admin/gamification/badges/:id": {
-    requestBody: "PatchBadgeDefinitionBody",
-    responseData: "BadgeDefinitionOneEnvelopeData",
-  },
-
-  "GET /api/v1/admin/seasons": {
-    query: "AdminSeasonsQuery",
-    responseData: "SeasonsAdminListEnvelopeData",
-  },
-  "POST /api/v1/admin/seasons": {
-    requestBody: "CreateSeasonBody",
-    responseData: "SeasonCreatedEnvelopeData",
-  },
-  "PATCH /api/v1/admin/seasons/:id": {
-    requestBody: "PatchSeasonBody",
-    responseData: "SeasonPatchEnvelopeData",
-  },
-  "POST /api/v1/admin/seasons/:id/finalize": {
-    query: "FinalizeSeasonQuery",
-    requestBody: "FinalizeSeasonBody",
-    responseData: "SeasonFinalizeEnvelopeData",
+  "GET /api/v1/admin/gamification/point-rules/history": {
+    responseData: "GamificationPointRuleHistoryEnvelopeData",
   },
 };

@@ -171,18 +171,18 @@ describe("scanning", () => {
     const t = at(start, 10 * MIN);
     await scan(c.id, V2, await codeAt(c.id, c.a.id, t), t, { latitude: POINT.latitude + 0.002 });
     await svc.closeSession(c.id, c.a.id, LEADER, at(start, 3 * HOUR));
-    expect(await svc.completionCredits(c.id, 10)).toEqual([{ userId: V2, points: 10 }]);
+    expect(await svc.completionAttendance(c.id)).toEqual([{ userId: V2, eligibleShifts: 1, registeredShifts: 0 }]);
 
     await expect(
       svc.setExcluded(c.id, c.a.id, V2, V1, { reason: "Không có mặt" }),
     ).rejects.toMatchObject(code("CAMPAIGN_PERMISSION_DENIED"));
     await svc.setExcluded(c.id, c.a.id, V2, LEADER, { reason: "Không có mặt" });
-    expect(await svc.completionCredits(c.id, 10)).toEqual([]);
+    expect(await svc.completionAttendance(c.id)).toEqual([]);
     const excluded = (await svc.listForShift(c.id, c.a.id, { userId: LEADER })).attendances[0];
     expect(excluded).toMatchObject({ excluded: true, excludeReason: "Không có mặt", eligible: false });
 
     await svc.setExcluded(c.id, c.a.id, V2, MGR, null);
-    expect(await svc.completionCredits(c.id, 10)).toEqual([{ userId: V2, points: 10 }]);
+    expect(await svc.completionAttendance(c.id)).toEqual([{ userId: V2, eligibleShifts: 1, registeredShifts: 0 }]);
     expect(
       await prisma.campaignStatusLog.count({
         where: { campaignId: c.id, event: { in: ["attendance_excluded", "attendance_restored"] } },
@@ -275,10 +275,12 @@ describe("points at completion", () => {
     await scan(c.id, V2, later, t3);
     // V3 never checks out.
 
-    const credits = await svc.completionCredits(c.id, 10);
-    expect(credits.sort((x, y) => x.points - y.points)).toEqual([
-      { userId: V1, points: 5 }, // 1 of 2 registered shifts
-      { userId: V2, points: 10 }, // walked in: 100%
-    ]);
+    const attendance = await svc.completionAttendance(c.id);
+    expect(attendance.sort((x, y) => x.userId.localeCompare(y.userId))).toEqual(
+      [
+        { userId: V1, eligibleShifts: 1, registeredShifts: 2 }, // 1 of 2 registered shifts
+        { userId: V2, eligibleShifts: 1, registeredShifts: 0 }, // walked in
+      ].sort((x, y) => x.userId.localeCompare(y.userId)),
+    );
   });
 });

@@ -1,6 +1,6 @@
 generator client {
-  provider        = "prisma-client-js"
-  binaryTargets   = ["native", "linux-musl-openssl-3.0.x"]
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
@@ -16,7 +16,7 @@ model Difficulty {
   /// Unique tier index (1 = easy … 4 = very hard).
   level Int @unique
 
-  name String @db.VarChar(64)
+  name   String  @db.VarChar(64)
   nameVi String? @map("name_vi") @db.VarChar(64)
   nameEn String? @map("name_en") @db.VarChar(64)
 
@@ -48,8 +48,8 @@ model UserGreenPointBalance {
   @@map("user_green_point_balances")
 }
 
-/// Append-only style ledger for all green-point earnings (campaign, upvote, referral, …).
-/// Idempotency: unique (user, type, resource) while row is active — see partial index in migration.
+/// The only green-point ledger: every credit and debit (earnings, redeem, refund, expiry, migration adjust).
+/// Idempotency: unique (user_id, idempotency_key); write via insertLedgerOnce (ON CONFLICT DO NOTHING).
 model GreenPointTransaction {
   id String @id @default(uuid()) @db.Uuid
 
@@ -69,10 +69,16 @@ model GreenPointTransaction {
   /// Snapshot context (rule ids, thresholds, etc.) for audit/debug; never used to recompute points.
   metadata Json?
 
+  /// Stable per-user key, e.g. campaign_completion:<id>, vote_milestone:<reportId>:<n>, expire:<lotId>.
+  idempotencyKey String @map("idempotency_key") @db.VarChar(256)
+
+  lot GreenPointLot?
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
+  @@unique([userId, idempotencyKey])
   @@index([userId])
   @@index([resourceType, resourceId])
   @@index([type])
@@ -91,7 +97,8 @@ model Media {
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
-  gifts Gift[]
+  gifts       Gift[]
+  giftSources GiftSource[]
 
   @@index([type])
   @@index([deletedAt])
@@ -102,21 +109,21 @@ model Media {
 model Gift {
   id String @id @default(uuid()) @db.Uuid
 
-  name String @db.VarChar(255)
+  name   String  @db.VarChar(255)
   nameVi String? @map("name_vi") @db.VarChar(255)
   nameEn String? @map("name_en") @db.VarChar(255)
 
   mediaId String? @map("media_id") @db.Uuid
 
-  description String @db.Text
+  description   String  @db.Text
   descriptionVi String? @map("description_vi") @db.Text
   descriptionEn String? @map("description_en") @db.Text
 
   /// Green points required to redeem once.
   greenPoints Int @map("green_points")
 
-  /// Remaining stock; null means unlimited.
-  stockRemaining Int? @map("stock_remaining")
+  /// Cache of the live batches' remaining (spec 015 R2); updated with every stock movement.
+  stockRemaining Int @default(0) @map("stock_remaining")
 
   isActive Boolean @default(true) @map("is_active")
 
@@ -125,7 +132,9 @@ model Gift {
   deletedAt DateTime? @map("deleted_at")
 
   redemptions GiftRedemption[]
-  media       Media?           @relation(fields: [mediaId], references: [id], onDelete: Restrict)
+  batches     GiftStockBatch[]
+  movements   GiftStockMovement[]
+  media       Media?              @relation(fields: [mediaId], references: [id], onDelete: Restrict)
 
   @@index([deletedAt])
   @@index([isActive])
@@ -136,15 +145,33 @@ model Gift {
 model GiftRedemption {
   id String @id @default(uuid()) @db.Uuid
 
+  /// Public order code "EL-" + 8 chars (no 0 O 1 I L), set at creation and never changed (spec 017).
+  code String @unique @db.VarChar(11)
+
   userId String @map("user_id") @db.Uuid
 
   giftId String @map("gift_id") @db.Uuid
 
+  /// Total points paid = unitPoints * quantity (DB CHECK).
   greenPointsSpent Int @map("green_points_spent")
+
+  /// Items of the gift in this order, 1..10 (spec 018); the upper bound is a service rule.
+  quantity   Int @default(1)
+  /// Listed price of one item when ordered.
+  unitPoints Int @map("unit_points")
 
   phoneNumber String @map("phone_number") @db.VarChar(32)
 
+  /// Delivery address as picked on the map (Goong place or reverse-geocoded pin).
   pickupLocation String @map("pickup_location") @db.Text
+
+  /// Delivery details; required for new orders, null on orders made before they were asked for.
+  recipientName     String? @map("recipient_name") @db.VarChar(100)
+  /// House number, building, floor, room — what the map address does not carry.
+  addressDetail     String? @map("address_detail") @db.VarChar(255)
+  deliveryLatitude  Float?  @map("delivery_latitude")
+  deliveryLongitude Float?  @map("delivery_longitude")
+  deliveryNote      String? @map("delivery_note") @db.VarChar(500)
 
   status GiftRedemptionStatus @default(PROCESSING)
 
@@ -154,10 +181,30 @@ model GiftRedemption {
 
   createdAt DateTime @default(now()) @map("created_at")
 
-  gift Gift @relation(fields: [giftId], references: [id], onDelete: Restrict)
+  /// Deprecated (spec 018): not written for new orders; read the REDEEM_OUT movements instead.
+  batchId String? @map("batch_id") @db.Uuid
+
+  /// Required when cancelled from spec 016 on; null for older cancellations.
+  cancelReason String? @map("cancel_reason") @db.VarChar(500)
+
+  /// Whether the item went back to its batch on cancel; null unless cancelled.
+  restocked Boolean?
+
+  /// Third-party carrier and its tracking code; required when the order is shipped (spec 017).
+  carrier      String?   @db.VarChar(100)
+  trackingCode String?   @map("tracking_code") @db.VarChar(100)
+  shippedAt    DateTime? @map("shipped_at")
+
+  gift  Gift            @relation(fields: [giftId], references: [id], onDelete: Restrict)
+  batch GiftStockBatch? @relation(fields: [batchId], references: [id], onDelete: Restrict)
+
+  lotSpends      GreenPointLotSpend[]
+  stockMovements GiftStockMovement[]
+  events         GiftRedemptionEvent[]
 
   @@index([userId])
   @@index([giftId])
+  @@index([batchId])
   @@index([status, createdAt])
   @@map("gift_redemptions")
 }
@@ -167,6 +214,48 @@ enum GiftRedemptionStatus {
   SHIPPED
   DELIVERED
   CANCELLED
+}
+
+enum GiftRedemptionEventType {
+  CREATED
+  SHIPPED
+  TRACKING_UPDATED
+  DELIVERED
+  CANCELLED
+}
+
+enum GiftRedemptionActorRole {
+  USER
+  ADMIN
+}
+
+/// Append-only order history (spec 017); rows are never updated or deleted.
+model GiftRedemptionEvent {
+  id String @id @default(uuid()) @db.Uuid
+
+  redemptionId String @map("redemption_id") @db.Uuid
+
+  type GiftRedemptionEventType
+
+  fromStatus GiftRedemptionStatus? @map("from_status")
+  toStatus   GiftRedemptionStatus? @map("to_status")
+
+  actorRole GiftRedemptionActorRole @map("actor_role")
+  /// Null on rows rebuilt for orders made before spec 017.
+  actorId   String?                 @map("actor_id") @db.Uuid
+
+  /// carrier / trackingCode / previous* / cancelReason / restocked, by type.
+  data Json?
+
+  /// Rebuilt from timestamps for orders made before spec 017.
+  reconstructed Boolean @default(false)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  redemption GiftRedemption @relation(fields: [redemptionId], references: [id], onDelete: Cascade)
+
+  @@index([redemptionId, createdAt])
+  @@map("gift_redemption_events")
 }
 
 /// Outbox + tracking for reward-service background jobs (e.g. green-point SQS worker, @da2/queue).
@@ -238,10 +327,10 @@ enum BadgeCategory {
 
 /// Time-bounded competitive window for RP, badges, and leaderboard snapshots.
 model Season {
-  id     String       @id @default(uuid()) @db.Uuid
-  label  String?      @db.VarChar(128)
-  kind   SeasonKind   @map("season_kind")
-  status Int          @default(1)
+  id     String     @id @default(uuid()) @db.Uuid
+  label  String?    @db.VarChar(128)
+  kind   SeasonKind @map("season_kind")
+  status Int        @default(1)
 
   startsAt DateTime @map("starts_at")
   endsAt   DateTime @map("ends_at")
@@ -249,39 +338,63 @@ model Season {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  userRpTotals           UserSeasonRpTotal[]
-  organizationScores     OrganizationSeasonScore[]
-  leaderboardRows        LeaderboardSnapshot[]
-  badgeGrants            UserBadgeGrant[]
-  reportMilestones       ReportMilestoneAward[]
-  campaignRewardAwards   CampaignRewardAward[]
-  payoutTiers            SeasonLeaderboardPayoutTier[]
-  userPointTxSeason      UserPointTransaction[] @relation("SeasonUserPointTransactions")
+  userRpTotals         UserSeasonRpTotal[]
+  organizationScores   OrganizationSeasonScore[]
+  leaderboardRows      LeaderboardSnapshot[]
+  badgeGrants          UserBadgeGrant[]
+  reportMilestones     ReportMilestoneAward[]
+  campaignRewardAwards CampaignRewardAward[]
+  payoutTiers          SeasonLeaderboardPayoutTier[]
+  userPointTxSeason    UserPointTransaction[]        @relation("SeasonUserPointTransactions")
 
   @@index([status])
   @@index([startsAt, endsAt])
   @@map("seasons")
 }
 
-/// FIFO SP buckets; `remaining` decreases on redemption. Expired batches are skipped by spend logic.
-model UserSpWalletEntry {
+/// Green-point lots (formerly user_sp_wallet). Balance = SUM(remaining) of lots with expires_at > now.
+/// CHECK (remaining >= 0 AND remaining <= amount); partial index (user_id, expires_at) WHERE remaining > 0 lives in SQL.
+model GreenPointLot {
   id     String @id @default(uuid()) @db.Uuid
   userId String @map("user_id") @db.Uuid
+
+  /// Ledger row that created the lot; null for lots carried over from the SP wallet.
+  transactionId String?                @unique @map("transaction_id") @db.Uuid
+  transaction   GreenPointTransaction? @relation(fields: [transactionId], references: [id])
 
   amount    Int
   remaining Int
 
-  sourceType PointSourceType @map("source_type")
-
-  /// Nullable when credit originates outside a concrete domain row (e.g. manual admin grant).
-  sourceId String? @map("source_id") @db.Uuid
+  /// Legacy SP source; null for lots created after step 2. Dropped in cleanup.
+  sourceType PointSourceType? @map("source_type")
+  sourceId   String?          @map("source_id") @db.Uuid
 
   createdAt DateTime @default(now()) @map("created_at")
   expiresAt DateTime @map("expires_at")
 
-  @@index([userId, expiresAt])
+  spends GreenPointLotSpend[]
+
   @@index([expiresAt])
-  @@map("user_sp_wallet")
+  @@map("green_point_lots")
+}
+
+/// How much a redemption took from each lot, so a cancel can give it back to the same lots.
+model GreenPointLotSpend {
+  id String @id @default(uuid()) @db.Uuid
+
+  redemptionId String         @map("redemption_id") @db.Uuid
+  redemption   GiftRedemption @relation(fields: [redemptionId], references: [id])
+
+  lotId String        @map("lot_id") @db.Uuid
+  lot   GreenPointLot @relation(fields: [lotId], references: [id])
+
+  amount Int
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([redemptionId, lotId])
+  @@index([redemptionId])
+  @@map("green_point_lot_spends")
 }
 
 /// Unified ledger: all CRP/VRP/SP movements (credits and debits). RP rows MUST set `seasonId`.
@@ -316,11 +429,11 @@ model UserPointTransaction {
 
 /// Materialized seasonal RP totals for fast leaderboard reads (updated after each RP ledger append).
 model UserSeasonRpTotal {
-  userId String @map("user_id") @db.Uuid
+  userId   String @map("user_id") @db.Uuid
   seasonId String @map("season_id") @db.Uuid
 
-  citizenRp    Int @default(0) @map("citizen_rp")
-  volunteerRp  Int @default(0) @map("volunteer_rp")
+  citizenRp   Int @default(0) @map("citizen_rp")
+  volunteerRp Int @default(0) @map("volunteer_rp")
 
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -401,17 +514,43 @@ model GamificationPointRules {
   /// Sorted ascending in application layer (e.g. [10, 20, 50, 100]).
   reportMilestoneThresholds Int[] @default([]) @map("report_milestone_thresholds")
 
-  /// Campaign public UI: max estimated bonus before multiplier (slug-based caps keyed by difficulty level).
-  volunteerBonusCapByDifficulty Json? @map("volunteer_bonus_cap_by_difficulty")
+  /// Points for a campaign completion at full participation (scaled by eligible / registered shifts).
+  campaignCompletionPoints Int @default(20) @map("campaign_completion_points")
+
+  /// Points for a report the admin marks done.
+  reportCompletionPoints Int @default(0) @map("report_completion_points")
+
+  /// Days until a newly created green-point lot expires.
+  pointExpirationDays Int @default(90) @map("point_expiration_days")
+
+  history GamificationPointRuleHistory[]
 
   isActive Boolean @default(true) @map("is_active")
 
-  effectiveFrom DateTime  @default(now()) @map("effective_from")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
+  effectiveFrom DateTime @default(now()) @map("effective_from")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
 
   @@index([isActive, effectiveFrom(sort: Desc)])
   @@map("gamification_point_rules")
+}
+
+/// One row per admin save of the point rules (insert only).
+model GamificationPointRuleHistory {
+  id String @id @default(uuid()) @db.Uuid
+
+  ruleId String                 @map("rule_id") @db.Uuid
+  rule   GamificationPointRules @relation(fields: [ruleId], references: [id])
+
+  changedBy String @map("changed_by") @db.Uuid
+
+  before Json?
+  after  Json
+
+  changedAt DateTime @default(now()) @map("changed_at")
+
+  @@index([ruleId, changedAt(sort: Desc)])
+  @@map("gamification_point_rule_history")
 }
 
 /// Org relationship multipliers for VRP (no stacking — worker picks highest applicable).
@@ -522,8 +661,8 @@ model BadgeDefinition {
   /// Denormalized: set when slug becomes immutable (publish or first grant).
   slugLockedAt DateTime? @map("slug_locked_at")
 
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
   grants UserBadgeGrant[]
@@ -608,7 +747,9 @@ model MetricColumn {
 
   label String @db.VarChar(255)
 
-  /** FE hint: `integer`, `number`, etc. */
+  /**
+   * FE hint: `integer`, `number`, etc.
+   */
   valueType String @map("value_type") @db.VarChar(32)
 
   isActive Boolean @default(true) @map("is_active")
@@ -621,22 +762,107 @@ model MetricColumn {
   @@map("metric_columns")
 }
 
-/// Config: when a report reaches a vote threshold, its creator earns bonus green points.
-/// Evaluated by a green-point worker job; idempotency is enforced in the ledger via resourceType encoding.
-model ReportVoteGreenPointRule {
+enum GiftSourceType {
+  SPONSOR
+  ECOLINK
+  DONATION
+}
+
+enum GiftSourceStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum GiftStockMovementType {
+  STOCK_IN
+  REDEEM_OUT
+  CANCEL_RETURN
+  ADJUST_OUT
+  EXPIRED
+}
+
+enum GiftStockAdjustReason {
+  DAMAGED
+  LOST
+  COUNT_SHORTAGE
+  RETURN_TO_SOURCE
+}
+
+/// Where gifts come from (spec 015). Never hard-deleted; INACTIVE sources take no new batches.
+model GiftSource {
   id String @id @default(uuid()) @db.Uuid
 
-  /// Vote count threshold, e.g. 10 means ">= 10 votes".
-  threshold Int @unique
-
-  /// Bonus green points for report creator when threshold is reached.
-  points Int
-
-  isActive Boolean @default(true) @map("is_active")
+  name         String           @db.VarChar(255)
+  type         GiftSourceType
+  contactName  String?          @map("contact_name") @db.VarChar(255)
+  contactPhone String?          @map("contact_phone") @db.VarChar(32)
+  contactEmail String?          @map("contact_email") @db.VarChar(255)
+  logoMediaId  String?          @map("logo_media_id") @db.Uuid
+  showOnGift   Boolean          @default(false) @map("show_on_gift")
+  status       GiftSourceStatus @default(ACTIVE)
+  note         String?          @db.Text
+  createdBy    String?          @map("created_by") @db.Uuid
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  @@index([isActive, threshold])
-  @@map("report_vote_green_point_rules")
+  logo    Media?           @relation(fields: [logoMediaId], references: [id], onDelete: SetNull)
+  batches GiftStockBatch[]
+
+  @@index([status, type])
+  @@index([name])
+  @@map("gift_sources")
+}
+
+/// One receipt of a gift from a source. 0 <= remaining <= quantity (DB CHECK).
+model GiftStockBatch {
+  id String @id @default(uuid()) @db.Uuid
+
+  giftId         String    @map("gift_id") @db.Uuid
+  sourceId       String    @map("source_id") @db.Uuid
+  quantity       Int
+  remaining      Int
+  unitValueVnd   Int       @map("unit_value_vnd")
+  receivedAt     DateTime  @map("received_at")
+  expiresAt      DateTime? @map("expires_at")
+  /// Document number; may be empty when the proof is only in `attachmentUrls`.
+  reference      String    @db.VarChar(255)
+  /// Uploaded proof files (contract, sponsor letter, invoice, receipt), at most 5 URLs.
+  attachmentUrls String[]  @default([]) @map("attachment_urls")
+  note           String?   @db.Text
+  createdBy      String?   @map("created_by") @db.Uuid
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  gift        Gift                @relation(fields: [giftId], references: [id], onDelete: Restrict)
+  source      GiftSource          @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  movements   GiftStockMovement[]
+  redemptions GiftRedemption[]
+
+  @@index([sourceId, receivedAt])
+  @@map("gift_stock_batches")
+}
+
+/// Append-only stock history; per batch SUM(quantity) = remaining.
+model GiftStockMovement {
+  id String @id @default(uuid()) @db.Uuid
+
+  giftId       String                 @map("gift_id") @db.Uuid
+  batchId      String                 @map("batch_id") @db.Uuid
+  type         GiftStockMovementType
+  quantity     Int
+  reason       GiftStockAdjustReason?
+  note         String?                @db.Text
+  redemptionId String?                @map("redemption_id") @db.Uuid
+  actorId      String?                @map("actor_id") @db.Uuid
+  createdAt    DateTime               @default(now()) @map("created_at")
+
+  gift       Gift            @relation(fields: [giftId], references: [id], onDelete: Restrict)
+  batch      GiftStockBatch  @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  redemption GiftRedemption? @relation(fields: [redemptionId], references: [id], onDelete: Restrict)
+
+  /// One REDEEM_OUT and one CANCEL_RETURN per order and batch (spec 018).
+  @@unique([redemptionId, batchId, type])
+  @@index([giftId, createdAt(sort: Desc)])
+  @@index([batchId])
+  @@map("gift_stock_movements")
 }

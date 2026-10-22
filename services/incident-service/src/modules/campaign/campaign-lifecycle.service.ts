@@ -14,7 +14,6 @@ import { ReportStatus } from "../../constants/status.enum";
 import { HttpError, HTTP_STATUS } from "../../constants/http-status";
 import { organizationRepository } from "../organization/organization.repository";
 import { organizationMemberRepository } from "../organization/organization_member.repository";
-import { rewardServiceClient } from "../reward/reward-service.client";
 import { campaignAccessService, isPlatformAdmin } from "./campaign-access.service";
 import { getCampaignAdminNotifyUserIds } from "./campaign-completion-admin-notify.config";
 import { campaignEligibilityService } from "./campaign-eligibility.service";
@@ -83,7 +82,6 @@ export interface CampaignSnapshot {
   title: string;
   description: string | null;
   banner: string | null;
-  difficulty: number;
   contactName: string | null;
   contactPhone: string | null;
   safetyNotes: string | null;
@@ -97,7 +95,6 @@ export interface CampaignSnapshot {
       gatherAt: string | null;
     }
   >;
-  minVolunteersReason: string | null;
 }
 
 export type FieldDiff = Record<string, { from: unknown; to: unknown }>;
@@ -286,7 +283,6 @@ function toSnapshot(campaign: CampaignWithReports): CampaignSnapshot {
     title: campaign.title,
     description: campaign.description,
     banner: campaign.banner,
-    difficulty: campaign.difficulty,
     contactName: campaign.contactName,
     contactPhone: campaign.contactPhone,
     safetyNotes: campaign.safetyNotes,
@@ -302,7 +298,6 @@ function toSnapshot(campaign: CampaignWithReports): CampaignSnapshot {
       endAt: sh.endAt?.toISOString() ?? null,
       gatherAt: sh.gatherAt?.toISOString() ?? null,
     })),
-    minVolunteersReason: campaign.minVolunteersReason ?? null,
   };
 }
 
@@ -548,27 +543,12 @@ export class CampaignLifecycleService {
   async submit(id: string, userId: string): Promise<CampaignWithReports> {
     const existing = await prisma.campaign.findFirst({
       where: { id, deletedAt: null },
-      select: { id: true, organizationId: true, createdBy: true, status: true, difficulty: true },
+      select: { id: true, organizationId: true, createdBy: true, status: true },
     });
     if (!existing) {
       throw new HttpError(HTTP_STATUS.NOT_FOUND.withMessage("Campaign not found"));
     }
     await campaignAccessService.assertCanManage(existing, userId);
-
-    // Outside the transaction: an HTTP call to reward-service. Unreachable → 503 (thrown by the
-    // client); no such level → a field error the form can show on step 1.
-    const tier = await rewardServiceClient.getDifficultyByLevelStrict(existing.difficulty);
-    if (!tier) {
-      throw new HttpError(HTTP_STATUS.CAMPAIGN_INVALID, {
-        details: [
-          {
-            field: "difficulty",
-            code: "DIFFICULTY_UNKNOWN",
-            message: `Difficulty level ${existing.difficulty} does not exist`,
-          },
-        ],
-      });
-    }
 
     const { campaign, isResubmission } = await prisma.$transaction(
       async (tx) => {
@@ -578,17 +558,14 @@ export class CampaignLifecycleService {
         // A campaign approved before and sent back by an edit (spec 3.5) is not a new one:
         // the organization's queue limits do not apply, and its days may be close by now.
         const approvedBefore = campaign.approvedAt != null;
-        const eligibility = approvedBefore
-          ? await campaignEligibilityService.get(userId, campaign.organizationId, {
-              db: tx,
-              excludeCampaignId: campaign.id,
-            })
-          : await campaignEligibilityService.assertCanSubmit(
-              tx,
-              userId,
-              campaign.organizationId,
-              campaign.id,
-            );
+        if (!approvedBefore) {
+          await campaignEligibilityService.assertCanSubmit(
+            tx,
+            userId,
+            campaign.organizationId,
+            campaign.id,
+          );
+        }
 
         const schedule = scheduleOf(campaign);
         const reportIds = schedule.meetingPoints.flatMap((p) => p.reportIds);
@@ -618,7 +595,6 @@ export class CampaignLifecycleService {
 
         const requirements = withDefaultRequirements(
           (campaign.requirements as CampaignRequirements | null) ?? null,
-          campaign.difficulty,
         );
         const issues = validateCampaignForSubmit(
           {
@@ -628,16 +604,12 @@ export class CampaignLifecycleService {
             days: schedule.days,
             contactName: campaign.contactName,
             contactPhone: campaign.contactPhone,
-            difficulty: campaign.difficulty,
             requirements,
             meetingPoints: schedule.meetingPoints,
             shifts: schedule.shifts,
-            minVolunteersReason: campaign.minVolunteersReason,
           },
           {
             now: new Date(),
-            suggestedMinPerDay: tier.suggestedMinVolunteers,
-            maxDifficulty: eligibility.maxDifficulty,
             reports: new Map(reports.map((r) => [r.id, r])),
             eligibleLeaderIds: leaderMembers,
           },

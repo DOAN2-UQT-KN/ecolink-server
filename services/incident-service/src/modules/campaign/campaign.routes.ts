@@ -10,7 +10,7 @@ const router = Router();
  * @route   POST /api/v1/campaigns
  * @desc    Create a new campaign under an organization (must be that org's owner); optionally link reports
  * @access  Private
- * @body    { organizationId, title, description?, difficulty, reportIds?, latitude?, longitude? }
+ * @body    { organizationId, title, description?, reportIds?, latitude?, longitude? }
  */
 router.post("/", authenticate, campaignController.createCampaign);
 
@@ -53,7 +53,7 @@ router.get(
  * @route   GET /api/v1/campaigns/my
  * @desc    List campaigns that the user is owner or their join request is approved
  * @access  Private
- * @query   search?, status?, page, limit, sortBy (createdAt|updatedAt|title), sortOrder (asc|desc), greenPointsFrom?, greenPointsTo?
+ * @query   search?, status?, page, limit, sortBy (createdAt|updatedAt|title), sortOrder (asc|desc)
  */
 router.get("/my", authenticate, campaignController.getMyCampaigns);
 
@@ -92,9 +92,9 @@ router.get(
 /**
  * @route   PUT /api/v1/campaigns/:id/completion-review
  * @desc    Admin decision on a campaign marked done: cancel (reason) at any time, approve
- *          (optional difficulty) only once result verification handed it over
+ *          only once result verification handed it over
  * @access  Private (Admin only)
- * @body    { decision: approve|cancel, rejectReason?, difficulty? }
+ * @body    { decision: approve|cancel, rejectReason? }
  */
 router.put(
   "/:id/completion-review",

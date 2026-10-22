@@ -1,6 +1,5 @@
 import { PrismaClient } from "@prisma/client";
 import { randomUUID } from "node:crypto";
-import { seedMetricMetadata } from "./seeds/metric-metadata.seed";
 
 const prisma = new PrismaClient();
 
@@ -45,17 +44,18 @@ async function main() {
     await prisma.gamificationPointRules.create({
       data: {
         id: randomUUID(),
+        campaignCompletionPoints: 20,
         baseReportPoint,
         reportMilestoneThresholds,
+        reportCompletionPoints: 0,
         isActive: true,
       },
     });
     console.log(
-      "Reward-service: gamification point rules seeded (citizen report vote milestones).",
+      "Reward-service: gamification point rules seeded.",
     );
   }
 
-  await seedMetricMetadata(prisma);
 }
 
 main()

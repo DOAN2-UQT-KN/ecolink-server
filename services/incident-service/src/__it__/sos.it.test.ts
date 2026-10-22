@@ -32,12 +32,9 @@ jest.mock("../modules/organization/identity-user.client", () => ({
     ...(mockProfiles.get(userId) ?? { emailVerified: true, phoneNumber: "0901234567" }),
   }),
 }));
-jest.mock("../modules/reward/reward-service.client", () => {
-  const tier = async (level: number) => ({ level, maxVolunteers: 20, suggestedMinVolunteers: 10, greenPoints: level * 10 });
-  return {
-    rewardServiceClient: { getDifficultyByLevel: tier, getDifficultyByLevelStrict: tier, getDifficulties: async () => [] },
-  };
-});
+jest.mock("../modules/reward/reward-service.client", () => ({
+  rewardServiceClient: { getCampaignCompletionPoints: async () => 20 },
+}));
 jest.mock("../queue/register", () => ({
   backgroundJobDispatcher: {
     dispatch: jest.fn().mockResolvedValue(undefined),
@@ -710,7 +707,7 @@ describe("campaign completion", () => {
       completeCampaign(tx, campaign, {
         actor: "admin",
         actorId: ADMIN,
-        payout: { difficulty: 1, credits: [], volunteerIds: [] },
+        payout: { participants: [], volunteerIds: [] },
       }),
     );
     const row = await prisma.sos.findUniqueOrThrow({ where: { id: sos.id } });

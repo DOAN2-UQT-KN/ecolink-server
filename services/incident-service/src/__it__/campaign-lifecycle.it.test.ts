@@ -21,18 +21,10 @@ jest.mock("../modules/organization/identity-user.client", () => ({
   getUserProfile: () => undefined,
   fetchUserIdsNearPoint: async () => [],
 }));
-const tierFor = (level: number) => ({
-  level,
-  maxVolunteers: 20,
-  suggestedMinVolunteers: 10,
-  greenPoints: 10,
-});
-const strictTier = jest.fn(async (level: number) => tierFor(level) as unknown);
+const campaignPoints = jest.fn(async (): Promise<number | null> => 20);
 jest.mock("../modules/reward/reward-service.client", () => ({
   rewardServiceClient: {
-    getDifficultyByLevel: async (level: number) => tierFor(level),
-    getDifficultyByLevelStrict: (level: number) => strictTier(level),
-    getDifficulties: async () => [],
+    getCampaignCompletionPoints: () => campaignPoints(),
   },
 }));
 jest.mock("../queue/register", () => ({
@@ -138,7 +130,6 @@ function draftRequest(
     title: "Dọn rác kênh Nhiêu Lộc",
     description: "<p>" + "Cùng nhau dọn sạch bờ kênh. ".repeat(6) + "</p>",
     banner: "https://example.com/banner.jpg",
-    difficulty: 1,
     days: [{ startAt: start.toISOString(), endAt: end.toISOString() }],
     contactName: "Nguyễn Văn A",
     contactPhone: "0901234567",
@@ -172,7 +163,7 @@ async function reportState(id: string) {
 beforeEach(async () => {
   await resetTables();
   notify.mockClear();
-  strictTier.mockImplementation(async (level: number) => tierFor(level));
+  campaignPoints.mockImplementation(async () => 20);
   orgId = await seedOrganization();
 });
 
@@ -260,29 +251,23 @@ describe("draft and submit", () => {
     expect(submitted.status).toBe(S.PENDING_REVIEW);
   });
 
-  it("a day below the suggested minimum needs a reason before review", async () => {
+  it("a day with few volunteers goes to review without a reason (spec 013 FR-045)", async () => {
     const base = draftRequest([]);
     const low = await campaignService.createCampaign(CM, {
       ...base,
-      shifts: [{ ...base.shifts[0], minVolunteers: 4 }],
-    } as never);
-    await expect(campaignService.submitCampaign(low.id, CM)).rejects.toMatchObject({
-      data: {
-        details: expect.arrayContaining([
-          expect.objectContaining({
-            field: "minVolunteersReason",
-            code: "MIN_VOLUNTEERS_REASON_REQUIRED",
-          }),
-        ]),
-      },
-    });
-    await campaignService.updateCampaign(low.id, CM, {
-      minVolunteersReason: "A short stretch of canal; four people are enough",
+      shifts: [{ ...base.shifts[0], minVolunteers: 1 }],
     } as never);
     await campaignService.submitCampaign(low.id, CM);
     const submitted = await prisma.campaign.findUniqueOrThrow({ where: { id: low.id } });
     expect(submitted.status).toBe(S.PENDING_REVIEW);
-    expect(submitted.minVolunteersReason).toMatch(/four people/);
+  });
+
+  it("no implied minimum age: requirements stay as the creator entered them (FR-043)", async () => {
+    const report = await seedReport();
+    const draft = await campaignService.createCampaign(CM, draftRequest([report.id]) as never);
+    await campaignService.submitCampaign(draft.id, CM);
+    const submitted = await prisma.campaign.findUniqueOrThrow({ where: { id: draft.id } });
+    expect((submitted.requirements as { minAge?: number } | null)?.minAge).toBeUndefined();
   });
 
   it("two drafts racing for one report: one wins, the other gets 409 naming it", async () => {
@@ -302,7 +287,7 @@ describe("draft and submit", () => {
   it("submit returns every problem at once", async () => {
     const draft = await campaignService.createCampaign(
       CM,
-      { organizationId: orgId, title: "Short", difficulty: 1 } as never,
+      { organizationId: orgId, title: "Short" } as never,
     );
     await expect(campaignService.submitCampaign(draft.id, CM)).rejects.toMatchObject({
       data: {
@@ -318,16 +303,12 @@ describe("draft and submit", () => {
     });
   });
 
-  it("an unverified organization is held to the lowest difficulty", async () => {
+  it("an unverified organization has no difficulty limit, only the open-campaign one (FR-044)", async () => {
     await prisma.organization.update({ where: { id: orgId }, data: { trustTier: "BASIC" } });
     const report = await seedReport();
-    const draft = await campaignService.createCampaign(
-      CM,
-      draftRequest([report.id], { difficulty: 2 }) as never,
-    );
-    await expect(campaignService.submitCampaign(draft.id, CM)).rejects.toMatchObject({
-      data: { details: [expect.objectContaining({ code: "DIFFICULTY_NOT_ALLOWED" })] },
-    });
+    const draft = await campaignService.createCampaign(CM, draftRequest([report.id]) as never);
+    await campaignService.submitCampaign(draft.id, CM);
+    expect((await prisma.campaign.findUniqueOrThrow({ where: { id: draft.id } })).status).toBe(S.PENDING_REVIEW);
   });
 
   it("at most 3 campaigns under review per organization", async () => {
@@ -687,40 +668,25 @@ describe("organization state", () => {
       data: { verificationExpiresAt: new Date(Date.now() - 24 * HOUR) },
     });
     const e = await campaignEligibilityService.get(OWNER, orgId);
-    expect(e).toMatchObject({ isVerified: false, maxDifficulty: 1, openLimit: 2 });
+    expect(e).toMatchObject({ isVerified: false, openLimit: 2 });
     const detail = await organizationService.getById(orgId, OWNER);
     expect(detail?.isVerified).toBe(false);
   });
 });
 
 describe("reward-service availability", () => {
-  it("a draft saves without reward-service; submitting says the service is down", async () => {
-    const { HttpError, HTTP_STATUS } = await import("../constants/http-status");
-    strictTier.mockImplementation(async () => {
-      throw new HttpError(HTTP_STATUS.REWARD_SERVICE_UNAVAILABLE);
-    });
+  it("campaigns submit and show without reward-service; points read as null", async () => {
+    campaignPoints.mockImplementation(async () => null);
     const report = await seedReport();
     const draft = await campaignService.createCampaign(CM, draftRequest([report.id]) as never);
-    expect(draft.status).toBe(S.DRAFT);
-    await expect(campaignService.submitCampaign(draft.id, CM)).rejects.toMatchObject(
-      code("REWARD_SERVICE_UNAVAILABLE"),
-    );
-    expect((await prisma.campaign.findUnique({ where: { id: draft.id } }))?.status).toBe(S.DRAFT);
+    expect(draft.greenPoints).toBeNull();
+    await campaignService.submitCampaign(draft.id, CM);
+    expect((await prisma.campaign.findUnique({ where: { id: draft.id } }))?.status).toBe(S.PENDING_REVIEW);
   });
 
-  it("a level reward-service does not know is a field error on submit", async () => {
-    strictTier.mockImplementation(async () => null);
-    const report = await seedReport();
-    const draft = await campaignService.createCampaign(CM, draftRequest([report.id]) as never);
-    await expect(campaignService.submitCampaign(draft.id, CM)).rejects.toMatchObject({
-      statusResponse: expect.objectContaining({ code: "CAMPAIGN_INVALID" }),
-      data: { details: [expect.objectContaining({ field: "difficulty", code: "DIFFICULTY_UNKNOWN" })] },
-    });
-  });
-
-  it("an out-of-range difficulty is rejected when saving the draft", async () => {
-    await expect(
-      campaignService.createCampaign(CM, draftRequest([], { difficulty: 9 }) as never),
-    ).rejects.toMatchObject(code("VALIDATION_ERROR"));
+  it("every campaign shows the same campaign points, and no difficulty (FR-040, FR-042)", async () => {
+    const draft = await campaignService.createCampaign(CM, draftRequest([]) as never);
+    expect(draft.greenPoints).toBe(20);
+    expect(draft).not.toHaveProperty("difficulty");
   });
 });

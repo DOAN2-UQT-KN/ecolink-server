@@ -4,17 +4,6 @@ import {
   HTTP_CIRCUIT_REWARD,
   type HttpCircuit,
 } from "../../resilience/http-circuit";
-import { HttpError, HTTP_STATUS } from "../../constants/http-status";
-
-export interface RewardDifficulty {
-  id: string;
-  level: number;
-  name: string;
-  maxVolunteers: number | null;
-  /** Suggested minimum volunteers per campaign day; null = no suggestion. */
-  suggestedMinVolunteers: number | null;
-  greenPoints: number;
-}
 
 interface SuccessEnvelope<T> {
   success: boolean;
@@ -29,58 +18,6 @@ function toNumberOrNull(v: unknown): number | null {
     return Number.isFinite(n) ? n : null;
   }
   return null;
-}
-
-function normalizeDifficulty(row: unknown): RewardDifficulty | null {
-  if (!row || typeof row !== "object") return null;
-  const r = row as Record<string, unknown>;
-
-  const id = typeof r.id === "string" ? r.id : null;
-  const name = typeof r.name === "string" ? r.name : "";
-  const level = toNumberOrNull(r.level);
-  const greenPoints = toNumberOrNull(r.greenPoints);
-  const maxVolunteersRaw = toNumberOrNull(r.maxVolunteers);
-  const maxVolunteers = maxVolunteersRaw === null ? null : maxVolunteersRaw;
-  const suggestedMinVolunteers = toNumberOrNull(r.suggestedMinVolunteers);
-
-  if (!id || level === null || greenPoints === null) return null;
-
-  return {
-    id,
-    name,
-    level,
-    greenPoints,
-    maxVolunteers,
-    suggestedMinVolunteers,
-  };
-}
-
-function normalizeDifficulties(rows: unknown[]): RewardDifficulty[] {
-  return rows
-    .map((r) => normalizeDifficulty(r))
-    .filter((r): r is RewardDifficulty => r !== null);
-}
-
-function readDifficultiesFromResponse(data: unknown): RewardDifficulty[] {
-  if (!data || typeof data !== "object") {
-    return [];
-  }
-  const root = data as Record<string, unknown>;
-  if (root.success === false) {
-    return [];
-  }
-  const inner = root.data;
-  if (inner && typeof inner === "object") {
-    const innerDifficulties = (inner as { difficulties?: unknown }).difficulties;
-    if (Array.isArray(innerDifficulties)) {
-      return normalizeDifficulties(innerDifficulties);
-    }
-  }
-  const topDifficulties = root.difficulties;
-  if (Array.isArray(topDifficulties)) {
-    return normalizeDifficulties(topDifficulties);
-  }
-  return [];
 }
 
 export class RewardServiceClient {
@@ -137,61 +74,27 @@ export class RewardServiceClient {
     });
   }
 
-  async getDifficulties(): Promise<RewardDifficulty[]> {
-    try {
-      return await this.circuit.run(async () => {
-        const client = this.getClient();
-        const { data } = await client.get<
-          SuccessEnvelope<{ difficulties: RewardDifficulty[] }>
-        >("/internal/v1/difficulties");
-        return readDifficultiesFromResponse(data);
-      });
-    } catch (e) {
-      this.logCallFailure("getDifficulties", e);
-      return [];
-    }
-  }
-
   /**
-   * The tier for a level: `null` only when reward-service answers 404 (no such level). Not being
-   * able to reach it (network, timeout, 5xx, open circuit, missing env) throws 503
-   * `REWARD_SERVICE_UNAVAILABLE`, so callers never mistake an outage for an invalid difficulty.
-   * A 404 is an answer, not a failure: it does not count against the circuit breaker.
+   * Campaign completion points from reward-service's active point rules (spec 013 FR-040): the
+   * same for every campaign. `null` on any failure (display only, never blocks a request).
    */
-  async getDifficultyByLevelStrict(
-    level: number,
-  ): Promise<RewardDifficulty | null> {
+  async getCampaignCompletionPoints(): Promise<number | null> {
     try {
       return await this.circuit.run(async () => {
         const client = this.getClient();
         try {
           const { data } = await client.get<
-            SuccessEnvelope<{ difficulty: RewardDifficulty }>
-          >(`/internal/v1/difficulties/level/${level}`);
-          if (!data?.success || !data.data?.difficulty) {
-            return null;
-          }
-          return normalizeDifficulty(data.data.difficulty);
+            SuccessEnvelope<{ campaignCompletionPoints: unknown }>
+          >("/internal/v1/point-rules/campaign-completion");
+          return data?.success ? toNumberOrNull(data.data?.campaignCompletionPoints) : null;
         } catch (err) {
-          if (axios.isAxiosError(err) && err.response?.status === 404) {
-            return null;
-          }
+          // No active rules is an answer, not an outage: keep it off the circuit breaker.
+          if (axios.isAxiosError(err) && err.response?.status === 404) return null;
           throw err;
         }
       });
     } catch (e) {
-      this.logCallFailure("getDifficultyByLevel", e, { level });
-      throw new HttpError(HTTP_STATUS.REWARD_SERVICE_UNAVAILABLE);
-    }
-  }
-
-  /** Same lookup for display (points, suggested minimum): `null` on any failure, never throws. */
-  async getDifficultyByLevel(
-    level: number,
-  ): Promise<RewardDifficulty | null> {
-    try {
-      return await this.getDifficultyByLevelStrict(level);
-    } catch {
+      this.logCallFailure("getCampaignCompletionPoints", e);
       return null;
     }
   }

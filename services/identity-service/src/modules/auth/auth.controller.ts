@@ -90,7 +90,7 @@ export class AuthController {
     body("name").notEmpty().trim().withMessage("Name is required"),
     body("roleId")
       .optional()
-      .isUUID()
+      .isUUID("loose")
       .withMessage("Role ID must be a valid UUID"),
 
     async (req: Request, res: Response): Promise<void> => {

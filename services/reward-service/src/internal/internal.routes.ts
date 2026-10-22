@@ -3,6 +3,8 @@ import { param, validationResult } from "express-validator";
 import { HTTP_STATUS, sendError, sendSuccess } from "../constants/http-status";
 import { requireInternalRewardApiKey } from "../middleware/internal-reward-auth.middleware";
 import { difficultyService } from "../modules/difficulty/difficulty.service";
+import { loadActivePointRules } from "../modules/gamification/gamification-config.service";
+import prisma from "../config/prisma.client";
 
 const router = Router();
 
@@ -60,5 +62,22 @@ router.get(
     }
   },
 );
+
+/** Campaign completion points for incident-service to show on campaigns (spec 013 FR-040). */
+router.get("/point-rules/campaign-completion", async (_req, res): Promise<void> => {
+  try {
+    const rules = await loadActivePointRules(prisma);
+    if (!rules) {
+      sendError(res, HTTP_STATUS.NOT_FOUND.withMessage("No active point rules"));
+      return;
+    }
+    sendSuccess(res, HTTP_STATUS.OK, {
+      campaignCompletionPoints: rules.campaignCompletionPoints,
+    });
+  } catch (error) {
+    console.error("Get campaign completion points error:", error);
+    sendError(res, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+  }
+});
 
 export default router;

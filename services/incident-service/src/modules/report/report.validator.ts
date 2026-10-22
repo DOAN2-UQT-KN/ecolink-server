@@ -89,7 +89,7 @@ const reportImageValidators = [
     .withMessage("Image URL must be an Ecolink Cloudinary upload"),
   body("images.*.captureId")
     .optional()
-    .isUUID()
+    .isUUID("loose")
     .withMessage("captureId must be a UUID"),
   // Legacy (client trước spec 007): imageUrls. Xoá ở P10.
   body("imageUrls")
@@ -193,12 +193,12 @@ export const addReportImagesValidators = [
 ];
 
 export const reportIdParamValidator = [
-  param("id").isUUID().withMessage("Report ID must be a valid UUID"),
+  param("id").isUUID("loose").withMessage("Report ID must be a valid UUID"),
 ];
 
 export const deleteReportMediaFileValidators = [
   param("mediaFileId")
-    .isUUID()
+    .isUUID("loose")
     .withMessage("mediaFileId must be a valid UUID"),
 ];
 

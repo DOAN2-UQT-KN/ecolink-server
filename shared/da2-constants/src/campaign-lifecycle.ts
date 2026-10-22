@@ -95,7 +95,6 @@ export const CAMPAIGN_TITLE_MAX_LENGTH = 120;
 export const CAMPAIGN_DESCRIPTION_MIN_LENGTH = 100;
 export const CAMPAIGN_PENDING_LIMIT_PER_ORG = 3;
 export const CAMPAIGN_UNVERIFIED_MAX_OPEN = 2;
-export const CAMPAIGN_UNVERIFIED_MAX_DIFFICULTY = 1;
 export const CAMPAIGN_REVISION_HOLD_DAYS = 7;
 export const CAMPAIGN_DRAFT_TTL_DAYS = 30;
 /** A campaign runs on 1–7 days, all within this many days from the first one. */
@@ -108,12 +107,6 @@ export const CAMPAIGN_MEETING_POINT_MAX = 5;
  */
 export const CAMPAIGN_REPORTS_REQUIRED = false;
 export const CAMPAIGN_MEETING_POINT_MAX_DISTANCE_KM = 5;
-/** Difficulty level from which volunteers must be adults by default. */
-/** Difficulty levels a draft may hold; the tier itself (limits, points) is read from reward-service on submit. */
-export const CAMPAIGN_DIFFICULTY_MIN = 1;
-export const CAMPAIGN_DIFFICULTY_MAX = 4;
-export const CAMPAIGN_HIGH_DIFFICULTY_LEVEL = 3;
-export const CAMPAIGN_HIGH_DIFFICULTY_MIN_AGE = 18;
 export const CAMPAIGN_REVIEW_REASON_MAX_LENGTH = 5000;
 /** Managers hear about shifts below their minimum this many hours before each day starts. */
 export const CAMPAIGN_UNDERSTAFFED_NOTICE_HOURS = 72;

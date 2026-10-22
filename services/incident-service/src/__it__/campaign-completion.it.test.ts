@@ -7,8 +7,8 @@
  *     trash point declared cleaned
  *   - residents are invited around every meeting point
  *   - nothing declared cleaned: the admin decides (complete or cancel)
- *   - approve only once handed over (409 otherwise); it settles the difficulty: cleaned reports
- *     completed, partly done and unhandled back to the list, points at the settled difficulty
+ *   - approve only once handed over (409 otherwise): cleaned reports completed, partly done and
+ *     unhandled back to the list, attendance (not points) sent to reward-service (spec 013)
  *   - cancel: cancelled, reports released, no points
  *   - the legacy campaign-level answers are gone (410)
  *
@@ -26,22 +26,9 @@ jest.mock("../modules/organization/identity-user.client", () => ({
   getUserProfile: () => undefined,
   fetchUserIdsNearPoint: async () => [],
 }));
-/** Green points = 10 × difficulty, so the settled difficulty shows in the credits. */
-jest.mock("../modules/reward/reward-service.client", () => {
-  const tier = async (level: number) => ({
-    level,
-    maxVolunteers: 20,
-    suggestedMinVolunteers: 10,
-    greenPoints: level * 10,
-  });
-  return {
-    rewardServiceClient: {
-      getDifficultyByLevel: tier,
-      getDifficultyByLevelStrict: tier,
-      getDifficulties: async () => [],
-    },
-  };
-});
+jest.mock("../modules/reward/reward-service.client", () => ({
+  rewardServiceClient: { getCampaignCompletionPoints: async () => 20 },
+}));
 jest.mock("../queue/register", () => ({
   backgroundJobDispatcher: {
     dispatch: jest.fn().mockResolvedValue(undefined),
@@ -94,7 +81,7 @@ async function eventually(check: () => void): Promise<void> {
 }
 
 /**
- * A running campaign (difficulty 1) whose two shifts ended an hour ago: point A has report R1,
+ * A running campaign whose two shifts ended an hour ago: point A has report R1,
  * point B reports R2 and R3. V1 registered and attended both shifts.
  */
 async function seed() {
@@ -120,7 +107,6 @@ async function seed() {
       status: CampaignStatus.ACTIVE,
       organizationId: org.id,
       createdBy: OWNER,
-      difficulty: 1,
       approvedAt: start,
       ...POINT,
       campaignManagers: {
@@ -310,15 +296,15 @@ describe("admin decision (5.2)", () => {
     );
   });
 
-  it("approve settles the difficulty: cleaned done, partly done and unhandled released, points at the new level", async () => {
+  it("approve: cleaned done, partly done and unhandled released, attendance sent for points", async () => {
     const c = await submitted();
     await prisma.campaign.update({ where: { id: c.id }, data: { completionAwaitingAdmin: true, completionRejectionCount: 3 } });
     const view = await campaignCompletionService.getForReview(c.id, { userId: ADMIN, role: "ADMIN" });
     expect(view).toMatchObject({ awaitingAdmin: true, awaitingAdminReason: "rejection_limit", canApprove: true });
-    await expect(review(c, { decision: "approve", difficulty: 9 })).rejects.toMatchObject(code("VALIDATION_ERROR"));
 
-    const res = await review(c, { decision: "approve", difficulty: 3 });
-    expect(res).toMatchObject({ status: CampaignStatus.COMPLETED, difficulty: 3, completionAwaitingAdmin: false });
+    const res = await review(c, { decision: "approve" });
+    expect(res).toMatchObject({ status: CampaignStatus.COMPLETED, completionAwaitingAdmin: false });
+    expect(res).not.toHaveProperty("difficulty");
 
     const reports = await prisma.report.findMany({ where: { id: { in: [c.r1, c.r2, c.r3] } } });
     const byId = Object.fromEntries(reports.map((r) => [r.id, r]));
@@ -329,12 +315,22 @@ describe("admin decision (5.2)", () => {
     const outbox = await prisma.outboxEvent.findFirstOrThrow({
       where: { aggregateId: c.id, eventType: OutboxEventType.CAMPAIGN_COMPLETION_GREEN_POINTS },
     });
-    expect(outbox.payload).toMatchObject({ credits: [{ userId: V1, points: 30 }] });
+    // Facts only: reward-service applies its campaign points (spec 013 FR-010).
+    expect(outbox.payload).toEqual({
+      campaignId: c.id,
+      participants: [{ userId: V1, eligibleShifts: 2, registeredShifts: 2 }],
+    });
+    // A report closed by the campaign earns no report-completion reward (FR-022).
+    expect(
+      await prisma.outboxEvent.count({
+        where: { eventType: OutboxEventType.REPORT_COMPLETION_GREEN_POINTS, aggregateId: { in: [c.r1, c.r2, c.r3] } },
+      }),
+    ).toBe(0);
     const log = await prisma.campaignStatusLog.findFirstOrThrow({
       where: { campaignId: c.id, event: "approve_completion" },
     });
     expect(log).toMatchObject({ actorRole: "admin", actorId: ADMIN });
-    expect(log.changes).toMatchObject({ difficulty: { from: 1, to: 3 } });
+    expect(log.changes ?? {}).not.toHaveProperty("difficulty");
   });
 
   it("nothing declared cleaned: the admin is handed the campaign at once", async () => {

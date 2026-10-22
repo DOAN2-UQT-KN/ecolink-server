@@ -27,14 +27,10 @@ export interface CreateCampaignRequest {
   description?: string;
   descriptionVi?: string;
   descriptionEn?: string;
-  /** 1 = easy … 4 = very hard; must exist in reward-service `difficulties` table. */
-  difficulty: number;
   contactName?: string | null;
   contactPhone?: string | null;
   safetyNotes?: string | null;
   requirements?: CampaignRequirements | null;
-  /** Required on submit when a day's minimum volunteers is below the difficulty's suggestion. */
-  minVolunteersReason?: string | null;
   days?: CampaignDayInput[];
   meetingPoints?: MeetingPointInput[];
   shifts?: CampaignShiftInput[];
@@ -164,8 +160,6 @@ export interface AdminCompletionReviewBody {
   decision: "approve" | "cancel";
   /** Required when `decision` is `"cancel"`. */
   rejectReason?: string | null;
-  /** Approve only: settle the difficulty (points follow it); defaults to the current one. */
-  difficulty?: number;
 }
 
 /** Body for PUT /api/v1/campaigns/:id/verification/:meetingPointId/vote (resident). */
@@ -205,14 +199,11 @@ export interface UpdateCampaignRequest {
   description?: string;
   descriptionVi?: string;
   descriptionEn?: string;
-  difficulty?: number;
   managerIds?: string[];
   contactName?: string | null;
   contactPhone?: string | null;
   safetyNotes?: string | null;
   requirements?: CampaignRequirements | null;
-  /** Required on submit when a day's minimum volunteers is below the difficulty's suggestion. */
-  minVolunteersReason?: string | null;
   /**
    * The schedule (days, meeting points with their reports, shifts). Any of the three present
    * replaces the whole schedule; the ones left out are kept from the campaign.
@@ -243,7 +234,6 @@ export interface CampaignResponse {
   latitude: number | null;
   longitude: number | null;
   radiusKm: number | null;
-  difficulty: number;
   contactName: string | null;
   /** Only for the campaign's managers, admins and accepted volunteers; null otherwise. */
   contactPhone: string | null;
@@ -265,20 +255,16 @@ export interface CampaignResponse {
   completionAwaitingAdmin: boolean;
   /** Only on an update: the edit sent the campaign back for review (spec 3.5). */
   reReview?: boolean;
-  /** Why a day's minimum volunteers is below the difficulty's suggestion. */
-  minVolunteersReason: string | null;
-  /** Suggested minimum volunteers per day for this difficulty (detail responses only). */
-  suggestedMinVolunteers: number | null;
   /** Campaign days in time order; the campaign runs from the first start to the last end. */
   days: CampaignDayResponse[];
   meetingPoints: MeetingPointResponse[];
   /** Every day × meeting point; `minVolunteers` 0 = off. */
   shifts: CampaignShiftResponse[];
-  /** Green points for this difficulty tier (reward rules). */
-  greenPoints: number;
+  /** Campaign completion points from reward-service's point rules, same for every campaign; null if unavailable. */
+  greenPoints: number | null;
   /** Count of approved campaign join requests (volunteers). */
   currentMembers: number;
-  /** Volunteers allowed per day for this difficulty tier (reward-service); null = no limit. */
+  /** Volunteers allowed per day; null = no limit. */
   maxMembers: number | null;
   createdBy: string | null;
   updatedBy: string | null;
@@ -358,7 +344,6 @@ export interface CampaignJoinRequestDetailResponse
     id: string;
     title: string;
     status: number;
-    difficulty: number;
   };
 }
 
@@ -450,9 +435,6 @@ export interface CampaignListQuery {
   latitude?: number;
   longitude?: number;
   radiusKm?: number;
-  difficulty?: number;
-  greenPointsFrom?: number;
-  greenPointsTo?: number;
   isOwner?: boolean;
   /** Admin review queue: leave out organizations the admin belongs to. */
   excludeMemberOrgsOfUserId?: string;

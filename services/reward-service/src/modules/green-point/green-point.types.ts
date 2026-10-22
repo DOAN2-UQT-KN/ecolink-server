@@ -5,14 +5,6 @@ export const CAMPAIGN_COMPLETION_JOB_TYPE =
 /** @deprecated Use CAMPAIGN_COMPLETION_JOB_TYPE */
 export const GREEN_POINT_JOB_TYPE = CAMPAIGN_COMPLETION_JOB_TYPE;
 
-/** SQS envelope `jobType` for a single upvote-related credit. */
-export const UPVOTE_ADDING_GREEN_POINT_JOB_TYPE =
-  "UPVOTE_ADDING_GREEN_POINTS" as const;
-
-/** SQS envelope `jobType` for a single referral-related credit. */
-export const REFERRAL_ADDING_GREEN_POINT_JOB_TYPE =
-  "REFERRAL_ADDING_GREEN_POINTS" as const;
-
 /** SQS envelope `jobType` for a single report completion credit. */
 export const REPORT_COMPLETION_GREEN_POINT_JOB_TYPE =
   "REPORT_COMPLETION_GREEN_POINTS" as const;
@@ -24,8 +16,6 @@ export const REPORT_VOTE_MILESTONE_GREEN_POINT_JOB_TYPE =
 /** Allowed `type` values for POST /internal/v1/green-points/enqueue (keep in sync with factory). */
 export const KNOWN_GREEN_POINT_JOB_TYPES = [
   CAMPAIGN_COMPLETION_JOB_TYPE,
-  UPVOTE_ADDING_GREEN_POINT_JOB_TYPE,
-  REFERRAL_ADDING_GREEN_POINT_JOB_TYPE,
   REPORT_COMPLETION_GREEN_POINT_JOB_TYPE,
   REPORT_VOTE_MILESTONE_GREEN_POINT_JOB_TYPE,
 ] as const;
@@ -39,32 +29,34 @@ export interface GreenPointEnqueueRequestBody {
   payload: unknown;
 }
 
+/**
+ * Campaign completion facts: who attended how many shifts. Points come from the active point
+ * rules at credit time (spec 013 FR-010, FR-012).
+ */
 export interface CampaignCompletionGreenPointsPayload {
+  campaignId: string;
+  participants: {
+    userId: string;
+    /** Shifts attended long enough; >= 1. */
+    eligibleShifts: number;
+    /** Shifts registered and not left; >= 0. */
+    registeredShifts: number;
+  }[];
+}
+
+/**
+ * Pre-refactor shape with points already computed by incident-service. Accepted for one release
+ * so events queued during the deploy are still credited (FR-014); remove in wave C.
+ */
+export interface LegacyCampaignCompletionGreenPointsPayload {
   campaignId: string;
   credits: { userId: string; points: number }[];
 }
 
-/** User receiving points; resource identifies what was upvoted (report, etc.). */
-export interface UpvoteAddingGreenPointsPayload {
-  userId: string;
-  points: number;
-  resourceId: string;
-  /** e.g. REPORT, CAMPAIGN — must match {@link GreenPointResourceType} values when applicable */
-  resourceType: string;
-}
-
-/** User receiving referral bonus; resource is the referred user or referral event id. */
-export interface ReferralAddingGreenPointsPayload {
-  userId: string;
-  points: number;
-  resourceId: string;
-}
-
-/** User receiving points for completing a report. */
+/** Report creator rewarded when an admin marks the report done; points come from the rules. */
 export interface ReportCompletionGreenPointsPayload {
   reportId: string;
   userId: string;
-  points: number;
 }
 
 /**

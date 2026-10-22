@@ -118,7 +118,7 @@ export class OrganizationApplicationController {
   /* ------------------------------------------------------------------ */
 
   presignDocumentForApplication = [
-    param("id").isUUID(),
+    param("id").isUUID("loose"),
     query("token").notEmpty().trim(),
     body("docType").notEmpty().trim().isLength({ max: 32 }),
     body("fileName").notEmpty().trim().isLength({ max: 255 }),
@@ -147,7 +147,7 @@ export class OrganizationApplicationController {
   /* ------------------------------------------------------------------ */
 
   getApplication = [
-    param("id").isUUID(),
+    param("id").isUUID("loose"),
     query("token").notEmpty().trim(),
 
     async (req: Request, res: Response): Promise<void> => {
@@ -167,7 +167,7 @@ export class OrganizationApplicationController {
   ];
 
   saveDraft = [
-    param("id").isUUID(),
+    param("id").isUUID("loose"),
     body("orgType").optional({ values: "null" }).trim().isLength({ max: 32 }),
     body("profile").optional().isObject(),
     body("channels").optional().isArray({ max: 10 }),
@@ -176,11 +176,11 @@ export class OrganizationApplicationController {
     body("owners.*.email").optional().isString().isLength({ max: 320 }),
     body("owners.*.fullName").optional().isString().isLength({ max: 200 }),
     body("owners.*.isLegalRep").optional().isBoolean().toBoolean(),
-    body("owners.*.nationalIdDocumentId").optional({ values: "null" }).isUUID(),
+    body("owners.*.nationalIdDocumentId").optional({ values: "null" }).isUUID("loose"),
     body("documentIds").optional().isArray({ max: 5 }),
-    body("documentIds.*").optional().isUUID(),
+    body("documentIds.*").optional().isUUID("loose"),
     body("removeDocumentIds").optional().isArray({ max: 5 }),
-    body("removeDocumentIds.*").optional().isUUID(),
+    body("removeDocumentIds.*").optional().isUUID("loose"),
     body("consent").optional().isBoolean().toBoolean(),
     body("notifySubmitter").optional().isBoolean().toBoolean(),
 
@@ -206,7 +206,7 @@ export class OrganizationApplicationController {
   ];
 
   submitApplication = [
-    param("id").isUUID(),
+    param("id").isUUID("loose"),
     body("consent").optional().isBoolean().toBoolean(),
 
     async (req: Request, res: Response): Promise<void> => {
@@ -232,8 +232,8 @@ export class OrganizationApplicationController {
   ];
 
   resendOwnerInvite = [
-    param("id").isUUID(),
-    param("candidateId").isUUID(),
+    param("id").isUUID("loose"),
+    param("candidateId").isUUID("loose"),
 
     async (req: Request, res: Response): Promise<void> => {
       if (failedValidation(req, res)) return;
@@ -257,8 +257,8 @@ export class OrganizationApplicationController {
   ];
 
   openDocument = [
-    param("id").isUUID(),
-    param("docId").isUUID(),
+    param("id").isUUID("loose"),
+    param("docId").isUUID("loose"),
     query("token").notEmpty().trim(),
 
     async (req: Request, res: Response): Promise<void> => {
@@ -279,7 +279,7 @@ export class OrganizationApplicationController {
   ];
 
   withdrawApplication = [
-    param("id").isUUID(),
+    param("id").isUUID("loose"),
 
     async (req: Request, res: Response): Promise<void> => {
       if (failedValidation(req, res)) return;

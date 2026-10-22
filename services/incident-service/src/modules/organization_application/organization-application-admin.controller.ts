@@ -82,7 +82,7 @@ export class OrganizationApplicationAdminController {
   ];
 
   getApplication = [
-    param("id").isUUID(),
+    param("id").isUUID("loose"),
 
     async (req: Request, res: Response): Promise<void> => {
       if (failedValidation(req, res)) return;
@@ -101,8 +101,8 @@ export class OrganizationApplicationAdminController {
 
   /** Streams the stored file; the provider URL is never exposed to the browser. */
   openDocument = [
-    param("id").isUUID(),
-    param("docId").isUUID(),
+    param("id").isUUID("loose"),
+    param("docId").isUUID("loose"),
 
     async (req: Request, res: Response): Promise<void> => {
       if (failedValidation(req, res)) return;
@@ -123,7 +123,7 @@ export class OrganizationApplicationAdminController {
   ];
 
   claimApplication = [
-    param("id").isUUID(),
+    param("id").isUUID("loose"),
 
     async (req: Request, res: Response): Promise<void> => {
       if (failedValidation(req, res)) return;
@@ -143,7 +143,7 @@ export class OrganizationApplicationAdminController {
   ];
 
   requestMoreInfo = [
-    param("id").isUUID(),
+    param("id").isUUID("loose"),
     body("message").notEmpty().trim().isLength({ max: 5000 }),
 
     async (req: Request, res: Response): Promise<void> => {
@@ -167,7 +167,7 @@ export class OrganizationApplicationAdminController {
   ];
 
   decideApplication = [
-    param("id").isUUID(),
+    param("id").isUUID("loose"),
     body("decision").notEmpty().trim(),
     body("lane").optional().trim().isLength({ max: 1 }),
     body("documentsWaived").optional().isBoolean().toBoolean(),

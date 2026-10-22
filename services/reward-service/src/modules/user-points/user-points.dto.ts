@@ -1,14 +1,18 @@
 import { GreenPointTransaction } from "@prisma/client";
 
 export interface MyPointsResponse {
-  /** SP wallet balance (gift redemption) */
-  spendablePoints: number;
-  /** Current green points balance */
-  greenPoints: number;
-  /** Sum of positive green-point ledger rows */
-  greenPointsEarnedTotal: number;
-  /** @deprecated Use spendablePoints */
+  /** Points left in unexpired lots: what can be spent on gifts. */
   balance: number;
+  /** Sum of all earnings; redemptions, expiry and refunds do not change it. */
+  earnedTotal: number;
+  /** Points in lots expiring within 7 days, and the earliest expiry (ISO) or null. */
+  expiringSoon: { amount: number; earliestAt: string | null };
+  /** @deprecated Equals `balance`; removed in the cleanup release. */
+  spendablePoints: number;
+  /** @deprecated Equals `balance`; removed in the cleanup release. */
+  greenPoints: number;
+  /** @deprecated Equals `earnedTotal`; removed in the cleanup release. */
+  greenPointsEarnedTotal: number;
 }
 
 export interface MyPointsEnvelopeData {
@@ -55,34 +59,4 @@ export interface PaginationMeta {
 
 export interface MyPointsTransactionsEnvelopeData extends PaginationMeta {
   transactions: PointsTransactionResponse[];
-}
-
-export interface LeaderboardQuery {
-  page?: number;
-  limit?: number;
-}
-
-export interface LeaderboardUser {
-  id: string;
-  name: string;
-  avatar: string | null;
-}
-
-export interface LeaderboardItemResponse {
-  userId: string;
-  greenPoints: number;
-  user: LeaderboardUser | null;
-}
-
-export interface LeaderboardEnvelopeData extends PaginationMeta {
-  leaderboard: LeaderboardItemResponse[];
-}
-
-export interface LeaderboardMeResponse {
-  rank: number;
-  greenPoints: number;
-}
-
-export interface LeaderboardMeEnvelopeData {
-  leaderboardMe: LeaderboardMeResponse | null;
 }

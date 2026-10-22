@@ -55,7 +55,7 @@ router.put(
   "/difficulties/:id",
   authenticate,
   requireAdmin,
-  param("id").isUUID().withMessage("id must be a UUID"),
+  param("id").isUUID("loose").withMessage("id must be a UUID"),
   body("name").optional().trim().isLength({ min: 1, max: 64 }),
   body("nameVi").optional().trim().isLength({ min: 1, max: 64 }),
   body("nameEn").optional().trim().isLength({ min: 1, max: 64 }),

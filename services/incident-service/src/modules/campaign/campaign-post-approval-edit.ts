@@ -11,9 +11,7 @@ import { ReportStatus } from "../../constants/status.enum";
 import { HttpError, HTTP_STATUS } from "../../constants/http-status";
 import { emitOutbox } from "../../outbox/outbox.writer";
 import { OutboxEventType } from "../../outbox/outbox.types";
-import { rewardServiceClient } from "../reward/reward-service.client";
 import { findTeamIds, assertLeadersInTeam } from "./campaign_manager/campaign-team";
-import { campaignEligibilityService } from "./campaign-eligibility.service";
 import { campaignTitleNotificationPayload } from "./campaign-i18n";
 import {
   campaignLifecycleService,
@@ -62,7 +60,6 @@ const FREE_FIELDS = [
   "contactName",
   "contactPhone",
   "safetyNotes",
-  "minVolunteersReason",
 ] as const;
 
 type Day = NonNullable<CampaignWithReports["days"]>[number];
@@ -142,7 +139,6 @@ function timesOf(d: { startAt: string; endAt: string }, now: Date): { startAt: D
 /** What a request changes, sorted into the groups of spec 3.5. */
 export interface EditPlan {
   free: Partial<Record<(typeof FREE_FIELDS)[number], string | null>>;
-  difficulty?: number;
   requirements?: CampaignRequirements | null;
   days: PlannedDay[];
   points: PlannedPoint[];
@@ -178,11 +174,6 @@ export function planPostApprovalEdit(
   if (free.title !== undefined && !free.title) throw invalid("Title is required");
 
   let major = false;
-  let difficulty: number | undefined;
-  if (request.difficulty !== undefined && request.difficulty !== existing.difficulty) {
-    difficulty = request.difficulty;
-    major = true;
-  }
   let requirements: CampaignRequirements | null | undefined;
   if (request.requirements !== undefined) {
     const next = (request.requirements ?? null) as CampaignRequirements | null;
@@ -380,7 +371,6 @@ export function planPostApprovalEdit(
 
   return {
     free,
-    difficulty,
     requirements,
     days,
     points,
@@ -421,21 +411,8 @@ function toNormalizedSchedule(plan: EditPlan): NormalizedSchedule {
 async function assertEditedCampaignValid(
   existing: CampaignWithReports,
   plan: EditPlan,
-  userId: string,
   now: Date,
 ): Promise<void> {
-  const difficulty = plan.difficulty ?? existing.difficulty;
-  const tier = await rewardServiceClient.getDifficultyByLevelStrict(difficulty);
-  if (!tier) {
-    throw new HttpError(HTTP_STATUS.CAMPAIGN_INVALID, {
-      details: [
-        { field: "difficulty", code: "DIFFICULTY_UNKNOWN", message: `Difficulty level ${difficulty} does not exist` },
-      ],
-    });
-  }
-  const eligibility = await campaignEligibilityService.get(userId, existing.organizationId, {
-    excludeCampaignId: existing.id,
-  });
   const schedule = toNormalizedSchedule(plan);
   const reportIds = schedule.meetingPoints.flatMap((p) => p.reportIds);
   const leaderIds = [
@@ -464,7 +441,6 @@ async function assertEditedCampaignValid(
     plan.requirements !== undefined
       ? plan.requirements
       : ((existing.requirements as CampaignRequirements | null) ?? null),
-    difficulty,
   );
   const value = <K extends (typeof FREE_FIELDS)[number]>(key: K) =>
     plan.free[key] !== undefined ? plan.free[key] : (existing[key] ?? null);
@@ -478,16 +454,12 @@ async function assertEditedCampaignValid(
       days: schedule.days,
       contactName: value("contactName"),
       contactPhone: value("contactPhone"),
-      difficulty,
       requirements,
       meetingPoints: schedule.meetingPoints,
       shifts: schedule.shifts,
-      minVolunteersReason: value("minVolunteersReason"),
     },
     {
       now,
-      suggestedMinPerDay: tier.suggestedMinVolunteers,
-      maxDifficulty: eligibility.maxDifficulty,
       reports: new Map(reports.map((r) => [r.id, r])),
       eligibleLeaderIds: leaders,
     },
@@ -519,7 +491,7 @@ export async function applyPostApprovalEdit(
     .map((sh) => sh.leaderUserId as string);
   await assertLeadersInTeam(prisma, existing, leaderChanges);
   if (plan.major || plan.numbersChanged || plan.free.title !== undefined || plan.free.description !== undefined) {
-    await assertEditedCampaignValid(existing, plan, userId, now);
+    await assertEditedCampaignValid(existing, plan, now);
   }
 
   const result = await prisma.$transaction(
@@ -538,7 +510,6 @@ export async function applyPostApprovalEdit(
         data: {
           ...plan.free,
           title: plan.free.title ?? undefined,
-          ...(plan.difficulty !== undefined ? { difficulty: plan.difficulty } : {}),
           ...(plan.requirements !== undefined
             ? {
                 requirements:

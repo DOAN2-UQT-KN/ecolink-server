@@ -50,9 +50,9 @@ export class CampaignSubmissionController {
    * GET /api/v1/campaigns/:id/submissions
    */
   getSubmissions = [
-    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+    param("id").isUUID("loose").withMessage("Campaign ID must be a valid UUID"),
     query("status").optional().isInt(),
-    query("submittedBy").optional().isUUID(),
+    query("submittedBy").optional().isUUID("loose"),
     query("search").optional().trim(),
     query("page").optional().isInt({ min: 1 }),
     query("limit").optional().isInt({ min: 1, max: 100 }),

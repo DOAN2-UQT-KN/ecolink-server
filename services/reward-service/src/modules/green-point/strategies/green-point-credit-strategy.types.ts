@@ -6,7 +6,24 @@ export interface GreenPointApplyResult {
 }
 
 /**
- * Strategy for a queued green-point job. Resolved by `GreenPointFactory.getStrategy(jobType)`.
+ * One credit a strategy computed from its payload and the active point rules. `metadata` keeps the
+ * rule id and the inputs so the amount can be re-derived (spec 013 FR-032).
+ */
+export interface ResolvedCredit {
+  userId: string;
+  points: number;
+  transactionType: string;
+  resourceId: string;
+  resourceType: string;
+  /** Per-user ledger key from `IdempotencyKey` (spec 014 R1). */
+  idempotencyKey: string;
+  metadata: Prisma.InputJsonValue;
+}
+
+/**
+ * Strategy for a queued green-point job. Strategies keep a pure `resolve…Credits(payload, rules)`
+ * and their {@link GreenPointCreditStrategy.applyInTransaction} reads the rules with
+ * `loadActivePointRules(tx)`, so the rate used is the one in force at credit time. Resolved by `GreenPointFactory.getStrategy(jobType)`.
  * {@link applyInTransaction} runs inside a single Serializable Prisma transaction.
  */
 export interface GreenPointCreditStrategy<TPayload = unknown> {

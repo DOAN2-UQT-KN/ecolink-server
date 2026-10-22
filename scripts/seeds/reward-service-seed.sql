@@ -17,35 +17,49 @@ SET
   "updated_at" = EXCLUDED."updated_at",
   "deleted_at" = NULL;
 
-INSERT INTO user_green_point_balances ("user_id", "balance", "created_at", "updated_at")
-VALUES
-  ('11111111-1111-1111-1111-111111111142', 150, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')
-ON CONFLICT ("user_id") DO UPDATE
-SET
-  "balance" = EXCLUDED."balance",
-  "updated_at" = EXCLUDED."updated_at";
-
 INSERT INTO gifts ("id", "name", "media_id", "description", "green_points", "stock_remaining", "is_active", "created_at", "updated_at", "deleted_at")
 VALUES
   ('22222222-2222-2222-2222-222222222221', 'Eco Bottle', '33333333-3333-3333-3333-333333333331', 'Reusable water bottle reward', 100, 50, TRUE, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', NULL)
 ON CONFLICT ("id") DO NOTHING;
 
-INSERT INTO green_point_transactions ("id", "user_id", "type", "resource_id", "resource_type", "points", "created_at", "updated_at", "deleted_at")
+-- Stock comes from batches (spec 015): one sponsor batch of 51, one item already redeemed below.
+INSERT INTO gift_sources ("id", "name", "type", "contact_name", "show_on_gift", "status", "created_at", "updated_at")
 VALUES
-  ('22222222-2222-2222-2222-222222222231', '11111111-1111-1111-1111-111111111142', 'CAMPAIGN_COMPLETION', '44444444-4444-4444-4444-444444444441', 'CAMPAIGN', 100, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', NULL)
+  ('22222222-2222-2222-2222-222222222251', 'Green Co.', 'SPONSOR', 'Partnership team', TRUE, 'ACTIVE', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')
 ON CONFLICT ("id") DO NOTHING;
 
-INSERT INTO gift_redemptions ("id", "user_id", "gift_id", "green_points_spent", "created_at")
+INSERT INTO gift_stock_batches ("id", "gift_id", "source_id", "quantity", "remaining", "unit_value_vnd", "received_at", "reference", "created_at")
 VALUES
-  ('22222222-2222-2222-2222-222222222241', '11111111-1111-1111-1111-111111111142', '22222222-2222-2222-2222-222222222221', 100, '2026-01-01T00:00:00Z')
+  ('22222222-2222-2222-2222-222222222261', '22222222-2222-2222-2222-222222222221', '22222222-2222-2222-2222-222222222251', 51, 50, 120000, '2026-01-01T00:00:00Z', 'SEED-0001', '2026-01-01T00:00:00Z')
 ON CONFLICT ("id") DO NOTHING;
 
--- Gamification v2 defaults (multipliers, citizen milestones, SP expiry, season cadence).
+INSERT INTO gift_redemptions ("id", "user_id", "gift_id", "green_points_spent", "batch_id", "created_at")
+VALUES
+  ('22222222-2222-2222-2222-222222222241', '11111111-1111-1111-1111-111111111142', '22222222-2222-2222-2222-222222222221', 100, '22222222-2222-2222-2222-222222222261', '2026-01-01T00:00:00Z')
+ON CONFLICT ("id") DO NOTHING;
+
+-- Per batch the movements sum to remaining: +51 - 1 = 50 = gifts.stock_remaining.
+INSERT INTO gift_stock_movements ("id", "gift_id", "batch_id", "type", "quantity", "redemption_id", "actor_id", "created_at")
+VALUES
+  ('22222222-2222-2222-2222-222222222271', '22222222-2222-2222-2222-222222222221', '22222222-2222-2222-2222-222222222261', 'STOCK_IN', 51, NULL, NULL, '2026-01-01T00:00:00Z'),
+  ('22222222-2222-2222-2222-222222222272', '22222222-2222-2222-2222-222222222221', '22222222-2222-2222-2222-222222222261', 'REDEEM_OUT', -1, '22222222-2222-2222-2222-222222222241', '11111111-1111-1111-1111-111111111142', '2026-01-01T00:00:00Z')
+ON CONFLICT ("id") DO NOTHING;
+
+-- Earned 100, spent 100 on the redemption above: ledger sums to 0, matching no lots left (spec 014).
+INSERT INTO green_point_transactions ("id", "user_id", "type", "resource_id", "resource_type", "points", "idempotency_key", "created_at", "updated_at", "deleted_at")
+VALUES
+  ('22222222-2222-2222-2222-222222222231', '11111111-1111-1111-1111-111111111142', 'CAMPAIGN_COMPLETION', '44444444-4444-4444-4444-444444444441', 'CAMPAIGN', 100, 'campaign_completion:44444444-4444-4444-4444-444444444441', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', NULL),
+  ('22222222-2222-2222-2222-222222222232', '11111111-1111-1111-1111-111111111142', 'GIFT_REDEEM', '22222222-2222-2222-2222-222222222241', 'GIFT_REDEMPTION', -100, 'gift_redeem:22222222-2222-2222-2222-222222222241', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', NULL)
+ON CONFLICT ("id") DO NOTHING;
+
+-- Point rules: earning rates and point expiry days.
 INSERT INTO gamification_point_rules (
   "id",
   "base_report_point",
   "report_milestone_thresholds",
-  "volunteer_bonus_cap_by_difficulty",
+  "campaign_completion_points",
+  "report_completion_points",
+  "point_expiration_days",
   "is_active",
   "effective_from",
   "created_at",
@@ -55,7 +69,9 @@ VALUES (
   'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1',
   5,
   ARRAY[10, 20, 50, 100]::INTEGER[],
-  '{"1": 30, "2": 60, "3": 90, "4": 120}'::JSONB,
+  20,
+  0,
+  90,
   TRUE,
   '2026-01-01T00:00:00Z',
   '2026-01-01T00:00:00Z',
@@ -64,40 +80,9 @@ VALUES (
 ON CONFLICT ("id") DO UPDATE SET
   "base_report_point" = EXCLUDED."base_report_point",
   "report_milestone_thresholds" = EXCLUDED."report_milestone_thresholds",
-  "volunteer_bonus_cap_by_difficulty" = EXCLUDED."volunteer_bonus_cap_by_difficulty",
-  "updated_at" = EXCLUDED."updated_at";
-
-INSERT INTO volunteer_org_multiplier_rules ("id", "code", "multiplier", "priority", "is_active", "created_at", "updated_at")
-VALUES
-  ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb1', 'MEMBER_OF_OWNER_ORG', 1.20, 100, TRUE, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
-  ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb2', 'PARTICIPANT_OTHER_ORG_CAMPAIGN', 1.10, 50, TRUE, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
-  ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb3', 'DEFAULT', 1.00, 0, TRUE, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')
-ON CONFLICT ("code") DO UPDATE SET
-  "multiplier" = EXCLUDED."multiplier",
-  "priority" = EXCLUDED."priority",
-  "is_active" = EXCLUDED."is_active",
-  "updated_at" = EXCLUDED."updated_at";
-
-INSERT INTO spendable_point_rules ("id", "expiration_days", "is_active", "effective_from", "created_at", "updated_at")
-VALUES (
-  'cccccccc-cccc-cccc-cccc-ccccccccccc1',
-  90,
-  TRUE,
-  '2026-01-01T00:00:00Z',
-  '2026-01-01T00:00:00Z',
-  '2026-01-01T00:00:00Z'
-)
-ON CONFLICT ("id") DO UPDATE SET
-  "expiration_days" = EXCLUDED."expiration_days",
-  "updated_at" = EXCLUDED."updated_at";
-
-INSERT INTO season_schedule_rules ("id", "season_kind", "auto_rotate", "metadata", "created_at", "updated_at")
-VALUES
-  ('dddddddd-dddd-dddd-dddd-dddddddddd01', 'MONTHLY', TRUE, '{"cronHint": "0 0 1 * *"}'::JSONB, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
-  ('dddddddd-dddd-dddd-dddd-dddddddddd02', 'QUARTERLY', TRUE, '{"cronHint": "0 0 1 */3 *"}'::JSONB, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')
-ON CONFLICT ("season_kind") DO UPDATE SET
-  "auto_rotate" = EXCLUDED."auto_rotate",
-  "metadata" = EXCLUDED."metadata",
+  "campaign_completion_points" = EXCLUDED."campaign_completion_points",
+  "report_completion_points" = EXCLUDED."report_completion_points",
+  "point_expiration_days" = EXCLUDED."point_expiration_days",
   "updated_at" = EXCLUDED."updated_at";
 
 COMMIT;

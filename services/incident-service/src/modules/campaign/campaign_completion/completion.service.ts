@@ -3,8 +3,6 @@ import {
   CAMPAIGN_COMPLETION_MAX_REJECTIONS,
   CAMPAIGN_COMPLETION_REPORT_STATUS,
   CAMPAIGN_COMPLETION_UNHANDLED_REASON_MAX,
-  CAMPAIGN_DIFFICULTY_MAX,
-  CAMPAIGN_DIFFICULTY_MIN,
   CampaignStatus,
   SHIFT_RESULT_REPORT_STATUS,
   type CampaignAwaitingAdminReasonValue,
@@ -77,8 +75,6 @@ export interface CompletionReviewShift {
 export interface CompletionReviewView {
   campaignId: string;
   status: number;
-  difficulty: number;
-  difficultyRange: { min: number; max: number };
   rejectReason: string | null;
   completionSubmittedAt: Date | null;
   rejectionCount: number;
@@ -109,20 +105,10 @@ const REASON_MAX = CAMPAIGN_COMPLETION_UNHANDLED_REASON_MAX;
 
 const pointName = (p: { name: string | null; sortOrder: number }) => p.name || `#${p.sortOrder + 1}`;
 
-function assertDifficultyInRange(level: number): void {
-  if (!Number.isInteger(level) || level < CAMPAIGN_DIFFICULTY_MIN || level > CAMPAIGN_DIFFICULTY_MAX) {
-    throw new HttpError(
-      HTTP_STATUS.VALIDATION_ERROR.withMessage(
-        `difficulty must be between ${CAMPAIGN_DIFFICULTY_MIN} and ${CAMPAIGN_DIFFICULTY_MAX}`,
-      ),
-    );
-  }
-}
-
 /**
  * Spec 5.1 / 5.2: the completion submission (built from the shifts' results) and what the admin
  * still decides once result verification replaced the manual review: cancel at any time, approve
- * (with the final difficulty) only when verification hands the campaign over (rejected 3 times, or
+ * only when verification hands the campaign over (rejected 3 times, or
  * no trash point declared cleaned). Flagged meeting points are decided one by one (`campaign_verification`).
  */
 export class CampaignCompletionService {
@@ -314,8 +300,6 @@ export class CampaignCompletionService {
     return {
       campaignId,
       status: campaign.status,
-      difficulty: campaign.difficulty,
-      difficultyRange: { min: CAMPAIGN_DIFFICULTY_MIN, max: CAMPAIGN_DIFFICULTY_MAX },
       rejectReason: campaign.rejectReason ?? null,
       completionSubmittedAt: campaign.completionSubmittedAt ?? null,
       rejectionCount: campaign.completionRejectionCount,
@@ -371,7 +355,7 @@ export class CampaignCompletionService {
   async review(
     campaignId: string,
     adminUserId: string,
-    input: { decision: CompletionDecision; reason?: string | null; difficulty?: number | null },
+    input: { decision: CompletionDecision; reason?: string | null },
   ): Promise<void> {
     const campaign = await prisma.campaign.findFirst({
       where: { id: campaignId, deletedAt: null },
@@ -389,7 +373,7 @@ export class CampaignCompletionService {
     }
     if (input.decision === "approve") {
       if (!campaign.completionAwaitingAdmin) throw new HttpError(HTTP_STATUS.CAMPAIGN_COMPLETION_NOT_AWAITING_ADMIN);
-      return this.approve(campaign, adminUserId, input.difficulty ?? null);
+      return this.approve(campaign, adminUserId);
     }
     if (input.decision !== "cancel") {
       throw new HttpError(
@@ -404,18 +388,11 @@ export class CampaignCompletionService {
   }
 
   /**
-   * Approve (handed over by result verification): the difficulty may be settled one last time
-   * (logged) and points follow it; trash points declared cleaned are completed, the rest go back
-   * to the waiting list; SOS closed; points emitted.
+   * Approve (handed over by result verification): trash points declared cleaned are completed,
+   * the rest go back to the waiting list; SOS closed; attendance sent to reward-service for points.
    */
-  private async approve(
-    campaign: CampaignWithReports,
-    adminUserId: string,
-    difficulty: number | null,
-  ): Promise<void> {
-    const finalDifficulty = difficulty ?? campaign.difficulty;
-    assertDifficultyInRange(finalDifficulty);
-    const payout = await prepareCompletionPayout(campaign.id, finalDifficulty);
+  private async approve(campaign: CampaignWithReports, adminUserId: string): Promise<void> {
+    const payout = await prepareCompletionPayout(campaign.id);
     await prisma.$transaction(
       (tx) => completeCampaign(tx, campaign, { actor: "admin", actorId: adminUserId, payout }),
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },

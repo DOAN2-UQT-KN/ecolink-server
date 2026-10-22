@@ -3,7 +3,6 @@ import {
   CAMPAIGN_IN_REVIEW_QUEUE_STATUSES,
   CAMPAIGN_OPEN_STATUSES,
   CAMPAIGN_PENDING_LIMIT_PER_ORG,
-  CAMPAIGN_UNVERIFIED_MAX_DIFFICULTY,
   CAMPAIGN_UNVERIFIED_MAX_OPEN,
   CampaignCreateBlockReason,
   type CampaignCreateBlockReasonValue,
@@ -27,8 +26,6 @@ export interface CampaignCreateEligibility {
   hidden: boolean;
   reasons: CampaignCreateBlockReasonValue[];
   isVerified: boolean;
-  /** Highest difficulty level allowed; null = any. */
-  maxDifficulty: number | null;
   openCount: number;
   openLimit: number | null;
   reviewQueueCount: number;
@@ -67,7 +64,6 @@ export function computeCreateEligibility(args: {
     hidden,
     reasons,
     isVerified,
-    maxDifficulty: isVerified ? null : CAMPAIGN_UNVERIFIED_MAX_DIFFICULTY,
     openCount: args.openCount,
     openLimit: isVerified ? null : CAMPAIGN_UNVERIFIED_MAX_OPEN,
     reviewQueueCount: args.reviewQueueCount,

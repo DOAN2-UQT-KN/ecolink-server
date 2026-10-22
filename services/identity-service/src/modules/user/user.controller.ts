@@ -73,7 +73,7 @@ export class UserController {
                 throw new Error('Avatar must be null or a valid URL');
             }),
         body('bio').optional().trim(),
-        body('roleId').optional().isUUID().withMessage('Role ID must be a valid UUID'),
+        body('roleId').optional().isUUID("loose").withMessage('Role ID must be a valid UUID'),
         body('latitude')
             .optional({ nullable: true })
             .custom((value) => {
@@ -268,7 +268,7 @@ export class UserController {
     ];
 
     adminBanUser = [
-        param('id').isUUID().withMessage('User ID must be a valid UUID'),
+        param('id').isUUID("loose").withMessage('User ID must be a valid UUID'),
         body('rejectReason')
             .isString()
             .trim()

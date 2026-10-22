@@ -69,7 +69,7 @@ function parseDuplicateVerificationBody(
 
 router.patch(
   "/reports/:id/duplicate-verification",
-  param("id").isUUID().withMessage("Report ID must be a valid UUID"),
+  param("id").isUUID("loose").withMessage("Report ID must be a valid UUID"),
   body().custom((value) => {
     const message = validateDuplicateVerificationBody(value);
     if (message) {
@@ -114,7 +114,7 @@ router.post(
     .isArray()
     .withMessage("report_ids must be an array"),
   body("reportIds.*")
-    .isUUID()
+    .isUUID("loose")
     .withMessage("report_ids items must be UUIDs"),
 
   async (req, res): Promise<void> => {
@@ -147,7 +147,7 @@ router.post(
 router.post(
   "/reports/geo-by-ids",
   body("ids").isArray({ min: 1, max: 500 }).withMessage("ids must be an array of 1 to 500 items"),
-  body("ids.*").isUUID().withMessage("ids items must be UUIDs"),
+  body("ids.*").isUUID("loose").withMessage("ids items must be UUIDs"),
 
   async (req, res): Promise<void> => {
     const errors = validationResult(req);

@@ -20,8 +20,6 @@ import {
 import { GlobalStatus } from "../../constants/status.enum";
 import {
   CAMPAIGN_COMPLETION_UNHANDLED_REASON_MAX,
-  CAMPAIGN_DIFFICULTY_MAX,
-  CAMPAIGN_DIFFICULTY_MIN,
   CAMPAIGN_DAY_MAX,
   CAMPAIGN_MEETING_POINT_MAX,
   CAMPAIGN_REVIEW_REASON_MAX_LENGTH,
@@ -80,7 +78,7 @@ const campaignDetailValidators = () => [
     .optional()
     .isArray({ max: CAMPAIGN_MEETING_POINT_MAX })
     .withMessage(`meetingPoints must be an array of at most ${CAMPAIGN_MEETING_POINT_MAX}`),
-  body("meetingPoints.*.id").optional().isUUID(),
+  body("meetingPoints.*.id").optional().isUUID("loose"),
   body("meetingPoints.*.name")
     .optional({ nullable: true })
     .isString()
@@ -99,7 +97,7 @@ const campaignDetailValidators = () => [
     .isString()
     .isLength({ max: 255 }),
   body("meetingPoints.*.reportIds").optional().isArray(),
-  body("meetingPoints.*.reportIds.*").isUUID(),
+  body("meetingPoints.*.reportIds.*").isUUID("loose"),
   body(["startDate", "endDate"])
     .not()
     .exists()
@@ -108,7 +106,7 @@ const campaignDetailValidators = () => [
     .optional()
     .isArray({ max: CAMPAIGN_DAY_MAX })
     .withMessage(`days must be an array of at most ${CAMPAIGN_DAY_MAX}`),
-  body("days.*.id").optional().isUUID(),
+  body("days.*.id").optional().isUUID("loose"),
   body("days.*.startAt").isISO8601().withMessage("day startAt must be an ISO 8601 datetime"),
   body("days.*.endAt").isISO8601().withMessage("day endAt must be an ISO 8601 datetime"),
   body("shifts")
@@ -124,15 +122,10 @@ const campaignDetailValidators = () => [
     .optional({ nullable: true })
     .isInt({ min: 1 })
     .withMessage("shift maxVolunteers must be a whole number ≥ 1"),
-  body("minVolunteersReason")
-    .optional({ nullable: true })
-    .isString()
-    .isLength({ max: 1000 })
-    .withMessage("minVolunteersReason must be at most 1000 characters"),
   body("shifts.*.startAt").optional({ nullable: true }).isISO8601(),
   body("shifts.*.endAt").optional({ nullable: true }).isISO8601(),
   body("shifts.*.gatherAt").optional({ nullable: true }).isISO8601(),
-  body("shifts.*.leaderUserId").optional({ nullable: true }).isUUID(),
+  body("shifts.*.leaderUserId").optional({ nullable: true }).isUUID("loose"),
 ];
 
 export class CampaignController {
@@ -164,7 +157,7 @@ export class CampaignController {
 
   createCampaign = [
     body("organizationId")
-      .isUUID()
+      .isUUID("loose")
       .withMessage("organizationId must be a valid UUID"),
     body("title").notEmpty().withMessage("Title is required").trim(),
     body("banner")
@@ -174,11 +167,6 @@ export class CampaignController {
       .withMessage("banner must be at most 2048 characters")
       .trim(),
     body("description").optional().trim(),
-    body("difficulty")
-      .isInt({ min: CAMPAIGN_DIFFICULTY_MIN, max: CAMPAIGN_DIFFICULTY_MAX })
-      .withMessage(
-        `difficulty must be between ${CAMPAIGN_DIFFICULTY_MIN} and ${CAMPAIGN_DIFFICULTY_MAX}`,
-      ),
     ...campaignDetailValidators(),
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -238,19 +226,16 @@ export class CampaignController {
           .every((item) => /^-?\d+$/.test(item));
       })
       .withMessage("statuses must be a comma-separated list of integers"),
-    query("createdBy").optional().isUUID(),
-    query("managerId").optional().isUUID(),
+    query("createdBy").optional().isUUID("loose"),
+    query("managerId").optional().isUUID("loose"),
     query("page").optional().isInt({ min: 1 }),
     query("limit").optional().isInt({ min: 1, max: 100 }),
     query("sortBy").optional().isIn(["createdAt", "updatedAt", "title"]),
     query("sortOrder").optional().isIn(["asc", "desc"]),
-    query("organizationId").optional().isUUID(),
+    query("organizationId").optional().isUUID("loose"),
     query("latitude").optional().isFloat({ min: -90, max: 90 }),
     query("longitude").optional().isFloat({ min: -180, max: 180 }),
     query("radiusKm").optional().isFloat({ min: 0 }),
-    query("difficulty").optional().isInt({ min: 1 }),
-    query("greenPointsFrom").optional().isInt({ min: 0 }),
-    query("greenPointsTo").optional().isInt({ min: 0 }),
     query("excludeMemberOrgs").optional().isBoolean(),
 
     async (req: Request, res: Response): Promise<void> => {
@@ -305,15 +290,6 @@ export class CampaignController {
           radiusKm: req.query.radiusKm
             ? parseFloat(String(req.query.radiusKm))
             : undefined,
-          difficulty: req.query.difficulty
-            ? parseInt(String(req.query.difficulty), 10)
-            : undefined,
-          greenPointsFrom: req.query.greenPointsFrom
-            ? parseInt(String(req.query.greenPointsFrom), 10)
-            : undefined,
-          greenPointsTo: req.query.greenPointsTo
-            ? parseInt(String(req.query.greenPointsTo), 10)
-            : undefined,
           sortBy: req.query.sortBy as CampaignListQuery["sortBy"],
           sortOrder: req.query.sortOrder as CampaignListQuery["sortOrder"],
         };
@@ -364,13 +340,10 @@ export class CampaignController {
     query("limit").optional().isInt({ min: 1, max: 100 }),
     query("sortBy").optional().isIn(["createdAt", "updatedAt", "title"]),
     query("sortOrder").optional().isIn(["asc", "desc"]),
-    query("organizationId").optional().isUUID(),
+    query("organizationId").optional().isUUID("loose"),
     query("latitude").optional().isFloat({ min: -90, max: 90 }),
     query("longitude").optional().isFloat({ min: -180, max: 180 }),
     query("radiusKm").optional().isFloat({ min: 0 }),
-    query("difficulty").optional().isInt({ min: 1 }),
-    query("greenPointsFrom").optional().isInt({ min: 0 }),
-    query("greenPointsTo").optional().isInt({ min: 0 }),
     query("is_owner").optional().isBoolean(),
 
     async (req: Request, res: Response): Promise<void> => {
@@ -414,15 +387,6 @@ export class CampaignController {
             : undefined,
           radiusKm: req.query.radiusKm
             ? parseFloat(String(req.query.radiusKm))
-            : undefined,
-          difficulty: req.query.difficulty
-            ? parseInt(String(req.query.difficulty), 10)
-            : undefined,
-          greenPointsFrom: req.query.greenPointsFrom
-            ? parseInt(String(req.query.greenPointsFrom), 10)
-            : undefined,
-          greenPointsTo: req.query.greenPointsTo
-            ? parseInt(String(req.query.greenPointsTo), 10)
             : undefined,
           isOwner: req.query.is_owner !== undefined
             ? String(req.query.is_owner).toLowerCase() === "true"
@@ -488,7 +452,7 @@ export class CampaignController {
   ];
 
   getCampaignById = [
-    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+    param("id").isUUID("loose").withMessage("Campaign ID must be a valid UUID"),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -523,7 +487,7 @@ export class CampaignController {
   /** Whether the caller may create a campaign for an organization, and why not. */
   getCreateEligibility = [
     query("organizationId")
-      .isUUID()
+      .isUUID("loose")
       .withMessage("organizationId must be a valid UUID"),
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -550,7 +514,7 @@ export class CampaignController {
 
   /** Send a draft, or a campaign waiting for changes, for admin review. */
   submitCampaign = [
-    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+    param("id").isUUID("loose").withMessage("Campaign ID must be a valid UUID"),
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
@@ -580,7 +544,7 @@ export class CampaignController {
 
   /** Admin: approve, request changes to, or block a campaign waiting for review. */
   reviewCampaign = [
-    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+    param("id").isUUID("loose").withMessage("Campaign ID must be a valid UUID"),
     body("decision")
       .isIn(["approve", "request_revision", "block"])
       .withMessage("decision must be approve, request_revision or block"),
@@ -631,7 +595,7 @@ export class CampaignController {
 
   /** POST /campaigns/:id/cancel — the creator or an owner cancels the campaign (spec 3.6). */
   cancelCampaign = [
-    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+    param("id").isUUID("loose").withMessage("Campaign ID must be a valid UUID"),
     body("reason")
       .isString()
       .trim()
@@ -657,7 +621,7 @@ export class CampaignController {
 
   /** Status changes and edits under review (managers and admins). */
   getCampaignHistory = [
-    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+    param("id").isUUID("loose").withMessage("Campaign ID must be a valid UUID"),
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
@@ -688,7 +652,7 @@ export class CampaignController {
    * Ban requires `reject_reason`; verify may omit it (clears any previous reason).
    */
   adminVerifyCampaign = [
-    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+    param("id").isUUID("loose").withMessage("Campaign ID must be a valid UUID"),
     body("status")
       .isInt()
       .toInt()
@@ -773,11 +737,11 @@ export class CampaignController {
 
   /**
    * Admin decision on a campaign marked done: cancel (`rejectReason`) at any time, approve
-   * (optional `difficulty`) only once result verification handed it over (409
+   * only once result verification handed it over (409
    * CAMPAIGN_COMPLETION_NOT_AWAITING_ADMIN otherwise). Rejecting is decided per trash point now.
    */
   adminReviewCampaignCompletion = [
-    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+    param("id").isUUID("loose").withMessage("Campaign ID must be a valid UUID"),
     body("decision")
       .isIn(["approve", "cancel"])
       .withMessage('decision must be "approve" or "cancel"'),
@@ -799,7 +763,6 @@ export class CampaignController {
       }
       return true;
     }),
-    body("difficulty").optional({ values: "null" }).isInt().withMessage("difficulty must be a whole number"),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -825,7 +788,7 @@ export class CampaignController {
           );
         }
 
-        const { decision, rejectReason, difficulty } =
+        const { decision, rejectReason } =
           req.body as AdminCompletionReviewBody;
         const campaign = await campaignService.adminReviewCampaignCompletion(
           req.params.id,
@@ -833,7 +796,6 @@ export class CampaignController {
           {
             decision,
             rejectReason: typeof rejectReason === "string" ? rejectReason.trim() : undefined,
-            difficulty: difficulty == null ? null : Number(difficulty),
           },
           userId,
         );
@@ -919,9 +881,9 @@ export class CampaignController {
    * Manager: mark the campaign done; result verification opens the voting rounds.
    */
   markCampaignDone = [
-    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+    param("id").isUUID("loose").withMessage("Campaign ID must be a valid UUID"),
     body("unhandled").optional().isArray({ max: 500 }),
-    body("unhandled.*.reportId").isUUID().withMessage("reportId must be a valid UUID"),
+    body("unhandled.*.reportId").isUUID("loose").withMessage("reportId must be a valid UUID"),
     body("unhandled.*.reason")
       .isString()
       .trim()
@@ -979,12 +941,6 @@ export class CampaignController {
               HTTP_STATUS.BAD_REQUEST.withMessage(error.message),
             );
           }
-          if (error.message.includes("difficulty missing")) {
-            return sendError(
-              res,
-              HTTP_STATUS.BAD_REQUEST.withMessage(error.message),
-            );
-          }
           if (error.message.includes("Reward service enqueue failed")) {
             return sendError(
               res,
@@ -998,7 +954,7 @@ export class CampaignController {
   ];
 
   updateCampaign = [
-    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+    param("id").isUUID("loose").withMessage("Campaign ID must be a valid UUID"),
     body("title").optional().trim(),
     body("banner")
       .optional({ nullable: true })
@@ -1013,19 +969,13 @@ export class CampaignController {
       .withMessage(
         "status cannot be set here; use submit, review or mark-done",
       ),
-    body("difficulty")
-      .optional()
-      .isInt({ min: CAMPAIGN_DIFFICULTY_MIN, max: CAMPAIGN_DIFFICULTY_MAX })
-      .withMessage(
-        `difficulty must be between ${CAMPAIGN_DIFFICULTY_MIN} and ${CAMPAIGN_DIFFICULTY_MAX}`,
-      ),
     body("managerIds")
       .optional()
       .isArray()
       .withMessage("managerIds must be an array"),
     body("managerIds.*")
       .optional()
-      .isUUID()
+      .isUUID("loose")
       .withMessage("Each managerId must be a valid UUID"),
     ...campaignDetailValidators(),
 
@@ -1083,7 +1033,7 @@ export class CampaignController {
   ];
 
   deleteCampaign = [
-    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+    param("id").isUUID("loose").withMessage("Campaign ID must be a valid UUID"),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -1128,7 +1078,7 @@ export class CampaignController {
 
   /** GET /campaigns/:id/registration-options — what the "pick shifts" popup shows. */
   getRegistrationOptions = [
-    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+    param("id").isUUID("loose").withMessage("Campaign ID must be a valid UUID"),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -1153,9 +1103,9 @@ export class CampaignController {
    * Body: { shiftIds: string[], acceptConditions?: boolean }.
    */
   updateMyRegistrations = [
-    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+    param("id").isUUID("loose").withMessage("Campaign ID must be a valid UUID"),
     body("shiftIds").isArray({ max: 100 }).withMessage("shiftIds must be an array"),
-    body("shiftIds.*").isUUID().withMessage("Each shift ID must be a valid UUID"),
+    body("shiftIds.*").isUUID("loose").withMessage("Each shift ID must be a valid UUID"),
     body("acceptConditions").optional().isBoolean().toBoolean(),
 
     async (req: Request, res: Response): Promise<void> => {
@@ -1181,7 +1131,7 @@ export class CampaignController {
 
   /** GET /campaigns/:id/registrations — each shift with who registered (managers, registered volunteers, admins). */
   getCampaignRegistrations = [
-    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+    param("id").isUUID("loose").withMessage("Campaign ID must be a valid UUID"),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -1209,7 +1159,7 @@ export class CampaignController {
 
   /** POST /campaigns/:id/invite-nearby — managers invite residents around the meeting points. */
   inviteNearby = [
-    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+    param("id").isUUID("loose").withMessage("Campaign ID must be a valid UUID"),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -1231,8 +1181,8 @@ export class CampaignController {
 
   /** POST /campaigns/:id/shifts/:shiftId/close — managers turn a shift off before it starts. */
   closeShift = [
-    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
-    param("shiftId").isUUID().withMessage("Shift ID must be a valid UUID"),
+    param("id").isUUID("loose").withMessage("Campaign ID must be a valid UUID"),
+    param("shiftId").isUUID("loose").withMessage("Shift ID must be a valid UUID"),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -1258,9 +1208,9 @@ export class CampaignController {
 
   /** PUT /campaigns/:id/shifts/:shiftId/leader — choose who leads a shift (team only). */
   setShiftLeader = [
-    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
-    param("shiftId").isUUID().withMessage("Shift ID must be a valid UUID"),
-    body("leaderUserId").isUUID().withMessage("leaderUserId must be a valid UUID"),
+    param("id").isUUID("loose").withMessage("Campaign ID must be a valid UUID"),
+    param("shiftId").isUUID("loose").withMessage("Shift ID must be a valid UUID"),
+    body("leaderUserId").isUUID("loose").withMessage("leaderUserId must be a valid UUID"),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -1293,9 +1243,9 @@ export class CampaignController {
     query("campaignId")
       .notEmpty()
       .withMessage("Campaign ID is required")
-      .isUUID()
+      .isUUID("loose")
       .withMessage("Campaign ID must be a valid UUID"),
-    query("volunteerId").optional().isUUID(),
+    query("volunteerId").optional().isUUID("loose"),
     query("page").optional().isInt({ min: 1 }),
     query("limit").optional().isInt({ min: 1, max: 100 }),
     query("sortBy").optional().isIn(["createdAt", "updatedAt"]),
@@ -1333,11 +1283,11 @@ export class CampaignController {
   // =====================
 
   addManagers = [
-    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
+    param("id").isUUID("loose").withMessage("Campaign ID must be a valid UUID"),
     body("userIds")
       .isArray({ min: 1 })
       .withMessage("userIds must be a non-empty array"),
-    body("userIds.*").isUUID().withMessage("Each userId must be a valid UUID"),
+    body("userIds.*").isUUID("loose").withMessage("Each userId must be a valid UUID"),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -1368,8 +1318,8 @@ export class CampaignController {
   ];
 
   removeManager = [
-    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
-    body("userId").isUUID().withMessage("userId must be a valid UUID"),
+    param("id").isUUID("loose").withMessage("Campaign ID must be a valid UUID"),
+    body("userId").isUUID("loose").withMessage("userId must be a valid UUID"),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -1403,8 +1353,8 @@ export class CampaignController {
   ];
 
   getCampaignManagers = [
-    param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
-    query("userId").optional().isUUID(),
+    param("id").isUUID("loose").withMessage("Campaign ID must be a valid UUID"),
+    query("userId").optional().isUUID("loose"),
     query("page").optional().isInt({ min: 1 }),
     query("limit").optional().isInt({ min: 1, max: 100 }),
     query("sortBy").optional().isIn(["assignedAt", "userId", "createdAt"]),
@@ -1467,8 +1417,8 @@ export class CampaignController {
     extra: ValidationChain[] = [],
   ) {
     return [
-      param("id").isUUID().withMessage("Campaign ID must be a valid UUID"),
-      param("shiftId").optional().isUUID().withMessage("Shift ID must be a valid UUID"),
+      param("id").isUUID("loose").withMessage("Campaign ID must be a valid UUID"),
+      param("shiftId").optional().isUUID("loose").withMessage("Shift ID must be a valid UUID"),
       ...extra,
       async (req: Request, res: Response): Promise<void> => {
         const errors = validationResult(req);
@@ -1515,7 +1465,7 @@ export class CampaignController {
         checkInAt: req.body.checkInAt ? new Date(req.body.checkInAt) : undefined,
       }),
     [
-      body("userId").isUUID().withMessage("userId must be a valid UUID"),
+      body("userId").isUUID("loose").withMessage("userId must be a valid UUID"),
       body("reason").isString().trim().isLength({ min: 1, max: 500 }).withMessage("reason is required"),
       body("checkInAt").optional({ values: "null" }).isISO8601(),
     ],
@@ -1529,7 +1479,7 @@ export class CampaignController {
         reason: req.body.reason,
       }),
     [
-      param("userId").isUUID().withMessage("userId must be a valid UUID"),
+      param("userId").isUUID("loose").withMessage("userId must be a valid UUID"),
       body("reason").isString().trim().isLength({ min: 1, max: 500 }).withMessage("reason is required"),
     ],
   );
@@ -1539,7 +1489,7 @@ export class CampaignController {
     "Restore attendance",
     (req, userId) =>
       shiftAttendanceService.setExcluded(req.params.id, req.params.shiftId, req.params.userId, userId, null),
-    [param("userId").isUUID().withMessage("userId must be a valid UUID")],
+    [param("userId").isUUID("loose").withMessage("userId must be a valid UUID")],
   );
 
   /** GET /campaigns/:id/shifts/:shiftId/attendance — who is present (leader, managers, admins). */
@@ -1600,12 +1550,12 @@ export class CampaignController {
       body("wasteBags").optional({ values: "null" }).isInt({ min: 0 }),
       body("wasteKg").optional({ values: "null" }).isFloat({ min: 0 }),
       body("reports").optional().isArray({ max: 200 }),
-      body("reports.*.reportId").isUUID().withMessage("reportId must be a valid UUID"),
+      body("reports.*.reportId").isUUID("loose").withMessage("reportId must be a valid UUID"),
       body("reports.*.status").isIn(["cleaned", "partial"]).withMessage("status is cleaned or partial"),
       body("reports.*.beforeUrls").isArray(),
       body("reports.*.afterUrls").isArray(),
       body("mediaIds").optional().isArray({ max: 500 }),
-      body("mediaIds.*").isUUID().withMessage("mediaIds must be UUIDs"),
+      body("mediaIds.*").isUUID("loose").withMessage("mediaIds must be UUIDs"),
     ],
   );
 
@@ -1635,7 +1585,7 @@ export class CampaignController {
     "Remove shift media",
     (req, userId) =>
       shiftResultService.removeMedia(req.params.id, req.params.shiftId, req.params.mediaId, userId),
-    [param("mediaId").isUUID().withMessage("mediaId must be a valid UUID")],
+    [param("mediaId").isUUID("loose").withMessage("mediaId must be a valid UUID")],
   );
 
   /**
@@ -1683,7 +1633,7 @@ export class CampaignController {
       );
     },
     [
-      param("meetingPointId").isUUID().withMessage("meetingPointId must be a valid UUID"),
+      param("meetingPointId").isUUID("loose").withMessage("meetingPointId must be a valid UUID"),
       body("value").isIn(["up", "down"]).withMessage('value is "up" (clean) or "down" (not clean)'),
       body("note").optional({ values: "null" }).isString().isLength({ max: MEETING_POINT_VOTE_NOTE_MAX }),
       body("photoUrl").optional({ values: "null" }).isString().isLength({ max: 2000 }),
@@ -1702,7 +1652,7 @@ export class CampaignController {
         userId,
         role: req.user?.role,
       }),
-    [param("meetingPointId").isUUID().withMessage("meetingPointId must be a valid UUID")],
+    [param("meetingPointId").isUUID("loose").withMessage("meetingPointId must be a valid UUID")],
   );
 
   /** PUT /campaigns/:id/verification/:meetingPointId/decision — admin: verify or reject a flagged meeting point. */
@@ -1719,7 +1669,7 @@ export class CampaignController {
       });
     },
     [
-      param("meetingPointId").isUUID().withMessage("meetingPointId must be a valid UUID"),
+      param("meetingPointId").isUUID("loose").withMessage("meetingPointId must be a valid UUID"),
       body("decision").isIn(["verify", "reject"]).withMessage('decision is "verify" or "reject"'),
       body("reason").optional({ values: "null" }).isString().isLength({ max: 5000 }),
       body("reportIds").optional({ values: "null" }).isArray({ max: 200 }).withMessage("report_ids is a list of trash report ids"),

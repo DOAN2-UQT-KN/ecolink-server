@@ -15,9 +15,9 @@ router.use(requireInternalIdentityApiKey);
  */
 router.post(
   "/organization-contact-email/tokens",
-  body("organizationId").isUUID(),
+  body("organizationId").isUUID("loose"),
   body("contactEmail").isEmail(),
-  body("ownerUserId").isUUID(),
+  body("ownerUserId").isUUID("loose"),
   async (req, res): Promise<void> => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -99,7 +99,7 @@ router.post(
 router.post(
   "/users/lookup-by-ids",
   body("ids").isArray({ min: 1, max: 50 }),
-  body("ids.*").isUUID(),
+  body("ids.*").isUUID("loose"),
   async (req, res): Promise<void> => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -178,7 +178,7 @@ router.post(
  */
 router.post(
   "/users/:id/activation-token",
-  param("id").isUUID(),
+  param("id").isUUID("loose"),
   async (req, res): Promise<void> => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -247,7 +247,7 @@ router.post(
     .isFloat({ min: 1, max: 200_000 })
     .withMessage("radiusMeters must be between 1 and 200000"),
   body("excludeUserIds").optional().isArray({ max: 500 }),
-  body("excludeUserIds.*").optional().isUUID(),
+  body("excludeUserIds.*").optional().isUUID("loose"),
   async (req, res): Promise<void> => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -329,7 +329,7 @@ function distanceMeters(
  */
 router.post(
   "/users/vote-profile",
-  body("userId").isUUID(),
+  body("userId").isUUID("loose"),
   body("latitude").isFloat({ min: -90, max: 90 }),
   body("longitude").isFloat({ min: -180, max: 180 }),
   async (req, res): Promise<void> => {
@@ -374,7 +374,7 @@ router.post(
 router.post(
   "/users/by-ids",
   body("ids").isArray({ min: 1, max: 100 }),
-  body("ids.*").isUUID(),
+  body("ids.*").isUUID("loose"),
   async (req, res): Promise<void> => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -399,7 +399,7 @@ router.post(
 router.post(
   "/users/notification-prefs/filter",
   body("userIds").isArray({ min: 1, max: 500 }),
-  body("userIds.*").isUUID(),
+  body("userIds.*").isUUID("loose"),
   body("kind").isString().notEmpty(),
   async (req, res): Promise<void> => {
     const errors = validationResult(req);
@@ -428,7 +428,7 @@ router.post(
 
 router.get(
   "/users/:id/email",
-  param("id").isUUID(),
+  param("id").isUUID("loose"),
   async (req, res): Promise<void> => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {

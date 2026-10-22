@@ -27,8 +27,6 @@ import { applyPostApprovalEdit, isPostApprovalEdit } from "./campaign-post-appro
 import { campaignManagerService } from "./campaign_manager/campaign_manager.service";
 import {
   CAMPAIGN_DELETABLE_STATUSES,
-  CAMPAIGN_DIFFICULTY_MAX,
-  CAMPAIGN_DIFFICULTY_MIN,
   CAMPAIGN_PUBLIC_STATUSES,
   CampaignStatus,
 } from "@da2/constants";
@@ -76,20 +74,6 @@ import {
 import { campaignVerificationService } from "./campaign_verification/verification.service";
 import { verificationDecisionService } from "./campaign_verification/verification-decision.service";
 
-function assertDifficultyInRange(level: number): void {
-  if (
-    !Number.isInteger(level) ||
-    level < CAMPAIGN_DIFFICULTY_MIN ||
-    level > CAMPAIGN_DIFFICULTY_MAX
-  ) {
-    throw new HttpError(
-      HTTP_STATUS.VALIDATION_ERROR.withMessage(
-        `difficulty must be between ${CAMPAIGN_DIFFICULTY_MIN} and ${CAMPAIGN_DIFFICULTY_MAX}`,
-      ),
-    );
-  }
-}
-
 function enqueueCampaignTranslationJob(
   resourceId: string,
   translations: TranslationFieldTarget[],
@@ -116,45 +100,6 @@ function enqueueCampaignTranslationJob(
 
 export class CampaignService {
   constructor() {}
-
-  private debugWarn(message: string, meta?: Record<string, unknown>): void {
-    if (process.env.NODE_ENV === "production") return;
-    console.warn(`[campaign] ${message}`, meta ?? {});
-  }
-
-  private async resolveTierMaps(levels: number[]): Promise<{
-    greenByLevel: Map<number, number>;
-    difficulties: {
-      level: number;
-      greenPoints: number;
-      maxVolunteers: number | null;
-      suggestedMinVolunteers: number | null;
-    }[];
-  }> {
-    const unique = [...new Set(levels)].filter((l) => Number.isFinite(l));
-    const difficulties = await rewardServiceClient.getDifficulties();
-    if (difficulties.length > 0) {
-      return {
-        greenByLevel: new Map(difficulties.map((d) => [d.level, d.greenPoints])),
-        difficulties,
-      };
-    }
-
-    // Fallback: list endpoint unavailable, but per-level may still work.
-    if (unique.length > 0) {
-      this.debugWarn("reward difficulties list empty; falling back to per-level", {
-        levels: unique,
-      });
-    }
-    const tiers = await Promise.all(
-      unique.map((level) => rewardServiceClient.getDifficultyByLevel(level)),
-    );
-    const resolved = tiers.filter((t): t is NonNullable<typeof t> => t != null);
-    return {
-      greenByLevel: new Map(resolved.map((d) => [d.level, d.greenPoints])),
-      difficulties: resolved,
-    };
-  }
 
   private ownerFallback(userId: string): OrganizationOwnerResponse {
     return { id: userId, name: "", avatar: null, bio: null };
@@ -347,28 +292,14 @@ export class CampaignService {
     entity: CampaignWithReports,
     locale?: AppLocale | null,
   ): Promise<CampaignResponse> {
-    const [tier, currentMembers] = await Promise.all([
-      rewardServiceClient.getDifficultyByLevel(entity.difficulty),
+    const [greenPoints, currentMembers] = await Promise.all([
+      rewardServiceClient.getCampaignCompletionPoints(),
       campaignRegistrationRepository
         .countVolunteersByCampaignIds([entity.id])
         .then((m) => m.get(entity.id) ?? 0),
     ]);
-    if (!tier) {
-      this.debugWarn("missing reward tier for campaign difficulty", {
-        campaignId: entity.id,
-        difficulty: entity.difficulty,
-      });
-    }
-    const greenPoints = tier?.greenPoints ?? 0;
     // Registration is never capped (spec 3.1); shifts carry their own min / expected max.
-    return toCampaignResponse(
-      entity,
-      greenPoints,
-      currentMembers,
-      null,
-      locale,
-      tier?.suggestedMinVolunteers ?? null,
-    );
+    return toCampaignResponse(entity, greenPoints, currentMembers, null, locale);
   }
 
   private async withCampaignVotes(
@@ -470,7 +401,6 @@ export class CampaignService {
 
     // A draft only needs a level in range; the tier (volunteer cap) is checked on submit, so
     // saving a draft does not depend on reward-service.
-    assertDifficultyInRange(request.difficulty);
 
     const schedule: NormalizedSchedule = scheduleFromRequest(request, null, userId) ?? {
       days: [],
@@ -507,11 +437,9 @@ export class CampaignService {
             description: sourceDesc || null,
             descriptionVi,
             descriptionEn,
-            difficulty: request.difficulty,
             contactName: request.contactName?.trim() || null,
             contactPhone: request.contactPhone?.trim() || null,
             safetyNotes: request.safetyNotes?.trim() || null,
-            minVolunteersReason: request.minVolunteersReason?.trim() || null,
             ...(request.requirements != null
               ? { requirements: request.requirements as Prisma.InputJsonValue }
               : {}),
@@ -778,20 +706,7 @@ export class CampaignService {
       .map((id) => byId.get(id))
       .filter((row): row is CampaignWithReports => row !== undefined);
 
-    const { greenByLevel } = await this.resolveTierMaps(
-      resolved.map((c) => c.difficulty),
-    );
-
-    if (resolved.length > 0) {
-      const levels = [...new Set(resolved.map((r) => r.difficulty))];
-      const missing = levels.filter((l) => !greenByLevel.has(l));
-      if (missing.length > 0) {
-        this.debugWarn("missing greenPoints mapping for difficulties in by-ids", {
-          missing,
-          levels,
-        });
-      }
-    }
+    const greenPoints = await rewardServiceClient.getCampaignCompletionPoints();
 
     const approvedByCampaignId =
       await campaignRegistrationRepository.countVolunteersByCampaignIds(
@@ -801,7 +716,7 @@ export class CampaignService {
     const list = resolved.map((campaign) =>
       toCampaignResponse(
         campaign,
-        greenByLevel.get(campaign.difficulty) ?? 0,
+        greenPoints,
         approvedByCampaignId.get(campaign.id) ?? 0,
         null,
         loc,
@@ -857,34 +772,6 @@ export class CampaignService {
     const sortOrder = query.sortOrder ?? "desc";
     const skip = (page - 1) * limit;
 
-    const { difficulties, greenByLevel } =
-      await this.resolveTierMaps([]);
-
-    let difficultyLevels: number[] | undefined;
-    if (
-      query.greenPointsFrom !== undefined ||
-      query.greenPointsTo !== undefined
-    ) {
-      difficultyLevels = difficulties
-        .filter((d) => {
-          if (
-            query.greenPointsFrom !== undefined &&
-            d.greenPoints < query.greenPointsFrom
-          )
-            return false;
-          if (
-            query.greenPointsTo !== undefined &&
-            d.greenPoints > query.greenPointsTo
-          )
-            return false;
-          return true;
-        })
-        .map((d) => d.level);
-      if (difficultyLevels.length === 0) {
-        return { campaigns: [], total: 0, page, limit, totalPages: 0 };
-      }
-    }
-
     const { rows, total } = await campaignRepository.findManyPaginated({
       filters: {
         search: query.search,
@@ -896,8 +783,6 @@ export class CampaignService {
         latitude: query.latitude,
         longitude: query.longitude,
         radiusKm: query.radiusKm,
-        difficulty: query.difficulty,
-        difficultyLevels,
         myCampaignsUserId,
         excludeMyCampaignsUserId,
         isOwner: query.isOwner,
@@ -916,28 +801,13 @@ export class CampaignService {
         rows.map((c) => c.id),
       );
 
-    // If the global list wasn't available, resolve only the levels we need for this page.
-    const tierMaps =
-      difficulties.length > 0
-        ? { greenByLevel }
-        : await this.resolveTierMaps(rows.map((r) => r.difficulty));
-
-    if (rows.length > 0) {
-      const levels = [...new Set(rows.map((r) => r.difficulty))];
-      const missing = levels.filter((l) => !tierMaps.greenByLevel.has(l));
-      if (missing.length > 0) {
-        this.debugWarn("missing greenPoints mapping for difficulties in list", {
-          missing,
-          levels,
-        });
-      }
-    }
+    const greenPoints = await rewardServiceClient.getCampaignCompletionPoints();
 
     const locale = query.lang ?? "en";
     const campaigns = rows.map((campaign) =>
       toCampaignResponse(
         campaign,
-        tierMaps.greenByLevel.get(campaign.difficulty) ?? 0,
+        greenPoints,
         approvedByCampaignId.get(campaign.id) ?? 0,
         null,
         locale,
@@ -983,12 +853,12 @@ export class CampaignService {
         rows.map((c) => c.id),
       );
 
-    const tierMaps = await this.resolveTierMaps(rows.map((r) => r.difficulty));
+    const greenPoints = await rewardServiceClient.getCampaignCompletionPoints();
 
     const campaigns = rows.map((campaign) =>
       toCampaignResponse(
         campaign,
-        tierMaps.greenByLevel.get(campaign.difficulty) ?? 0,
+        greenPoints,
         approvedByCampaignId.get(campaign.id) ?? 0,
         null,
       ),
@@ -1079,10 +949,7 @@ export class CampaignService {
     const rows = await campaignRepository.findManyByIds(pageIds);
     const byId = new Map(rows.map((r) => [r.id, r]));
 
-    const difficulties = await rewardServiceClient.getDifficulties();
-    const greenByLevel = new Map(
-      difficulties?.map((d) => [d.level, d.greenPoints]),
-    );
+    const greenPoints = await rewardServiceClient.getCampaignCompletionPoints();
     const pageEntities = pageIds
       .map((id) => byId.get(id))
       .filter((row): row is NonNullable<typeof row> => row !== undefined);
@@ -1095,7 +962,7 @@ export class CampaignService {
       pageEntities.map((entity) => {
         const base = toCampaignResponse(
           entity,
-          greenByLevel.get(entity.difficulty) ?? 0,
+          greenPoints,
           approvedByCampaignId.get(entity.id) ?? 0,
           null,
           "en",
@@ -1147,9 +1014,6 @@ export class CampaignService {
 
     // Spec 3.5: an approved campaign is edited in place, by id, until it starts.
     if (isPostApprovalEdit(existing)) {
-      if (request.difficulty !== undefined) {
-        assertDifficultyInRange(request.difficulty);
-      }
       if (request.managerIds !== undefined) {
         throw new HttpError(HTTP_STATUS.CAMPAIGN_NOT_EDITABLE, { fields: ["managerIds"] });
       }
@@ -1161,10 +1025,6 @@ export class CampaignService {
     // Running or over: nothing changes through editing any more.
     if (!isPreApproval(existing.status)) {
       throw new HttpError(HTTP_STATUS.CAMPAIGN_NOT_EDITABLE);
-    }
-
-    if (request.difficulty !== undefined) {
-      assertDifficultyInRange(request.difficulty);
     }
 
     const schedule = scheduleFromRequest(
@@ -1218,13 +1078,9 @@ export class CampaignService {
             title: request.title,
             ...(request.banner !== undefined ? { banner: request.banner } : {}),
             description: request.description,
-            ...(request.difficulty !== undefined
-              ? { difficulty: request.difficulty }
-              : {}),
             contactName: optionalText(request.contactName),
             contactPhone: optionalText(request.contactPhone),
             safetyNotes: optionalText(request.safetyNotes),
-            minVolunteersReason: optionalText(request.minVolunteersReason),
             ...(request.requirements !== undefined
               ? {
                   requirements:
@@ -1290,8 +1146,7 @@ export class CampaignService {
   }
 
   /**
-   * Admin decision on a campaign marked done: cancel at any time, approve (optionally settling the
-   * difficulty) only once result verification handed the campaign over. See
+   * Admin decision on a campaign marked done: cancel at any time, approve only once result verification handed the campaign over. See
    * `campaignCompletionService`; flagged trash points are decided per point.
    */
   async adminReviewCampaignCompletion(
@@ -1300,14 +1155,12 @@ export class CampaignService {
     input: {
       decision: CompletionDecision;
       rejectReason?: string | null;
-      difficulty?: number | null;
     },
     viewerUserId?: string | null,
   ): Promise<CampaignResponse> {
     await campaignCompletionService.review(id, adminUserId, {
       decision: input.decision,
       reason: input.rejectReason,
-      difficulty: input.difficulty,
     });
     const updated = await campaignRepository.findById(id);
     if (!updated) {

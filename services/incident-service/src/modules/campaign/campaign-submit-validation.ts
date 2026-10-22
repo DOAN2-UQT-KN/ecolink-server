@@ -2,8 +2,6 @@ import {
   CAMPAIGN_DAY_MAX,
   CAMPAIGN_DAY_SPAN_DAYS,
   CAMPAIGN_DESCRIPTION_MIN_LENGTH,
-  CAMPAIGN_HIGH_DIFFICULTY_LEVEL,
-  CAMPAIGN_HIGH_DIFFICULTY_MIN_AGE,
   CAMPAIGN_MAX_HOURS_PER_DAY,
   CAMPAIGN_MEETING_POINT_MAX,
   CAMPAIGN_MEETING_POINT_MAX_DISTANCE_KM,
@@ -57,20 +55,13 @@ export interface SubmitCampaignInput {
   days: SubmitDay[];
   contactName: string | null;
   contactPhone: string | null;
-  difficulty: number;
   requirements: CampaignRequirements | null;
   meetingPoints: SubmitMeetingPoint[];
   shifts: SubmitShift[];
-  /** Why a day's minimum is below the suggestion; required only then. */
-  minVolunteersReason?: string | null;
 }
 
 export interface SubmitValidationContext {
   now: Date;
-  /** Minimum volunteers per day the difficulty suggests; null = no suggestion. */
-  suggestedMinPerDay: number | null;
-  /** Highest difficulty the organization may use (1 when unverified). */
-  maxDifficulty: number | null;
   /** Reports that may be locked by this campaign (approved, and free or already its own). */
   reports: Map<string, { latitude: number | null; longitude: number | null }>;
   /** Active members of the organization allowed to lead a meeting point. */
@@ -111,19 +102,14 @@ function localDayKey(date: Date): string {
   return new Date(date.getTime() + LOCAL_UTC_OFFSET_MS).toISOString().slice(0, 10);
 }
 
-/** Default participation conditions: high difficulty requires adults unless set otherwise. */
+/**
+ * Participation conditions as stored on submit: exactly what the creator entered (no implied
+ * minimum age since difficulty was removed, spec 013 FR-043), never null.
+ */
 export function withDefaultRequirements(
   requirements: CampaignRequirements | null,
-  difficulty: number,
 ): CampaignRequirements {
-  const base: CampaignRequirements = { ...(requirements ?? {}) };
-  if (
-    difficulty >= CAMPAIGN_HIGH_DIFFICULTY_LEVEL &&
-    (base.minAge == null || base.minAge < CAMPAIGN_HIGH_DIFFICULTY_MIN_AGE)
-  ) {
-    base.minAge = CAMPAIGN_HIGH_DIFFICULTY_MIN_AGE;
-  }
-  return base;
+  return { ...(requirements ?? {}) };
 }
 
 /**
@@ -168,14 +154,6 @@ export function validateCampaignForSubmit(
   const phone = input.contactPhone?.replace(/[\s.-]/g, "") ?? "";
   if (!VN_PHONE_RE.test(phone)) {
     add("contactPhone", "CONTACT_PHONE_INVALID", "Enter a valid phone number");
-  }
-
-  if (ctx.maxDifficulty != null && input.difficulty > ctx.maxDifficulty) {
-    add(
-      "difficulty",
-      "DIFFICULTY_NOT_ALLOWED",
-      "Unverified organizations can only create the lowest difficulty",
-    );
   }
 
   const minAge = input.requirements?.minAge;
@@ -323,8 +301,7 @@ function validateDays(days: SubmitDay[], now: Date, add: AddIssue): void {
  * Spec 1.4 (rev. 4): each day × meeting point is a shift with a minimum number of volunteers
  * (0 = off) and an optional expected maximum. Neither caps sign-ups; they only drive warnings.
  * An active shift needs a leader who manages the campaign and a gathering time on its day; each
- * day needs an active shift. A day whose minimum is below the difficulty's suggestion needs a
- * reason for the admin.
+ * day needs an active shift.
  */
 function validateShifts(
   input: SubmitCampaignInput,
@@ -337,10 +314,8 @@ function validateShifts(
   for (const shift of input.shifts) {
     byCell.set(`${shift.dayIndex}:${shift.meetingPointIndex}`, shift);
   }
-  let belowSuggestion = false;
 
   days.forEach((day, d) => {
-    let total = 0;
     let active = 0;
     meetingPoints.forEach((_, p) => {
       const shift = byCell.get(`${d}:${p}`);
@@ -356,7 +331,6 @@ function validateShifts(
       }
       if (min === 0 || !shift) return;
       active += 1;
-      total += min;
       const max = shift.maxVolunteers;
       if (max != null && (!Number.isInteger(max) || max < min)) {
         add(
@@ -400,16 +374,6 @@ function validateShifts(
     });
     if (active === 0) {
       add(`days[${d}]`, "DAY_NO_ACTIVE_SHIFT", "Each day needs at least one shift that runs");
-    } else if (ctx.suggestedMinPerDay != null && total < ctx.suggestedMinPerDay) {
-      belowSuggestion = true;
     }
   });
-
-  if (belowSuggestion && !input.minVolunteersReason?.trim()) {
-    add(
-      "minVolunteersReason",
-      "MIN_VOLUNTEERS_REASON_REQUIRED",
-      `Explain why a day needs fewer than the ${ctx.suggestedMinPerDay} volunteers suggested for this difficulty`,
-    );
-  }
 }

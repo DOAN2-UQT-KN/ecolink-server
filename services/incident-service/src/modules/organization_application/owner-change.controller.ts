@@ -31,21 +31,21 @@ function authed(
   };
 }
 
-const orgId = param("id").isUUID();
-const applicationId = param("applicationId").isUUID();
+const orgId = param("id").isUUID("loose");
+const applicationId = param("applicationId").isUUID("loose");
 
 export class OwnerChangeController {
   create = [
     orgId,
     body("type").isIn(["ADD_OWNER", "REMOVE_OWNER"]),
     body("owners").optional().isArray({ min: 1, max: 5 }),
-    body("owners.*.userId").optional({ values: "null" }).isUUID(),
+    body("owners.*.userId").optional({ values: "null" }).isUUID("loose"),
     body("owners.*.email").optional({ values: "null" }).isString().isLength({ max: 320 }),
     body("owners.*.fullName").optional().isString().isLength({ max: 200 }),
-    body("targetUserId").optional({ values: "null" }).isUUID(),
+    body("targetUserId").optional({ values: "null" }).isUUID("loose"),
     body("demoteTo").optional({ values: "null" }).isIn(["ADMIN", "MEMBER"]),
     body("replacement").optional({ values: "null" }).isObject(),
-    body("replacement.userId").optional({ values: "null" }).isUUID(),
+    body("replacement.userId").optional({ values: "null" }).isUUID("loose"),
     body("replacement.email").optional({ values: "null" }).isString().isLength({ max: 320 }),
     body("replacement.fullName").optional().isString().isLength({ max: 200 }),
     body("reason").optional({ values: "null" }).isString().isLength({ max: 1000 }),
@@ -106,7 +106,7 @@ export class OwnerChangeController {
   resend = [
     orgId,
     applicationId,
-    param("candidateId").isUUID(),
+    param("candidateId").isUUID("loose"),
     authed(async (req, res, userId) => {
       await ownerChangeService.resend(
         req.params.id,

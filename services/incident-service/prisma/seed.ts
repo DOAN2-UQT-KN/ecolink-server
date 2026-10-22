@@ -46,7 +46,6 @@ async function main() {
       title: "Weekend River Cleanup",
       description: "Seed campaign",
       status: 1,
-      difficulty: 2,
       organizationId: "44444444-4444-4444-a444-444444444401",
       createdBy: "11111111-1111-1111-1111-111111111141",
       updatedBy: "11111111-1111-1111-1111-111111111141",
