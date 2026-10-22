@@ -13,7 +13,7 @@ export class RoleController {
         body('name').notEmpty().trim().withMessage('Role name is required'),
         body('description').optional().trim(),
         body('permissionSetIds').optional().isArray().withMessage('Permission set IDs must be an array'),
-        body('permissionSetIds.*').optional().isUUID().withMessage('Each permission set ID must be a valid UUID'),
+        body('permissionSetIds.*').optional().isUUID("loose").withMessage('Each permission set ID must be a valid UUID'),
 
         async (req: Request, res: Response): Promise<void> => {
             const errors = validationResult(req);
@@ -61,7 +61,7 @@ export class RoleController {
         body('name').optional().trim(),
         body('description').optional().trim(),
         body('permissionSetIds').optional().isArray().withMessage('Permission set IDs must be an array'),
-        body('permissionSetIds.*').optional().isUUID().withMessage('Each permission set ID must be a valid UUID'),
+        body('permissionSetIds.*').optional().isUUID("loose").withMessage('Each permission set ID must be a valid UUID'),
 
         async (req: Request, res: Response): Promise<void> => {
             const errors = validationResult(req);

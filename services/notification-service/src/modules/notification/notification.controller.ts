@@ -45,7 +45,7 @@ function dtoFromRow(row: {
 export const enqueueNotificationValidators = [
   body("type").isString().notEmpty(),
   body("kind").isString().isIn(KIND_VALUES),
-  body("userId").optional().isUUID(),
+  body("userId").optional().isUUID("loose"),
   body("payload").optional().isObject(),
 ];
 
@@ -182,4 +182,4 @@ export const listMineValidators = [
   query("limit").optional().isInt({ min: 1, max: 200 }),
 ];
 
-export const markReadValidators = [param("id").isUUID()];
+export const markReadValidators = [param("id").isUUID("loose")];

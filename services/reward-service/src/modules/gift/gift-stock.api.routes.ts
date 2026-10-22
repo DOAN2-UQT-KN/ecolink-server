@@ -55,9 +55,9 @@ const pageMeta = (page: number, limit: number, total: number) => ({
 router.get(
   "/admin/gifts/:id/stock-batches",
   ...admin,
-  param("id").isUUID(),
+  param("id").isUUID("loose"),
   ...pageRules,
-  query("sourceId").optional().isUUID(),
+  query("sourceId").optional().isUUID("loose"),
   async (req, res): Promise<void> => {
     if (validationFailed(req, res)) return;
     const { page, limit } = paged(req);
@@ -82,8 +82,8 @@ router.get(
 router.post(
   "/admin/gifts/:id/stock-batches",
   ...admin,
-  param("id").isUUID(),
-  body("sourceId").isUUID(),
+  param("id").isUUID("loose"),
+  body("sourceId").isUUID("loose"),
   body("quantity").isInt({ min: 1 }).withMessage("quantity must be an integer >= 1"),
   body("unitValueVnd").isInt({ min: 0 }).withMessage("unitValueVnd must be an integer >= 0"),
   body("receivedAt")
@@ -138,7 +138,7 @@ router.post(
 router.post(
   "/admin/stock-batches/:id/adjustments",
   ...admin,
-  param("id").isUUID(),
+  param("id").isUUID("loose"),
   body("quantity").isInt({ min: 1 }).withMessage("quantity must be an integer >= 1"),
   body("reason").isIn(ADJUST_REASONS),
   body("note").optional({ values: "null" }).isString().isLength({ max: 2000 }),
@@ -165,9 +165,9 @@ router.post(
 router.get(
   "/admin/gifts/:id/stock-movements",
   ...admin,
-  param("id").isUUID(),
+  param("id").isUUID("loose"),
   ...pageRules,
-  query("batchId").optional().isUUID(),
+  query("batchId").optional().isUUID("loose"),
   query("type").optional().isIn(MOVEMENT_TYPES),
   async (req, res): Promise<void> => {
     if (validationFailed(req, res)) return;

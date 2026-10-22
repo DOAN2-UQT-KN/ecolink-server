@@ -128,7 +128,7 @@ router.post("/admin/gift-sources", ...admin, ...sourceBodyRules(true), async (re
 router.get(
   "/admin/gift-sources/:id",
   ...admin,
-  param("id").isUUID(),
+  param("id").isUUID("loose"),
   async (req, res): Promise<void> => {
     if (validationFailed(req, res)) return;
     try {
@@ -148,7 +148,7 @@ router.get(
 router.put(
   "/admin/gift-sources/:id",
   ...admin,
-  param("id").isUUID(),
+  param("id").isUUID("loose"),
   ...sourceBodyRules(false),
   body("status").optional().isIn(SOURCE_STATUSES),
   async (req, res): Promise<void> => {
@@ -170,7 +170,7 @@ router.put(
 router.get(
   "/admin/gift-sources/:id/batches",
   ...admin,
-  param("id").isUUID(),
+  param("id").isUUID("loose"),
   ...pageRules,
   async (req, res): Promise<void> => {
     if (validationFailed(req, res)) return;
@@ -192,7 +192,7 @@ router.get(
 router.get(
   "/admin/gift-sources/:id/report",
   ...admin,
-  param("id").isUUID(),
+  param("id").isUUID("loose"),
   query("from").optional().isString(),
   query("to").optional().isString(),
   query("format").optional().isIn(["json", "csv"]),

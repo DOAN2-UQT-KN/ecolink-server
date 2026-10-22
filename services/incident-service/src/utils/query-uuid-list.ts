@@ -29,7 +29,7 @@ export function normalizeQueryUuidList(
   if (parts.length > max) {
     return { kind: "invalid" };
   }
-  if (!parts.every((id) => isUUID(id))) {
+  if (!parts.every((id) => isUUID(id, "loose"))) {
     return { kind: "invalid" };
   }
   return { kind: "ok", ids: parts };

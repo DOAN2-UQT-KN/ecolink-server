@@ -15,7 +15,7 @@ const savedResourceTypeValues = Object.values(SavedResourceType).filter(
 );
 
 const saveResourceValidators = [
-  body("resourceId").isUUID().withMessage("resourceId must be a valid UUID"),
+  body("resourceId").isUUID("loose").withMessage("resourceId must be a valid UUID"),
   body("resourceType")
     .isIn(savedResourceTypeValues)
     .withMessage(

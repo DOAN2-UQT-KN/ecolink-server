@@ -79,7 +79,7 @@ export class SosController {
   eligibility = this.action(
     "SOS eligibility",
     [
-      query(["campaign_id", "campaignId"]).optional().isUUID().withMessage("campaign_id must be a valid UUID"),
+      query(["campaign_id", "campaignId"]).optional().isUUID("loose").withMessage("campaign_id must be a valid UUID"),
       ...latLngQuery(false),
     ],
     async (req, actor) => {
@@ -100,8 +100,8 @@ export class SosController {
   createSos = this.action(
     "Create SOS",
     [
-      body("campaignId").isUUID().withMessage("campaign_id must be a valid UUID"),
-      body("shiftId").optional({ values: "null" }).isUUID().withMessage("shift_id must be a valid UUID"),
+      body("campaignId").isUUID("loose").withMessage("campaign_id must be a valid UUID"),
+      body("shiftId").optional({ values: "null" }).isUUID("loose").withMessage("shift_id must be a valid UUID"),
       body("type").isIn(SOS_TYPES).withMessage(`type must be one of ${SOS_TYPES.join(", ")}`),
       body("details").isObject().withMessage("details is required"),
       body("description").optional({ values: "null" }).isString().trim().isLength({ max: 2000 }),
@@ -133,7 +133,7 @@ export class SosController {
   duplicates = this.action(
     "SOS duplicates",
     [
-      query(["campaign_id", "campaignId"]).optional().isUUID(),
+      query(["campaign_id", "campaignId"]).optional().isUUID("loose"),
       query("type").isIn(SOS_TYPES).withMessage(`type must be one of ${SOS_TYPES.join(", ")}`),
       ...latLngQuery(true),
     ],
@@ -159,7 +159,7 @@ export class SosController {
   listSos = this.action(
     "List SOS",
     [
-      query(["campaign_id", "campaignId"]).optional().isUUID().withMessage("campaign_id must be a valid UUID"),
+      query(["campaign_id", "campaignId"]).optional().isUUID("loose").withMessage("campaign_id must be a valid UUID"),
       query("states").optional().isString(),
       query("type").optional().isIn(SOS_TYPES).withMessage(`type must be one of ${SOS_TYPES.join(", ")}`),
       query("search").optional().isString().isLength({ max: 200 }),

@@ -48,8 +48,8 @@ function open(handler: (req: Request, res: Response) => Promise<void>) {
   };
 }
 
-const orgId = param("id").isUUID();
-const invitationId = param("invitationId").isUUID();
+const orgId = param("id").isUUID("loose");
+const invitationId = param("invitationId").isUUID("loose");
 const token = param("token").notEmpty().isLength({ max: 128 });
 
 export class OrganizationInvitationController {
@@ -68,7 +68,7 @@ export class OrganizationInvitationController {
 
   create = [
     orgId,
-    body("userId").isUUID().withMessage("user_id is required"),
+    body("userId").isUUID("loose").withMessage("user_id is required"),
     authed(async (req, res, userId) => {
       const invitation = await organizationInvitationService.create(
         req.params.id,

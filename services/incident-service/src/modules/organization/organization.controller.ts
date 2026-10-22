@@ -28,7 +28,7 @@ import {
 import { verifyAndConsumeOrganizationContactEmailToken } from "./identity-organization-contact-email.client";
 import { organizationService } from "./organization.service";
 
-const orgIdParam = param("id").isUUID().withMessage("id must be a valid UUID");
+const orgIdParam = param("id").isUUID("loose").withMessage("id must be a valid UUID");
 const orgSlugParam = param("slug")
   .trim()
   .notEmpty()
@@ -163,7 +163,7 @@ export class OrganizationController {
     // Internal callers carry no JWT, so the owner has to be named explicitly.
     body("ownerId")
       .notEmpty()
-      .isUUID()
+      .isUUID("loose")
       .withMessage("owner_id is required and must be a uuid"),
 
     async (req: Request, res: Response): Promise<void> => {
@@ -727,7 +727,7 @@ export class OrganizationController {
   listJoinRequestsForOwner = [
     orgIdParam,
     query("status").optional().isInt(),
-    query("requesterId").optional().isUUID(),
+    query("requesterId").optional().isUUID("loose"),
     query("page").optional().isInt({ min: 1 }),
     query("limit").optional().isInt({ min: 1, max: 100 }),
     query("sortBy").optional().isIn(["createdAt", "updatedAt"]),
@@ -780,7 +780,7 @@ export class OrganizationController {
   ];
 
   getMyJoinRequests = [
-    query("organizationId").optional().isUUID(),
+    query("organizationId").optional().isUUID("loose"),
     query("status").optional().isInt(),
     query("page").optional().isInt({ min: 1 }),
     query("limit").optional().isInt({ min: 1, max: 100 }),
@@ -830,7 +830,7 @@ export class OrganizationController {
   ];
 
   processJoinRequest = [
-    body("requestId").isUUID().withMessage("requestId must be a valid UUID"),
+    body("requestId").isUUID("loose").withMessage("requestId must be a valid UUID"),
     body("approved").isBoolean().withMessage("approved must be boolean"),
 
     async (req: Request, res: Response): Promise<void> => {
@@ -867,7 +867,7 @@ export class OrganizationController {
   ];
 
   cancelJoinRequest = [
-    body("requestId").isUUID().withMessage("requestId must be a valid UUID"),
+    body("requestId").isUUID("loose").withMessage("requestId must be a valid UUID"),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -958,7 +958,7 @@ export class OrganizationController {
 
   changeMemberRole = [
     orgIdParam,
-    param("userId").isUUID(),
+    param("userId").isUUID("loose"),
     body("role")
       .isIn(Object.values(OrgMemberRole))
       .withMessage("role must be an OrgMemberRole"),
@@ -993,7 +993,7 @@ export class OrganizationController {
 
   removeMember = [
     orgIdParam,
-    param("userId").isUUID(),
+    param("userId").isUUID("loose"),
 
     async (req: Request, res: Response): Promise<void> => {
       const errors = validationResult(req);
@@ -1024,8 +1024,8 @@ export class OrganizationController {
 
   listMembers = [
     orgIdParam,
-    query("userId").optional().isUUID(),
-    query("user_id").optional().isUUID(),
+    query("userId").optional().isUUID("loose"),
+    query("user_id").optional().isUUID("loose"),
     query("search").optional().isString().trim(),
     query("roles").optional(),
     query("page").optional().isInt({ min: 1 }).toInt(),

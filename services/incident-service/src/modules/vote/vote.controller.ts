@@ -14,7 +14,7 @@ const voteResourceTypeValues = Object.values(VoteResourceType).filter(
 );
 
 const voteActionValidators = [
-  body("resourceId").isUUID().withMessage("resourceId must be a valid UUID"),
+  body("resourceId").isUUID("loose").withMessage("resourceId must be a valid UUID"),
   body("resourceType")
     .isIn(voteResourceTypeValues)
     .withMessage(`resourceType must be one of: ${voteResourceTypeValues.join(", ")}`),
