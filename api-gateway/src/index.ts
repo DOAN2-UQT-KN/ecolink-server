@@ -260,6 +260,27 @@ app.use(
 );
 
 app.use(
+  "/api/v1/risk-sites",
+  gatewayProxy(INCIDENT_SERVICE_URL, {
+    proxyReqPathResolver: (req) => `/api/v1/risk-sites${req.url}`,
+  }),
+);
+
+app.use(
+  "/api/v1/admin/risk-sites",
+  gatewayProxy(INCIDENT_SERVICE_URL, {
+    proxyReqPathResolver: (req) => `/api/v1/admin/risk-sites${req.url}`,
+  }),
+);
+
+app.use(
+  "/api/v1/admin/grid-cells",
+  gatewayProxy(INCIDENT_SERVICE_URL, {
+    proxyReqPathResolver: (req) => `/api/v1/admin/grid-cells${req.url}`,
+  }),
+);
+
+app.use(
   "/api/v1/admin/media",
   gatewayProxy(INCIDENT_SERVICE_URL, {
     proxyReqPathResolver: (req) => `/api/v1/admin/media${req.url}`,

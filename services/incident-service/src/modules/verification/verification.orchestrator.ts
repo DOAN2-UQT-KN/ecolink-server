@@ -15,6 +15,7 @@ import type { CheckRunner, VerificationContext } from "./checks/check-runner";
 import { runCheckWithTimeout } from "./run-check";
 import { assess, NoCompletedCheckError } from "./risk-engine";
 import { verificationConfigService } from "./verification-config.service";
+import { distinctCellKeys, refreshCells } from "../grid_cell/grid-cell.service";
 import type { Assessment, CheckResult } from "./verification.types";
 
 export type VerificationOutcome = "COMPLETED" | "FAILED" | "SKIPPED";
@@ -74,8 +75,9 @@ export function createVerificationOrchestrator(deps: OrchestratorDeps) {
     const updated = await tx.report.update({
       where: { id: report.id },
       data: { latestVerificationId: verificationId },
-      select: { status: true },
+      select: { status: true, gridKey: true },
     });
+    if (changed.count > 0 && isVerify) await refreshCells(tx, distinctCellKeys([updated.gridKey]));
     return { statusChanged: changed.count > 0, reportStatus: updated.status };
   }
 

@@ -24,6 +24,7 @@ function baseReport(overrides: Partial<Report> = {}): Report {
     severityLevel: 1,
     latitude: 1,
     longitude: 2,
+    gridKey: null,
     detailAddress: null,
     status: 12,
     isVerify: false,

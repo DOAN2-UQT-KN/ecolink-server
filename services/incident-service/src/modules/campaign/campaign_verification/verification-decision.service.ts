@@ -13,6 +13,7 @@ import { HttpError } from "../../../constants/http-status";
 import { GlobalStatus, ReportStatus } from "../../../constants/status.enum";
 import { emitOutbox } from "../../../outbox/outbox.writer";
 import { OutboxEventType } from "../../../outbox/outbox.types";
+import { recordCampaignCleanups } from "../../grid_cell/grid-cell.service";
 import { organizationMemberRepository } from "../../organization/organization_member.repository";
 import { getCampaignAdminNotifyUserIds } from "../campaign-completion-admin-notify.config";
 import { campaignNameNotificationPayload, campaignTitleNotificationPayload } from "../campaign-i18n";
@@ -152,6 +153,8 @@ export async function completeCampaign(
       data: { campaignId: null, status: ReportStatus._STATUS_TODO, ...by },
     });
   }
+  // Trash cleaned on the shifts goes into the history of its grid cells (dated at each shift's end).
+  await recordCampaignCleanups(tx, id);
   // SOS still open close as handled; the people on their way stop (they may respond elsewhere).
   const now = new Date();
   const liveSos = await tx.sos.findMany({
