@@ -41,6 +41,11 @@ model Report {
    * Kept in sync with latitude/longitude by trigger reports_sync_location; GiST-indexed.
    */
   location  Unsupported("geography(Point, 4326)")?
+  /**
+   * Grid cell (100 m) holding the report; kept in sync with latitude/longitude by trigger
+   * reports_sync_grid_key. See GridCell.
+   */
+  gridKey   String?                                @map("grid_key") @db.VarChar(48)
 
   /**
    * Client Idempotency-Key header; unique per user.
@@ -101,6 +106,7 @@ model Report {
   @@index([userId])
   @@index([userId, createdAt])
   @@index([location], map: "reports_location_gist", type: Gist)
+  @@index([gridKey, createdAt])
   @@index([status])
   @@index([deletedAt])
   @@map("reports")
@@ -1869,4 +1875,72 @@ model MeetingPointVote {
   @@unique([verificationId, userId])
   @@index([userId, createdAt])
   @@map("meeting_point_votes")
+}
+
+/// One 100 m cell of the grid (key "100:x:y", UTM 48N metres). A cache for the admin page and the AI:
+/// the counters can be recomputed from reports (grid_key, created_at) and GridCellCleanup.
+model GridCell {
+  cellKey        String    @id @map("cell_key") @db.VarChar(48)
+  gridSizeM      Int       @map("grid_size_m")
+  cellX          BigInt    @map("cell_x")
+  cellY          BigInt    @map("cell_y")
+  centerLat      Float     @map("center_lat")
+  centerLng      Float     @map("center_lng")
+  /// Reports sent from this cell; bumped when the report is created.
+  submittedCount Int       @default(0) @map("submitted_count")
+  /// Reports of this cell an admin or the pipeline verified; what the AI should use.
+  verifiedCount  Int       @default(0) @map("verified_count")
+  lastReportAt   DateTime? @map("last_report_at")
+  cleanupCount   Int       @default(0) @map("cleanup_count")
+  lastCleanedAt  DateTime? @map("last_cleaned_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  cleanups GridCellCleanup[]
+
+  @@index([cellX, cellY])
+  @@map("grid_cells")
+}
+
+/// Append-only: one row per cell and shift when trash of the cell was cleaned. `cleanedAt` is when the
+/// shift really ended (not when the admin approved), the start of the clock for "when does it come back".
+model GridCellCleanup {
+  id          String   @id @default(uuid()) @db.Uuid
+  cellKey     String   @map("cell_key") @db.VarChar(48)
+  campaignId  String   @map("campaign_id") @db.Uuid
+  shiftId     String   @map("shift_id") @db.Uuid
+  cleanedAt   DateTime @map("cleaned_at")
+  /// cleaned | partial
+  outcome     String   @db.VarChar(10)
+  /// Reports of the cell handled on that shift.
+  reportCount Int      @map("report_count")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  cell GridCell @relation(fields: [cellKey], references: [cellKey], onDelete: Cascade)
+
+  @@unique([cellKey, shiftId])
+  @@index([cellKey, cleanedAt])
+  @@index([campaignId])
+  @@map("grid_cell_cleanups")
+}
+
+/// A user's answer ("there is trash" / "there is none") for a place the dumpsite-risk model flagged.
+/// One row per user and site, so a site's counts are counts of distinct people.
+model RiskSiteVote {
+  id        String   @id @default(uuid()) @db.Uuid
+  /// "lat:lng" rounded to 5 decimals (about 1 m), the identity of a flagged site.
+  siteKey   String   @map("site_key") @db.VarChar(40)
+  address   String   @db.VarChar(255)
+  latitude  Float
+  longitude Float
+  userId    String   @map("user_id") @db.Uuid
+  /// yes | no
+  verdict   String   @db.VarChar(3)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([siteKey, userId])
+  @@index([siteKey, verdict])
+  @@index([userId])
+  @@map("risk_site_votes")
 }

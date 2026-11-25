@@ -17,6 +17,8 @@ import organizationInvitationRoutes from "./modules/organization/organization-in
 import organizationApplicationRoutes from "./modules/organization_application/organization-application.routes";
 import organizationApplicationAdminRoutes from "./modules/organization_application/organization-application-admin.routes";
 import adminMediaRoutes from "./modules/admin_media/admin-media.routes";
+import gridCellAdminRoutes from "./modules/grid_cell/grid-cell-admin.routes";
+import riskSiteRoutes, { adminRiskSiteRouter } from "./modules/risk_site/risk-site.routes";
 import { errorHandler } from "./middleware/error.middleware";
 import {
   camelCaseRequestBody,
@@ -37,6 +39,8 @@ const swaggerRouteFiles = routeModulesFrom(__dirname, [
   "modules/organization_application/organization-application.routes",
   "modules/organization_application/organization-application-admin.routes",
   "modules/admin_media/admin-media.routes",
+  "modules/grid_cell/grid-cell-admin.routes",
+  "modules/risk_site/risk-site.routes",
 ]);
 
 // Middleware
@@ -88,6 +92,9 @@ app.use(
   organizationApplicationAdminRoutes,
 );
 app.use("/api/v1/admin/media", adminMediaRoutes);
+app.use("/api/v1/admin/grid-cells", gridCellAdminRoutes);
+app.use("/api/v1/risk-sites", riskSiteRoutes);
+app.use("/api/v1/admin/risk-sites", adminRiskSiteRouter);
 app.use("/internal/v1", internalRoutes);
 
 // Error handling

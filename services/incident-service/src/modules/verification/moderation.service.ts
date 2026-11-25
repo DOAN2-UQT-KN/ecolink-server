@@ -11,6 +11,7 @@ import { OutboxEventType } from "../../outbox/outbox.types";
 import { toReportResponse } from "../report/report.entity";
 
 import { MODERATION_ORDER_BY, MODERATION_TAB_FILTER, type ModerationTab } from "./moderation-filter";
+import { distinctCellKeys, refreshCells } from "../grid_cell/grid-cell.service";
 
 export type { ModerationTab };
 
@@ -89,6 +90,7 @@ export const moderationService = {
       }
 
       const report = await tx.report.findUniqueOrThrow({ where: { id: reportId } });
+      await refreshCells(tx, distinctCellKeys([report.gridKey]));
       await emitOutbox(tx, {
         aggregateType: "report",
         aggregateId: reportId,

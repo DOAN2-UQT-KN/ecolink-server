@@ -56,6 +56,7 @@ import {
 } from "../media/media-from-url.service";
 import { normalizeCreateReportInput, normalizeImages } from "./report-create.input";
 import { resolveCaptureSources } from "./capture/capture.service";
+import { distinctCellKeys, refreshCells } from "../grid_cell/grid-cell.service";
 import {
   assertInServiceArea,
   assertUnderRateLimit,
@@ -358,6 +359,9 @@ export class ReportService {
           aiVerified: false,
         },
       });
+
+      // The DB trigger set grid_key; count the report in its cell in the same transaction.
+      await refreshCells(tx, distinctCellKeys([createdReport.gridKey]));
 
       let reportMediaFileIds: string[] = [];
       let mediaSnapshots: Record<string, unknown>[] = [];
@@ -972,6 +976,11 @@ export class ReportService {
       translations,
     );
 
+    // Moving the pin can change the cell (the trigger already updated grid_key): refresh both cells.
+    if (existing.gridKey !== report.gridKey) {
+      await refreshCells(prisma, distinctCellKeys([existing.gridKey, report.gridKey]));
+    }
+
     return this.withReportVote(
       toReportResponse(report),
       viewerUserId ?? userId,
@@ -1261,6 +1270,7 @@ export class ReportService {
     const moderatedAt = new Date();
     return prisma.$transaction(async (tx) => {
       const report = await tx.report.update({ where: { id }, data: { ...data, moderatedAt } });
+      await refreshCells(tx, distinctCellKeys([report.gridKey]));
       await emitOutbox(tx, {
         aggregateType: "report",
         aggregateId: id,
@@ -1390,6 +1400,7 @@ export class ReportService {
     this.assertReporterMayEditReport(existing, userId, role);
 
     await reportRepository.softDelete(id);
+    await refreshCells(prisma, distinctCellKeys([existing.gridKey]));
   }
 
   /**
